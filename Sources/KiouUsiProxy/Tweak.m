@@ -42,11 +42,18 @@ static void installUnityHooks(void) {
               @"UnityFramework base=0x%lx (%s)",
               (unsigned long)unityBase, unityName ? unityName : "?"]);
 
-    // No installers yet — Frida exploration is pending. The stub still
-    // marks itself done so the retry loop stops once Unity is visible.
+    install_OnlineObserve_hook(unityBase);
+    install_LowLevelObserve_hook(unityBase);
+    install_MatchModeObserve_hook(unityBase);
+    // Inject_Move needs the observation hooks above already in place so it
+    // can lean on their `orig_*` pointers and self caches.
+    install_Inject_hook(unityBase);
+    // Phase 2: USI engine driver. Must come AFTER install_Inject_hook so
+    // inject_apply is fully wired before the WS handler can call into it.
+    usi_engine_install();
 
     g_unityHooked = YES;
-    file_log(@"=== KiouUsiProxy: Unity located, no hooks installed yet ===");
+    file_log(@"=== KiouUsiProxy: all hooks installed ===");
 }
 
 static void retryInstallHooks(void) {
@@ -64,6 +71,11 @@ __attribute__((constructor)) static void init(void) {
     logging_init("com.neconome.shogi.kiouusiproxy", "/var/tmp/kiou_usi_proxy.log");
     file_log(@"=== KiouUsiProxy loaded ===");
     file_log([NSString stringWithFormat:@"build commit=%s", KIOU_USI_PROXY_COMMIT]);
+
+    // Bring the WebSocket sink up as early as possible. It binds 0.0.0.0:9527
+    // and just sits there until a host connects — no host attached means
+    // every kiou_ws_server_push() call below is a no-op.
+    kiou_ws_server_start(9527);
 
     // UnityFramework is almost certainly not mapped yet at constructor time.
     installUnityHooks();
