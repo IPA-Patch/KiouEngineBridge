@@ -48,6 +48,10 @@ static void installUnityHooks(void) {
     // Inject_Move needs the observation hooks above already in place so it
     // can lean on their `orig_*` pointers and self caches.
     install_Inject_hook(unityBase);
+    // Pin GameOrchestrator.IsAfkEnabled to false so the "tap within 15s"
+    // popup never spawns during long engine thinking. Independent of all
+    // other hooks; install order doesn't matter for it.
+    install_AfkSuppress_hook(unityBase);
     // Phase 2: USI engine driver. Must come AFTER install_Inject_hook so
     // inject_apply is fully wired before the WS handler can call into it.
     usi_engine_install();

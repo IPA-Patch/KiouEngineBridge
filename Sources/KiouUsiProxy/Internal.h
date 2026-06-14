@@ -72,6 +72,7 @@ void install_OnlineObserve_hook(uintptr_t unityBase);
 void install_LowLevelObserve_hook(uintptr_t unityBase);
 void install_MatchModeObserve_hook(uintptr_t unityBase);
 void install_Inject_hook(uintptr_t unityBase);
+void install_AfkSuppress_hook(uintptr_t unityBase);
 void usi_engine_install(void);
 
 // ---------------------------------------------------------------------------
@@ -228,6 +229,12 @@ bool inject_apply(NSString *usi,
                   NSString **outSfenAfter,
                   uint32_t *outRaw,
                   NSString **outErr);
+
+// Read the SFEN of whatever Position the resolver hands us — useful for
+// the post-handshake kick when the WS client connects mid-game. Returns
+// nil when no Position is reachable. Must be called on the main thread
+// because it touches il2cpp accessors.
+NSString *inject_currentSfen(void);
 
 // ---------------------------------------------------------------------------
 // Usi_Engine.m — the USI-client state machine that drives YaneuraOu and

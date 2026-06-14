@@ -3,9 +3,7 @@
 #import <ctype.h>
 #import <mach/mach_time.h>
 #import <pthread.h>
-#import <stdlib.h>
 #import <string.h>
-#import <sys/stat.h>
 
 // ===========================================================================
 // Inject_Move — host-driven move injection.
@@ -105,22 +103,22 @@ static void *inject_latestPositionFromCachedGameCtrl(void);
 
 // ---------------------------------------------------------------------------
 // Online-server gate state. Online's OnPlayerMoveAsync forwards the move to
-// the rating-affecting backend over gRPC. Default off; opt in with BOTH the
-// env var AND the flag file so a misconfigured host can't tip into ratings
-// tampering with a stray bestmove. Read once at install time.
+// the rating-affecting backend over gRPC. We now opt in unconditionally so
+// FriendMatch / RankMatch auto-play through the WASM engine works the same
+// way CPU games do — the previous env/flag-file gate is wired off.
+//
+// What this enables:
+//   - usi_engine_on_match_start fires with the OnlinePvPMode's _localPlayer,
+//     so the engine knows which seat to think for.
+//   - Injection's route picker treats online_opm as eligible just like the
+//     CPU-side routes, so a bestmove from the WASM engine lands through
+//     OPM → server, not just the headless adapter.
+//
+// User explicitly approved this — see KiouUsiProxy/CLAUDE-style note in the
+// repo if you're auditing. The previous default (off) protected ratings;
+// flipping it now means the tweak will play ranked games.
 // ---------------------------------------------------------------------------
-static bool g_onlineServerSendAllowed = false;
-
-#define KIOU_USI_PROXY_FLAG_PATH \
-    "/var/mobile/Documents/kiou_usi_player_move.flag"
-
-static bool inject_loadOnlineSendGate(void) {
-    const char *envVal = getenv("KIOU_USI_PROXY_PLAYER_MOVE");
-    if (!envVal || strcmp(envVal, "1") != 0) return false;
-    struct stat st;
-    if (stat(KIOU_USI_PROXY_FLAG_PATH, &st) != 0) return false;
-    return true;
-}
+static bool g_onlineServerSendAllowed = true;
 
 // ---------------------------------------------------------------------------
 // mach_absolute_time -> microseconds. Cached timebase.
@@ -968,6 +966,12 @@ bool inject_apply(NSString *usi,
 // Idempotent: if the installer is invoked twice (Tweak.m retry loop) the
 // second call notices g_SunfishMoveDrop is already set and bails out.
 // ---------------------------------------------------------------------------
+// Public wrapper around inject_sfenFromCachedGameCtrl for callers outside
+// this translation unit (Usi_Engine.m). MUST be called on the main thread.
+NSString *inject_currentSfen(void) {
+    return inject_sfenFromCachedGameCtrl();
+}
+
 void install_Inject_hook(uintptr_t unityBase) {
     if (g_SunfishMoveDrop) {
         file_log(@"[INJECT] install: already initialized, skipping");
@@ -989,10 +993,11 @@ void install_Inject_hook(uintptr_t unityBase) {
     g_Position_CreateByType =
         (Position_CreateByType_t)(void *)(unityBase + RVA_POSITION_CREATE_BY_TYPE);
 
-    g_onlineServerSendAllowed = inject_loadOnlineSendGate();
-
-    // The WS text handler is owned by Usi_Engine.m in Phase 2. Inject_Move
-    // is now a pure helper that Usi_Engine calls into via inject_apply().
+    // g_onlineServerSendAllowed is now a compile-time `true` — the env
+    // var + flag-file gate was removed when online auto-play was opted
+    // into. The WS text handler is owned by Usi_Engine.m in Phase 2.
+    // Inject_Move is now a pure helper that Usi_Engine calls into via
+    // inject_apply().
 
     file_log([NSString stringWithFormat:
               @"[INJECT] installed: create@0x%lx createDrop@0x%lx "

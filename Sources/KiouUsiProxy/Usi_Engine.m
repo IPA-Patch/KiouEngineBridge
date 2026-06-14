@@ -7,13 +7,19 @@
 // Usi_Engine — KiouUsiProxy as a USI client driving an external engine.
 //
 // Phase 2 architecture:
-//   tweak (us)            = USI client / USI User. We own the position
-//                           (= KIOU's internal state) and ask an external
-//                           engine to think for us.
-//   YaneuraOu (or any USI engine) = USI engine. Connects to our ws server,
-//                           receives `usi` / `isready` / `usinewgame` /
-//                           `position sfen ...` / `go ...`, replies with
-//                           `bestmove <usi>`.
+//   tweak (us)            = pure translator between Kiou Engine (the in-app
+//                           il2cpp CPU) and the external USI engine. We own
+//                           the position view (= KIOU's internal state) and
+//                           hand it off as a USI `position` line. We do NOT
+//                           configure the engine and we do NOT drive its
+//                           thinking — that's the bridge's job.
+//   bridge (TypeScript)   = sits between us and the USI engine. Owns all
+//                           engine setup (`setoption ...`) and thinking
+//                           cadence (`go ...`). Forwards our handshake +
+//                           `position` lines into the engine, and forwards
+//                           the engine's `bestmove` back to us.
+//   USI engine            = whatever the bridge spawns (YaneuraOu w/ Suisho5
+//                           NNUE, etc). We never speak to it directly.
 //
 // Flow (one half-move):
 //
@@ -22,8 +28,9 @@
 //      ↓ usi_engine_on_move_observed(usi, sfen_after, side_to_move)
 //      ↓ side_to_move == g_<mode>LocalPlayer  ?
 //      yes →  usi_engine_send_line("position sfen <sfen_after>")
-//             usi_engine_send_line("go movetime 1000")
 //             state = THINKING
+//             (bridge sees the position line and triggers the engine to
+//              think with its own `go` cadence)
 //      no  →  (do nothing, wait for the next move)
 //
 //   YaneuraOu thinks, sends "bestmove 7g7f"
@@ -43,11 +50,14 @@
 // ===========================================================================
 
 // ---------------------------------------------------------------------------
-// Tunables. Movetime is for the engine's `go movetime <ms>`; bumping it
-// trades latency for stronger play. 1000ms is a good "feel" default —
-// KIOU's own CPU pauses are 0.5–2 seconds so nothing looks out of place.
+// Tweak is just a translator between Kiou Engine (in-app il2cpp CPU) and
+// the external USI engine. Thinking parameters live in two places:
+//   - YaneuraOu side : bridge sends `setoption ...` before usiok
+//   - Kiou Engine    : decided inside the app, not our concern
+// We send `position sfen ...` on the tweak side; the bridge observes that
+// line and injects whatever `go ...` it wants into the engine. Thus tweak
+// itself never emits a `go` line.
 // ---------------------------------------------------------------------------
-#define USI_ENGINE_DEFAULT_MOVETIME_MS  1000
 
 // ---------------------------------------------------------------------------
 // State. All access goes through stdatomic so the recv queue (where USI
@@ -109,6 +119,10 @@ static void usi_set_state(int newState) {
     }
 }
 
+// Forward decl — defined further down once usi_engine_request_thinking
+// is in scope. Both match_start and the readyok handler call this.
+static void usi_engine_try_kick_on_main(NSString *tag);
+
 // ---------------------------------------------------------------------------
 // Match lifecycle. Called from Hook_MatchModeObserve.m.
 // ---------------------------------------------------------------------------
@@ -119,50 +133,25 @@ void usi_engine_on_match_start(int32_t local_player) {
               (int)local_player,
               usi_state_name(atomic_load(&g_usiState))]);
 
-    // If we're already past handshake when a match begins, send
-    // `usinewgame` to reset the engine's per-game state. The handshake
-    // path also sends `usinewgame` once at readyok time; this is
-    // harmless to repeat — USI engines reset cleanly on it.
-    int s = atomic_load(&g_usiState);
-    if (s == USI_STATE_READY || s == USI_STATE_THINKING) {
-        usi_engine_send_line(@"usinewgame");
-    }
+    // NOTE: we do NOT send `usinewgame` here. The readyok handler already
+    // sent one when the bridge connected, and the engine sits in "ready
+    // for a new game" until the first `position` arrives. Sending a second
+    // `usinewgame` confused the trace (two back-to-back ones in the log)
+    // and bought us nothing — USI engines don't need re-priming per match.
 
     // First-move kick: if we're the side to move at match start (e.g.
-    // playing Black with no resume state), the observation hook won't
-    // fire until after the first move. Read the current side from the
-    // game adapter and, if it matches us, send position+go now.
+    // playing sente against the in-app CPU), no observation will fire
+    // until after our move. Read the current SFEN and, if it's our turn,
+    // ship it to the bridge so YaneuraOu can answer.
     //
-    // We do this on a short delay so the local engine has time to settle
-    // into its starting Position. inject's resolver already handles the
-    // "no GameCtrl, use Standard opening" case, so the SFEN is reachable
-    // even at t=0.
+    // 0.5s delay lets KIOU's mode code finish wiring the GameController
+    // and authoritative SFEN — at t=0 inject_currentSfen() often returns
+    // empty because nothing has populated GameCtrl yet.
     if (local_player == 0 || local_player == 1) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
                                      (int64_t)(0.5 * NSEC_PER_SEC)),
                        dispatch_get_main_queue(), ^{
-            // Reuse the observation callback's logic by faking a "the
-            // opponent just moved" event with the current SFEN and
-            // side_to_move read from GameController.
-            // We can't easily synthesize the usi argument (there's no
-            // observed move) so we pass nil — usi_engine_on_move_observed
-            // tolerates that and only uses it for logging.
-            //
-            // NOTE: This path may race with the first real ADAPTER2
-            // observation. That's fine: the state check in the callback
-            // ensures only one position+go goes out per turn.
-            extern void *volatile g_gameCtrlCache;
-            (void)g_gameCtrlCache;  // suppress unused warning
-            // We don't have a direct helper to read sfen+side here that
-            // lives outside Inject_Move.m, so the simpler path is to let
-            // the first ADAPTER2 hit do the work. The kickstart is only
-            // necessary when we're moving FIRST and there's been no
-            // earlier move at all; in CPUStreamMode that's rare because
-            // resume + opening normally come with at least one observed
-            // move before our turn. Leave this stub in place for a
-            // future patch that reads the SFEN directly.
-            file_log(@"[USI] match_start kickstart deferred until first "
-                      "ADAPTER2 observation");
+            usi_engine_try_kick_on_main(@"match_start");
         });
     }
 }
@@ -180,7 +169,13 @@ void usi_engine_on_match_end(void) {
 }
 
 // ---------------------------------------------------------------------------
-// Outbound: build `position sfen ...` + `go movetime ...` and send.
+// Outbound: send `position sfen ...` only. The bridge observes the
+// position line on the WS, then writes its own `go` to the engine's
+// stdin (the engine is on the bridge side, not the tweak side, so
+// nothing crosses the WS for go). Thinking limits live entirely in the
+// engine via `setoption ...` configured by the bridge at startup
+// (DepthLimit, etc). Once the line goes out we flip to THINKING and
+// wait for `bestmove` to come back over the WS.
 // ---------------------------------------------------------------------------
 static void usi_engine_request_thinking(NSString *sfen) {
     if (sfen.length == 0) {
@@ -189,9 +184,54 @@ static void usi_engine_request_thinking(NSString *sfen) {
     }
     usi_engine_send_line([NSString stringWithFormat:@"position sfen %@",
                           sfen]);
-    usi_engine_send_line([NSString stringWithFormat:@"go movetime %d",
-                          USI_ENGINE_DEFAULT_MOVETIME_MS]);
     usi_set_state(USI_STATE_THINKING);
+}
+
+// Try to kick a position+think for the current board, given that we may
+// already know the seat and have a usable SFEN reachable from the il2cpp
+// helpers. Used both right after `readyok` (in case the bridge connected
+// mid-game) and right after match_start (in case we're sente and the
+// opponent will never trigger an ADAPTER2 observation for us). Must run
+// on the main thread — inject_currentSfen() touches il2cpp accessors.
+//
+// `tag` is just for the file log so it's obvious which path called us.
+static void usi_engine_try_kick_on_main(NSString *tag) {
+    int seat = atomic_load(&g_localPlayerSide);
+    if (seat != 0 && seat != 1) {
+        file_log([NSString stringWithFormat:
+                  @"[USI] kick(%@): no fixed seat yet, "
+                  @"waiting for first observation", tag]);
+        return;
+    }
+    NSString *sfen = inject_currentSfen();
+    if (sfen.length == 0) {
+        file_log([NSString stringWithFormat:
+                  @"[USI] kick(%@): no SFEN available yet", tag]);
+        return;
+    }
+    // Inspect the side-to-move character at sfen[1] (after the board).
+    int32_t sideToMove = -1;
+    NSArray<NSString *> *parts = [sfen componentsSeparatedByString:@" "];
+    if (parts.count >= 2) {
+        NSString *s = parts[1];
+        if      ([s isEqualToString:@"b"]) sideToMove = 0;
+        else if ([s isEqualToString:@"w"]) sideToMove = 1;
+    }
+    if (sideToMove != seat) {
+        file_log([NSString stringWithFormat:
+                  @"[USI] kick(%@): not our turn (side=%d seat=%d)",
+                  tag, (int)sideToMove, (int)seat]);
+        return;
+    }
+    if (atomic_load(&g_usiState) != USI_STATE_READY) {
+        file_log([NSString stringWithFormat:
+                  @"[USI] kick(%@): state not READY (%s), skipping",
+                  tag, usi_state_name(atomic_load(&g_usiState))]);
+        return;
+    }
+    file_log([NSString stringWithFormat:
+              @"[USI] kick(%@): starting thinking with current board", tag]);
+    usi_engine_request_thinking(sfen);
 }
 
 // ---------------------------------------------------------------------------
@@ -290,6 +330,13 @@ static void usi_engine_handle_line(NSString *line) {
     if ([cmd isEqualToString:@"readyok"]) {
         usi_engine_send_line(@"usinewgame");
         usi_set_state(USI_STATE_READY);
+        // If the bridge connected mid-game (user already in a CPU match
+        // before launching us), no observation will fire until the next
+        // move plays. Kick a position right now if we already know the
+        // seat and it's our turn.
+        dispatch_async(dispatch_get_main_queue(), ^{
+            usi_engine_try_kick_on_main(@"post-readyok");
+        });
         return;
     }
     if ([cmd isEqualToString:@"info"]) {
