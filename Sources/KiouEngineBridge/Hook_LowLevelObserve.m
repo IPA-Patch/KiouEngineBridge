@@ -200,7 +200,7 @@ static NSString *describeMoveBits(SfMove m) {
 // ---------------------------------------------------------------------------
 // ShogiGameAdapter.TryMakeMove(Move, out Move)
 // ---------------------------------------------------------------------------
-static bool hook_AdapterTryMakeMoveOut(void *self, SfMove move, void *outMove) {
+bool hook_AdapterTryMakeMoveOut(void *self, SfMove move, void *outMove) {
     // Update the injection-side cache before the original runs. Order matters:
     // we want g_adapterCache to be non-NULL as soon as anything goes through
     // this path, and we want g_gameCtrlCache to point at the same Adapter's

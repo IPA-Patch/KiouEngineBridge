@@ -66,8 +66,8 @@ static GameOrch_ActivateAsync_t orig_GameOrch_ActivateAsync = NULL;
 // ---------------------------------------------------------------------------
 static uint32_t g_orchSeen = 0;
 
-static UniTaskRet hook_GameOrch_ActivateAsync(void *self, void *setup,
-                                               void *assetLoader, void *ct) {
+UniTaskRet hook_GameOrch_ActivateAsync(void *self, void *setup,
+                                       void *assetLoader, void *ct) {
     if (g_gameOrchestratorCache != self) g_gameOrchestratorCache = self;
     uint32_t n = ++g_orchSeen;
     // Match the seen-counter cadence used by the OPM hooks: log the first

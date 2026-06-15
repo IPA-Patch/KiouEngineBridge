@@ -67,9 +67,14 @@ def test_cave_budget_fits():
     assert cave_count * 84 <= (r.CAVE_REGION[1] - r.CAVE_REGION[0])
 
 
-def test_plist_keys_empty_for_bridge():
+def test_plist_keys_file_sharing():
     r = _load()
-    # Bridge is TCP-only (Server_WebSocket.m on 0.0.0.0:9527), no Bonjour,
-    # so no Info.plist additions are needed. KifExporter is the recipe
-    # that ships UIFileSharingEnabled / LSSupportsOpeningDocumentsInPlace.
-    assert r.PLIST_KEYS == {}
+    # Bridge needs the Files.app keys so the binpatch log path under
+    # Documents (IPA_LOG_TO_DOCUMENTS=1 in the binpatch Makefile target)
+    # is reachable from the host. WebSocket on 0.0.0.0:9527 does not
+    # need any Bonjour / NSLocalNetworkUsageDescription entry, so the
+    # plist additions are only these two.
+    assert r.PLIST_KEYS == {
+        "UIFileSharingEnabled": True,
+        "LSSupportsOpeningDocumentsInPlace": True,
+    }
