@@ -51,6 +51,19 @@ static void installUnityHooks(void) {
               @"UnityFramework base=0x%lx (%s)",
               (unsigned long)unityBase, unityName ? unityName : "?"]);
 
+#if KIOU_BINPATCH
+    // On the binpatch build, every observation hook is wired by the static
+    // cave at app launch (recipes/kiouenginebridge.py); all we need at
+    // runtime is to publish the dispatcher pointer into the __DATA,__bss
+    // SLOT so the cave's ADRP+LDR resolves to a real function pointer.
+    // Inject_Move is still a symbol-only resolver (no MSHookFunction) so it
+    // runs in both flavours. USI engine init must come after Inject_Move so
+    // inject_apply is wired before the WS handler can reach it.
+    kiou_bridge_binpatch_publish();
+    install_LowLevelObserve_hook(unityBase);  // symbol pointer resolves only
+    install_Inject_hook(unityBase);
+    usi_engine_install();
+#else
     install_OnlineObserve_hook(unityBase);
     install_LowLevelObserve_hook(unityBase);
     install_MatchModeObserve_hook(unityBase);
@@ -72,6 +85,7 @@ static void installUnityHooks(void) {
     // Phase 2: USI engine driver. Must come AFTER install_Inject_hook so
     // inject_apply is fully wired before the WS handler can call into it.
     usi_engine_install();
+#endif
 
     g_unityHooked = YES;
     file_log(@"=== KiouEngineBridge: all hooks installed ===");

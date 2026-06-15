@@ -12,7 +12,7 @@
 </p>
 
 <p align="center">
-  <img alt="platform" src="https://img.shields.io/badge/platform-iOS%2015.0%E2%80%9316.5-blue?style=flat-square" />
+  <img alt="platform" src="https://img.shields.io/badge/platform-iOS%2015.0%E2%80%9318.x-blue?style=flat-square" />
   <img alt="arch" src="https://img.shields.io/badge/arch-arm64%20rootless-555?style=flat-square" />
   <img alt="target" src="https://img.shields.io/badge/target-com.neconome.shogi-ff66a3?style=flat-square" />
   <img alt="engine" src="https://img.shields.io/badge/engine-Unity%206%20%2B%20il2cpp-black?style=flat-square" />
@@ -181,32 +181,42 @@ The dylib lands at `/var/jb/Library/MobileSubstrate/DynamicLibraries/KiouEngineB
 and is loaded by MobileSubstrate / ElleKit on next launch. Respring or
 relaunch KIOU, then point your host bridge at `ws://<device-ip>:9527`.
 
-### Sideloadly / AltStore / Apple Developer Program
+### Non-JB (Sideloadly / TrollStore / AltStore / Apple Developer Program)
 
 ```sh
-make jailed
-# -> packages/jailed/KiouEngineBridge.dylib
+make binpatch
+# -> packages/binpatch/KiouEngineBridge.dylib
+
+shared/tools/build_patched_ipa.sh \
+  --recipe kiouenginebridge \
+  --framework UnityFramework \
+  --dylib packages/binpatch/KiouEngineBridge.dylib \
+  --input Kiou-1.0.1.ipa
+# -> Kiou-1.0.1-patched.ipa
 ```
 
-`make jailed` rebuilds with Dobby statically linked and copies the
-artifact into `packages/jailed/`. The target also runs `otool -L` and
-the output must **not** mention `libsubstrate` or `libdobby`.
+The patched IPA can be installed via TrollStore (direct), Sideloadly /
+AltStore (sign with Apple ID), or the Apple Developer Program (sign
+with a paid cert). Unlike runtime hook engines (Substrate, Dobby,
+frida-gum), the static binary patch never writes to `__TEXT` at
+runtime and therefore survives the iOS 18 Code Signing Monitor (CSM) —
+the binpatch flavour covers iOS 15.0 – 18.x.
 
-In Sideloadly:
-
-1. Drop the decrypted KIOU `.ipa` in.
-2. Under **Inject dylibs**, add `packages/jailed/KiouEngineBridge.dylib`.
-3. Sign with your Apple ID / certificate and install.
-
-The same dylib works with AltStore (drop the IPA in, add the dylib
-under **Settings -> Advanced** before signing).
+**Note:** the binpatch build omits the `meta` sidecar lines. KIF
+assembly on the host bridge depends on `meta {…}` lines emitted by the
+JB build's `GameStateStore` observation hooks. Non-JB users get USI
+handshake + position/go/bestmove and can still play through YaneuraOu,
+but no KIF record is assembled. See
+`docs/plans/kiou_engine_bridge_binpatch.md` § 2 for the full build
+matrix.
 
 ## Compatibility
 
 | | |
 |---|---|
 | **KIOU app version** | `1.0.1` (`CFBundleVersion` 11) |
-| **iOS** | 15.0 – 16.5, arm64, rootless |
+| **iOS (JB rootless build)** | 15.0 – 16.5, arm64, rootless |
+| **iOS (non-JB binpatch build)** | 15.0 – 18.x, arm64 |
 | **Engine wire** | standard USI protocol over WebSocket text frames |
 
 All hooks are pinned to RVAs from this exact KIOU build's
@@ -242,8 +252,8 @@ Sources/KiouEngineBridge/
   Usi_Engine.m                  # USI state machine (Phase 2)
   Server_WebSocket.m            # 0.0.0.0:9527 listener + recv loop
   Meta_Emitter.m                # sidecar JSON stream for KIF assembly
+  BinpatchDispatcher.m          # binpatch-only: publishes hook dispatcher into __bss SLOT
 
-vendor/dobby                    # symlink to KiouEditor/vendor/dobby/
 ../_shared/                     # kiou-shared submodule (logging, il2cpp, hookengine)
 ```
 
@@ -279,6 +289,19 @@ coexist in the same KIOU process:
 - [**Kiou Kif Exporter**](https://github.com/IPA-Patch/KiouKifExporter) —
   saves every match as a standard KIF 2.0 file in the app sandbox,
   ready for Files.app / AirDrop / PiyoShogi.
+
+Bridge and KifExporter use the same static-binpatch toolchain
+(`shared/tools/patch_macho.py`) and can be applied to the same IPA —
+their cave regions are partitioned
+(`docs/plans/kiou_kif_exporter_binpatch.md` § 8). Stack both dylibs in
+Sideloadly to ship a single patched IPA that does both jobs.
+
+## Plan documents
+
+- [`docs/plans/kiou_engine_bridge_binpatch.md`](docs/plans/kiou_engine_bridge_binpatch.md) —
+  this project's static-binpatch migration plan.
+- [`docs/plans/kiou_kif_exporter_binpatch.md`](docs/plans/kiou_kif_exporter_binpatch.md) —
+  the sibling KifExporter recipe that pioneered the same approach.
 
 ## License
 

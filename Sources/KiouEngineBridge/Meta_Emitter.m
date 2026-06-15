@@ -1,5 +1,22 @@
 #import "Internal.h"
 
+#if KIOU_BINPATCH
+// The meta sidecar is dropped on the binpatch flavour
+// (docs/plans/kiou_engine_bridge_binpatch.md § 2). Provide no-op stubs so
+// the Hook_*.m / Tweak.m call sites can compile without an #if guard at
+// every reference.
+void meta_set_match_config(void *cfg) { (void)cfg; }
+void meta_emit_match_start(int32_t local_player) { (void)local_player; }
+void meta_emit_move(NSString *usi, NSString *sfen_after, int32_t side_to_move) {
+    (void)usi; (void)sfen_after; (void)side_to_move;
+}
+void meta_emit_match_end(usi_match_result_t result,
+                         NSString *final_sfen,
+                         NSString *usi_text) {
+    (void)result; (void)final_sfen; (void)usi_text;
+}
+#else
+
 #import <mach/mach_time.h>
 
 // ===========================================================================
@@ -531,3 +548,5 @@ void meta_set_match_config(void *cfg) {
         g_metaPendingLocalPlayer = -1;
     }
 }
+
+#endif  // !KIOU_BINPATCH

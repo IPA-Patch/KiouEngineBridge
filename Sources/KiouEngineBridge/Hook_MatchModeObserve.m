@@ -258,13 +258,13 @@ DEFINE_INIT_HOOK(replay,    "RecordReplayMode", g_recordReplayModeCache,
 // we just call through.
 // ---------------------------------------------------------------------------
 
-// The hook function body no longer calls orig itself. On the JB build the
-// MSHookFunction trampoline runs orig before/after our hook depending on how
-// the trampoline is wired; on the binpatch build the static cave runs the
-// displaced prologue and branches to orig + 4. Either way, orig completes
-// synchronously inside the same main-runloop iteration that entered this
-// hook, so a block dispatched to dispatch_get_main_queue() here runs AFTER
-// orig has finished and `_localPlayer` is populated.
+// The hook body uses KIOU_CALL_ORIG_VOID to run orig before the deferred
+// block — on the JB build that drives the real OnMatchStart synchronously
+// (without it, MSHookFunction would replace the function wholesale); on the
+// binpatch build it expands to (void)0 because the cave already runs the
+// displaced prologue + `B orig+4` outside this function. Either way orig is
+// guaranteed to have run by the time the dispatched block fires on the next
+// main-runloop spin, so `_localPlayer` is populated when the block reads it.
 //
 // We capture `self` and `lp_offset` by value into the block (both are POD —
 // `self` is a void *, no ARC retain). The LP_CACHE / file_log / usi /
@@ -273,6 +273,7 @@ DEFINE_INIT_HOOK(replay,    "RecordReplayMode", g_recordReplayModeCache,
 #define DEFINE_START_HOOK(MODE_LOWER, MODE_TAG, CACHE_VAR, LP_CACHE, LP_OFFSET, ORIG_VAR) \
     static void hook_##MODE_LOWER##_Start(void *self) {                                   \
         if ((CACHE_VAR) != self) (CACHE_VAR) = self;                                      \
+        KIOU_CALL_ORIG_VOID(ORIG_VAR, self);                                              \
         void *selfCap = self;                                                             \
         uintptr_t lpOffsetCap = (uintptr_t)(LP_OFFSET);                                   \
         dispatch_async(dispatch_get_main_queue(), ^{                                      \
@@ -566,8 +567,12 @@ DEFINE_END_HOOK(replay,    "RecordReplayMode", g_recordReplayModeCache,
 #undef DEFINE_END_HOOK
 
 // ---------------------------------------------------------------------------
-// Installer. Wires up all five hooks.
+// Installer. Wires up all 20 hooks (5 modes × {Init / Start / OPM / End}).
+// On the binpatch build all 20 sites are routed by the static cave + SLOT
+// dispatcher (KIOU_BR_HOOK_*_INIT / _START / _OPM / _END in
+// recipes/kiouenginebridge.py), so the installer is omitted there.
 // ---------------------------------------------------------------------------
+#if !KIOU_BINPATCH
 void install_MatchModeObserve_hook(uintptr_t unityBase) {
     struct { const char *tag; const char *what; uintptr_t rva;
              void *hook; void **origSlot; } entries[] = {
@@ -632,3 +637,4 @@ void install_MatchModeObserve_hook(uintptr_t unityBase) {
                   (unsigned long)addr, (unsigned long)entries[i].rva]);
     }
 }
+#endif  // !KIOU_BINPATCH

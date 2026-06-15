@@ -65,6 +65,41 @@
 #endif
 
 // ---------------------------------------------------------------------------
+// orig() invocation policy.
+//
+// On the JB build, MSHookFunction installs a trampoline at the target site;
+// the target function body NEVER runs unless our hook explicitly calls
+// orig(args). Forgetting to do so silently turns the hook into a wholesale
+// replacement — bad news for sites like ShogiGameAdapter.TryMakeMove whose
+// side effects (appending to _positionHistory, committing the move) are the
+// reason callers invoke it.
+//
+// On the binpatch build, the static cave runs the displaced prologue
+// instruction and then branches to orig + 4 verbatim — so orig is already
+// going to execute, and a second call from the hook body would double-run
+// the target. The hook must NOT call orig in that case.
+//
+// KIOU_CALL_ORIG_VOID / KIOU_CALL_ORIG_RET hide the distinction. Hook bodies
+// uniformly write `KIOU_CALL_ORIG_VOID(orig, self, ...)` / etc.; the macro
+// expands to the original call on JB and to a no-op on binpatch.
+//
+// Use the _RET variant when the original returns a value the hook (or the
+// caller) needs. `RET_T` is the return type; on binpatch the macro returns
+// a value-initialised RET_T (i.e. `(RET_T){0}`), which the caller never
+// actually consumes because the cave's `B orig + 4` re-enters the real
+// function and that return value is what the caller sees.
+// ---------------------------------------------------------------------------
+#if KIOU_BINPATCH
+#  define KIOU_CALL_ORIG_VOID(ORIG, ...)         ((void)0)
+#  define KIOU_CALL_ORIG_RET(RET_T, ORIG, ...)   ((RET_T){0})
+#else
+#  define KIOU_CALL_ORIG_VOID(ORIG, ...)                                       \
+       do { if ((ORIG)) (ORIG)(__VA_ARGS__); } while (0)
+#  define KIOU_CALL_ORIG_RET(RET_T, ORIG, ...)                                 \
+       ((ORIG) ? (ORIG)(__VA_ARGS__) : (RET_T){0})
+#endif
+
+// ---------------------------------------------------------------------------
 // Per-module hook installers. Tweak.m calls each one once UnityFramework has
 // shown up; each installer guards itself if invoked twice.
 // ---------------------------------------------------------------------------

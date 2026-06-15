@@ -58,6 +58,7 @@ static bool hook_IsAfkEnabled(void *self) {
     return false;
 }
 
+#if !KIOU_BINPATCH
 void install_AfkSuppress_hook(uintptr_t unityBase) {
     uintptr_t addr = unityBase + RVA_GAMEORCH_IS_AFK_ENABLED;
     MSHookFunction((void *)addr,
@@ -69,3 +70,7 @@ void install_AfkSuppress_hook(uintptr_t unityBase) {
               (unsigned long)addr,
               (unsigned)RVA_GAMEORCH_IS_AFK_ENABLED]);
 }
+#endif  // !KIOU_BINPATCH
+// On the binpatch build, IsAfkEnabled is replaced wholesale by a
+// `MOVZ W0, #0; RET` inline patch in recipes/kiouenginebridge.py (PATCHES),
+// so install_AfkSuppress_hook is intentionally omitted here.

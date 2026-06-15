@@ -87,6 +87,7 @@ static UniTaskRet hook_GameOrch_ActivateAsync(void *self, void *setup,
 // ---------------------------------------------------------------------------
 // Installer. Called once from Tweak.m::installUnityHooks().
 // ---------------------------------------------------------------------------
+#if !KIOU_BINPATCH
 void install_GameOrchestratorObserve_hook(uintptr_t unityBase) {
     uintptr_t addr = unityBase + RVA_GAMEORCH_ACTIVATE;
     MSHookFunction((void *)addr, (void *)hook_GameOrch_ActivateAsync,
@@ -96,3 +97,8 @@ void install_GameOrchestratorObserve_hook(uintptr_t unityBase) {
               @"(base+0x%lx)",
               (unsigned long)addr, (unsigned long)RVA_GAMEORCH_ACTIVATE]);
 }
+#endif  // !KIOU_BINPATCH
+// On the binpatch build, the static cave routes GameOrchestrator.ActivateAsync
+// through the SLOT-published dispatcher (see recipes/kiouenginebridge.py
+// CAVE_PATCHES entry KIOU_BR_HOOK_GAMEORCH_ACTIVATE). The dispatcher will
+// invoke hook_GameOrch_ActivateAsync once Phase E wires it up.
