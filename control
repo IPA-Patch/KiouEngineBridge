@@ -1,8 +1,8 @@
-Package: work.tkgstrator.kiouusiproxy
-Name: KiouUsiProxy
+Package: work.tkgstrator.kiouenginebridge
+Name: KiouEngineBridge
 Version: 0.1.0
 Architecture: iphoneos-arm64
-Description: KIOU (Shogi) USI bridge tweak. Observes the in-game board state (SFEN) and committed moves (USI) and exposes them over a local gRPC endpoint so a host-side proxy can drive a desktop USI engine (YaneuraOu et al.) against the live position. Read-only with respect to game state — no items, currency, or server messages are modified. Companion tweak to KiouEditor; they can be installed together. For authorized testing only.
+Description: KIOU (Shogi) USI engine bridge tweak. Observes the in-game board state (SFEN) and committed moves (USI) and exposes them over a local WebSocket so a host-side bridge can drive a desktop USI engine (YaneuraOu et al.) against the live position; the engine's bestmove is replayed back into the game. Companion tweak to KiouEditor and KiouKifExporter; all three can coexist. For authorized testing only.
 Maintainer: NEVER KNOWS BEST
 Author: tkgstrator
 Section: Tweaks

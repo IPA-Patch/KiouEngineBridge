@@ -5,6 +5,7 @@
 #import <errno.h>
 #import <fcntl.h>
 #import <netinet/in.h>
+#import <netinet/tcp.h>
 #import <sys/socket.h>
 #import <unistd.h>
 
@@ -40,7 +41,7 @@
 //   - Multi-client fan-out. One bridge, one debugger — keep it boring.
 //   - Backpressure / flow control beyond the drop policy above.
 //
-// All log lines tagged [WS] land in the shared kiou_usi_proxy.log via
+// All log lines tagged [WS] land in the shared kiouenginebridge.log via
 // file_log() so a quiet socket is still debuggable from outside.
 // ===========================================================================
 
@@ -76,6 +77,32 @@ static kiou_ws_text_handler_t g_textHandler = NULL;
 static void ws_set_nonblock(int fd) {
     int flags = fcntl(fd, F_GETFL, 0);
     if (flags >= 0) fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+}
+
+// Enable SO_KEEPALIVE with aggressive timers so a silently-dead peer
+// (= bridge SIGKILL'd, network cable yanked) is detected within ~15s
+// rather than the Darwin default of ~2 hours. Without this the recv
+// loop can sit blocked on a peer that's been gone forever, with
+// g_clientFd still held, which means the next bridge connect attempt
+// gets refused with the "Already serving someone" 409 below.
+//
+// TCP_KEEPALIVE  is Darwin's name for the idle-time-before-probe knob.
+// TCP_KEEPINTVL  is the interval between probes once started.
+// TCP_KEEPCNT    is how many lost probes count as "peer is dead".
+// 5s idle + 3s × 3 probes = peer death detected ~15s after a dirty drop.
+//
+// All four setsockopt calls are best-effort — if the kernel refuses one
+// the worst case is we fall back to the OS default, which is "slow but
+// works".
+static void ws_set_keepalive(int fd) {
+    int on = 1;
+    (void)setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &on, sizeof(on));
+    int idle = 5;          // seconds of idle before the first probe
+    int intvl = 3;         // seconds between subsequent probes
+    int count = 3;         // probes lost before declaring the peer dead
+    (void)setsockopt(fd, IPPROTO_TCP, TCP_KEEPALIVE, &idle,  sizeof(idle));
+    (void)setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &intvl, sizeof(intvl));
+    (void)setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT,   &count, sizeof(count));
 }
 
 static BOOL ws_send_all(int fd, const uint8_t *buf, size_t len) {
@@ -380,16 +407,28 @@ static void ws_handle_accept(void) {
         return;
     }
 
-    if (g_clientFd >= 0) {
-        // Already serving someone. Reject politely and move on.
-        const char *busy = "HTTP/1.1 409 Conflict\r\nContent-Length: 0\r\n\r\n";
-        send(fd, busy, strlen(busy), 0);
-        close(fd);
-        return;
-    }
-
     char ip[INET_ADDRSTRLEN] = {0};
     inet_ntop(AF_INET, &peer.sin_addr, ip, sizeof(ip));
+
+    // New-client-wins policy. The previous "1 client only, second one
+    // gets 409" rule made bridge restarts painful: a Ctrl-C'd bridge can
+    // leave the TCP session in TIME_WAIT on its side, the kernel here
+    // hasn't yet noticed EOF, the recv loop is still parked on a dead
+    // fd, and the freshly-spawned bridge eats a 409. Since the bridge
+    // is the only legitimate WS client (control of the engine —
+    // observers are out of scope on this socket), an incoming connect
+    // is unambiguous evidence that the previous holder is gone. Close
+    // the old fd from the accept queue (same queue ws_close_client
+    // runs on — no cross-queue race), then carry on accepting the new
+    // peer.
+    if (g_clientFd >= 0) {
+        file_log([NSString stringWithFormat:
+                  @"[WS] preempt: closing prior client fd=%d to make room "
+                  @"for %s:%u",
+                  g_clientFd, ip, (unsigned)ntohs(peer.sin_port)]);
+        ws_close_client();
+    }
+
     file_log([NSString stringWithFormat:@"[WS] accepted from %s:%u fd=%d",
               ip, (unsigned)ntohs(peer.sin_port), fd]);
 
@@ -400,6 +439,12 @@ static void ws_handle_accept(void) {
     // blocking there is fine.
     int flags = fcntl(fd, F_GETFL, 0);
     if (flags >= 0) fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
+
+    // SO_KEEPALIVE + tight intervals: dead peers detected in ~15s
+    // instead of the Darwin default 2-hour idle. Keeps the recv loop
+    // from blocking forever on a bridge that vanished without sending
+    // a Close frame.
+    ws_set_keepalive(fd);
 
     if (!ws_perform_handshake(fd)) {
         close(fd);

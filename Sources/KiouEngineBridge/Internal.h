@@ -9,7 +9,7 @@
 #import "kiou_logging.h"
 
 // ===========================================================================
-// Internal.h — KiouUsiProxy-private declarations.
+// Internal.h — KiouEngineBridge-private declarations.
 //
 // This tweak primarily observes KIOU state and pushes SFEN / USI strings out
 // over a WebSocket sink. As of the move-injection phase it also accepts
@@ -60,8 +60,8 @@
 //   continues until [MMODE] OnMatchEndAsync clears the cache.
 // ===========================================================================
 
-#ifndef KIOU_USI_PROXY_COMMIT
-#define KIOU_USI_PROXY_COMMIT "unknown"
+#ifndef KIOU_ENGINE_BRIDGE_COMMIT
+#define KIOU_ENGINE_BRIDGE_COMMIT "unknown"
 #endif
 
 // ---------------------------------------------------------------------------
@@ -73,7 +73,20 @@ void install_LowLevelObserve_hook(uintptr_t unityBase);
 void install_MatchModeObserve_hook(uintptr_t unityBase);
 void install_Inject_hook(uintptr_t unityBase);
 void install_AfkSuppress_hook(uintptr_t unityBase);
+void install_GameOrchestratorObserve_hook(uintptr_t unityBase);
 void usi_engine_install(void);
+
+// UnityFramework base address captured at install time. Exposed so the
+// match-end auto-rematch path can resolve static il2cpp methods
+// (CpuMatchStarter.StartCpuFreeMatchAsync etc.) from inside a dispatch_after
+// block that doesn't carry the installer's unityBase on the stack.
+extern uintptr_t g_unityBase;
+
+// GameOrchestrator instance, captured the first time
+// GameOrchestrator.ActivateAsync passes through our hook. Used by the
+// match-end auto-rematch path to close the result overlay before kicking the
+// next match. NULL until ActivateAsync has fired at least once.
+extern void *volatile g_gameOrchestratorCache;
 
 // ---------------------------------------------------------------------------
 // WebSocket server (Server_WebSocket.m). Boot once at constructor time,
@@ -262,12 +275,91 @@ void usi_engine_on_move_observed(NSString *usi,
 // Match lifecycle hooks. `local_player` is 0 (Black) or 1 (White), or -1
 // when the seat isn't fixed (LocalPvP / RecordReplay).
 void usi_engine_on_match_start(int32_t local_player);
-void usi_engine_on_match_end(void);
+
+// `result` is 0 (we won), 1 (we lost), 2 (draw), or -1 (unknown — no
+// gameover is sent to the bridge in that case). The seat-fixed modes
+// (AI / CPUStream / Online) pass 0/1/2 based on the final SFEN's
+// side-to-move vs the cached local-player seat; the open-seat modes
+// (LocalPvP / RecordReplay) pass -1 to suppress the notification.
+typedef enum {
+    USI_RESULT_UNKNOWN = -1,
+    USI_RESULT_WIN     = 0,
+    USI_RESULT_LOSE    = 1,
+    USI_RESULT_DRAW    = 2,
+} usi_match_result_t;
+
+void usi_engine_on_match_end(usi_match_result_t result);
 
 // WS client connection lifecycle. Server_WebSocket.m calls these from the
 // accept queue so the engine can drive the handshake.
 void usi_engine_on_ws_client_connected(void);
 void usi_engine_on_ws_client_disconnected(void);
+
+// ---------------------------------------------------------------------------
+// Meta_Emitter.m — 1-line JSON metadata stream that runs alongside the USI
+// protocol on the same WS port. Each line is prefixed with "meta " so the
+// bridge can route them to its KIF assembler without confusing them with
+// USI lines. All three emit functions are fire-and-forget — failures land
+// in the file log but never throw.
+// ---------------------------------------------------------------------------
+
+// Stash the MatchConfig that InitializeAsync passes in. Called from
+// Hook_MatchModeObserve's Init hook with the cfg arg, and from the End hook
+// with NULL to clear it. Subsequent meta_emit_match_start reads off this.
+void meta_set_match_config(void *cfg);
+
+// Emit "meta {type:match_start, ...}". Called right after OnMatchStart
+// latches the local-player seat (so we can carry it in the payload).
+void meta_emit_match_start(int32_t local_player);
+
+// Emit "meta {type:move, ...}". Called from Hook_LowLevelObserve's adapter
+// observation, right alongside usi_engine_on_move_observed. side_to_move is
+// the side whose turn it is NEXT — we flip to "who just moved" in the
+// payload.
+void meta_emit_move(NSString *usi, NSString *sfen_after, int32_t side_to_move);
+
+// Emit "meta {type:match_end, ...}". Called from Hook_MatchModeObserve's
+// END_HOOK after the result has been inferred. final_sfen is the SFEN read
+// from the GameController right before the cache gets cleared. usi_text is
+// the full game record (GameController.GetUSIText) — bridge 側でこれが
+// 入っていれば、これまで積んだ move 経路の Record を上書きして
+// グランドトゥルースとして使う。
+void meta_emit_match_end(usi_match_result_t result,
+                         NSString *final_sfen,
+                         NSString *usi_text);
+
+// Called from Hook_GameStateStoreObserve's Set*PlayerInfo hooks when the
+// matchmaking-resolved PlayerInfo arrives (Online). side: 0=Black, 1=White.
+// If a match_start emit is pending and BOTH sides are now in, this fires
+// match_start with the store-supplied PlayerInfo. CPU matches typically
+// don't reach this — the 1.5s OnMatchStart fallback timer covers them.
+void meta_on_player_info_set(int32_t side, void *playerInfo);
+
+// Installer for the GameStateStore.Set*PlayerInfo hooks.
+void install_GameStateStoreObserve_hook(uintptr_t unityBase);
+
+// ---------------------------------------------------------------------------
+// SfMove + low-level helpers, exported so observation hooks living in other
+// files (Hook_GameStateStoreObserve.m's NotifyPieceMoved) can reuse the same
+// SfMove→USI and GameController→SFEN conversion routines.
+// ---------------------------------------------------------------------------
+typedef uint32_t SfMove;
+
+// Convert Sunfish.Move (32-bit packed) → USI move string ("7g7f" / "P*5e" /
+// "8h2b+"). Returns nil on any failure. Implementation in
+// Hook_LowLevelObserve.m.
+NSString *moveToUsi(SfMove m);
+
+// Read the live SFEN of a GameController by walking its PositionHistory and
+// calling Position.ToSFEN. Returns nil on any failure. Implementation in
+// Hook_LowLevelObserve.m.
+NSString *sfenFromGameController(void *gameCtrl);
+
+// Read the full game-record text via GameController.GetUSIText. Returns nil
+// on any failure. Used by Meta_Emitter to attach the authoritative game
+// record to the match_end meta payload. Implementation in
+// Hook_LowLevelObserve.m.
+NSString *usiTextFromGameController(void *gameCtrl);
 
 // Send a literal USI line out to the engine (without trailing newline —
 // the helper adds one). Safe to call from any thread; serializes onto the
