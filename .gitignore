@@ -273,6 +273,10 @@ downloads/
 eggs/
 .eggs/
 lib/
+# Python's lib/ rule above sweeps up vendor/dobby/lib/libdobby.a. Re-include
+# the whole vendored Dobby tree so its prebuilt static archive stays tracked.
+!vendor/dobby/lib/
+!vendor/dobby/lib/**
 lib64/
 parts/
 sdist/
