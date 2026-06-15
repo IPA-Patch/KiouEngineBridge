@@ -1,0 +1,31 @@
+# Dependabot keeps the GitHub Actions `uses:` references and our git
+# submodules up-to-date. Two ecosystems (github-actions, gitsubmodule)
+# each run weekly, so the cap is one PR per ecosystem per week —
+# action bumps are grouped into a single PR.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: ci
+      include: scope
+    labels:
+      - dependencies
+      - github-actions
+
+  - package-ecosystem: gitsubmodule
+    directory: "/"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore
+      include: scope
+    labels:
+      - dependencies
+      - submodules
