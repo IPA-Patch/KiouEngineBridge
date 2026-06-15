@@ -60,7 +60,7 @@ methods as function pointers:
 What the injection layer is **not** allowed to do:
 
 - Touch il2cpp object fields directly. The shared header
-  `kiou_il2cpp.h` is intentionally read-only; the `writeU8` / `writeI32`
+  `il2cpp.h` is intentionally read-only; the `writeU8` / `writeI32`
   helpers that `KiouEditor` carries in its own `Internal.h` are
   deliberately **not** included here. Any future "tweak a board field"
   regression must opt in explicitly — they don't sneak in via the
@@ -254,7 +254,8 @@ Sources/KiouEngineBridge/
   Meta_Emitter.m                # sidecar JSON stream for KIF assembly
   BinpatchDispatcher.m          # binpatch-only: publishes hook dispatcher into __bss SLOT
 
-../_shared/                     # kiou-shared submodule (logging, il2cpp, hookengine)
+Sources/Common/                 # IPA-Patch/Common submodule (logging, il2cpp, hookengine)
+shared/                         # IPA-Patch/Shared submodule (binpatch tooling)
 ```
 
 ## Where the logs go
