@@ -59,3 +59,34 @@ binpatch::
 	@$(THEOS)/toolchain/linux/iphone/bin/otool -L packages/binpatch/KiouEngineBridge.dylib 2>/dev/null \
 	  || otool -L packages/binpatch/KiouEngineBridge.dylib 2>/dev/null \
 	  || echo "(otool unavailable on host; inspect the dylib on a Mac/iOS device)"
+
+# ---------------------------------------------------------------------------
+# Full patched-IPA pipeline (Phase 1.5 distribution unit).
+#
+# Builds the binpatch dylib and runs shared/tools/build_patched_ipa.sh to
+# produce a TrollStore / Sideloadly / AltStore / Apple Developer Program
+# ready IPA. The user supplies a decrypted clean KIOU IPA via
+# KIOU_CLEAN_IPA; the pipeline is driven by recipes/kiouenginebridge.py.
+#
+# This target NEVER redistributes a clean KIOU IPA — supply your own
+# decrypted copy. Defaults to assets/Kiou-1.0.1.ipa (which is .gitignored)
+# so a casual `make ipa` works in the dev container after the operator
+# drops the IPA there.
+# ---------------------------------------------------------------------------
+KIOU_CLEAN_IPA     ?= $(PWD)/assets/Kiou-1.0.1.ipa
+KIOU_IPA_RECIPE    := recipes.kiouenginebridge
+KIOU_IPA_FRAMEWORK := UnityFramework
+KIOU_IPA_DYLIB     := $(PWD)/packages/binpatch/KiouEngineBridge.dylib
+
+ipa:: binpatch
+	@echo "==> assembling patched IPA from $(KIOU_CLEAN_IPA)"
+	@if [ ! -f "$(KIOU_CLEAN_IPA)" ]; then \
+	  echo "error: clean KIOU IPA missing at $(KIOU_CLEAN_IPA)"; \
+	  echo "       override with: make ipa KIOU_CLEAN_IPA=/path/to/clean.ipa"; \
+	  exit 1; \
+	fi
+	@./shared/tools/build_patched_ipa.sh \
+	  --recipe    "$(KIOU_IPA_RECIPE)" \
+	  --framework "$(KIOU_IPA_FRAMEWORK)" \
+	  --dylib     "$(KIOU_IPA_DYLIB)" \
+	  --input     "$(KIOU_CLEAN_IPA)"
