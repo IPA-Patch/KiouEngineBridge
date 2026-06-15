@@ -6,7 +6,7 @@ the GameOrchestrator / OnlinePvP / CPUStream snapshot sites) calls into
 ``KiouEngineBridge.dylib`` for the binpatch flavour. The dylib is loaded
 automatically via ``LC_LOAD_DYLIB``; its constructor publishes a single
 dispatcher function pointer into a reserved ``__bss`` slot, and each
-cave loads that pointer and calls it with a per-site ``hook_id`` in W2.
+cave loads that pointer and calls it with a per-site ``hook_id`` in W6.
 
 How the patch chain works (see ``docs/plans/kiou_engine_bridge_binpatch.md``
 for the full design):
@@ -20,9 +20,13 @@ for the full design):
   3. For every Bridge observation site (21 entries) replace the
      prologue's first 4 bytes with ``B <cave>``. Each cave saves
      registers, materialises the SLOT address, loads the dispatcher,
-     stuffs the site's ``hook_id`` into W2, calls the dispatcher,
+     stuffs the site's ``hook_id`` into W6, calls the dispatcher,
      restores registers, runs the displaced prologue verbatim, and
-     branches to ``orig + 4``.
+     branches to ``orig + 4``. ``W6`` is used instead of ``W2`` because
+     several Bridge hook sites (``OnPlayerMoveAsync``,
+     ``UpdateAuthoritativeSnapshot``, ``Adapter.TryMakeMove``) carry a
+     real argument in ``X2``; routing the hook id through ``X6`` keeps
+     ``X2`` available for forwarding to the dispatcher.
   4. The single inline patch is ``IsAfkEnabled``: an 8-byte
      ``MOVZ W0, #0; RET`` replacement that turns the AFK check into a
      constant ``false``. The patch clobbers the second instruction of
@@ -140,24 +144,23 @@ _HOOK_IDS: dict[str, int] = {
 # Cave payload builder.
 #
 # Cave shape (21 insns = 84 bytes), see
-# docs/plans/kiou_engine_bridge_binpatch.md § 6 Phase C / mirror of the
-# KifExporter cave shape:
+# docs/plans/kiou_engine_bridge_binpatch.md § 6 Phase C:
 #
 #     STP X29, X30, [SP, #-0x90]!
 #     STP X19, X20, [SP, #0x10]
 #     STP X21, X22, [SP, #0x20]
 #     STP X0,  X1,  [SP, #0x30]   ; save args (self, arg1)
-#     STP X2,  X3,  [SP, #0x40]   ; (arg2 lives in X2 until we overwrite it)
+#     STP X2,  X3,  [SP, #0x40]
 #     STP X4,  X5,  [SP, #0x50]
-#     STP X6,  X7,  [SP, #0x60]
+#     STP X6,  X7,  [SP, #0x60]   ; (X6 saved before we clobber it)
 #     MOV X29, SP
 #     ADRP X16, page(SLOT)
 #     LDR  X16, [X16, #lo12(SLOT)]
-#     MOVZ W2, #hook_id           ; clobber X2/X3 caller-saved arg with hook id
-#     BLR  X16                    ; call dispatcher(self, arg1, hook_id) via SLOT
-#     LDP  X6,  X7,  [SP, #0x60]
+#     MOVZ W6, #hook_id           ; pass hook id via W6 (no real arg lives there)
+#     BLR  X16                    ; dispatcher(x0..x5, hook_id_in_x6, x7) via SLOT
+#     LDP  X6,  X7,  [SP, #0x60]  ; restore X6/X7 before resuming orig
 #     LDP  X4,  X5,  [SP, #0x50]
-#     LDP  X2,  X3,  [SP, #0x40]  ; restore the real X2 the original method needs
+#     LDP  X2,  X3,  [SP, #0x40]
 #     LDP  X0,  X1,  [SP, #0x30]
 #     LDP  X21, X22, [SP, #0x20]
 #     LDP  X19, X20, [SP, #0x10]
@@ -165,11 +168,16 @@ _HOOK_IDS: dict[str, int] = {
 #     <displaced prologue insn>   ; verbatim, must be PC-independent
 #     B    <orig + 4>
 #
-# Because we save / restore X2-X3 as a pair around the BLR, methods whose
-# original signature uses X2 as a real argument (e.g. the InitializeAsync
-# 4-arg signature) get their X2 back before we resume the displaced
-# prologue and orig + 4. The hook_id only lives in X2 for the dispatcher
-# call itself.
+# Hook id is loaded into W6 instead of W2 because several Bridge hook
+# sites carry a real argument in X2 (``OnPlayerMoveAsync(self, mv, ct)``
+# uses X2 for ``ct``; ``UpdateAuthoritativeSnapshot`` uses W2 for
+# ``turn``; ``Adapter.TryMakeMove(Move, out)`` uses X2 for the out
+# pointer). The dispatcher needs to forward those values to the C hook
+# bodies, so the cave must keep X2 holding the real call-site argument
+# when ``BLR X16`` is executed. X6 is unused at entry by every site in
+# this recipe — all of them take at most six integer-class arguments.
+# X6/X7 are still saved/restored across the BLR so the displaced
+# prologue and ``B orig+4`` resume with the original register state.
 # ---------------------------------------------------------------------------
 
 CAVE_PAYLOAD_SIZE = 84  # 21 instructions
@@ -193,8 +201,9 @@ def _build_bridge_cave_payload(
         The 4 prologue bytes about to be overwritten. Must be
         PC-independent (STP pre-index, SUB SP, or RET).
     hook_id : int
-        Identifier from ``enum kiou_bridge_hook_id``. Loaded into W2
-        (third arg) before BLR so the dispatcher can switch on it.
+        Identifier from ``enum kiou_bridge_hook_id``. Loaded into W6
+        before BLR so the dispatcher can switch on it without
+        clobbering any caller-supplied argument register.
     """
     if len(displaced_insn) != 4:
         raise ValueError(
@@ -229,8 +238,8 @@ def _build_bridge_cave_payload(
         emit(adrp(16, cur, slot_va))
         emit(ldr_x_imm(16, 16, slot_va & 0xFFF))
 
-        # --- pass the hook id to the dispatcher via X2 ---
-        emit(movz_w_imm(2, hook_id))
+        # --- pass the hook id to the dispatcher via X6 ---
+        emit(movz_w_imm(6, hook_id))
 
         emit(blr_x(16))
 

@@ -58,12 +58,12 @@ typedef void (*UpdateAuthoritativeSnapshot_t)(void *self,
                                               int32_t moveCount);
 static UpdateAuthoritativeSnapshot_t orig_UpdateAuthoritativeSnapshot = NULL;
 
-static void hook_UpdateAuthoritativeSnapshot(void *self,
-                                             void *sfenStr,
-                                             int32_t turn,
-                                             float blackTimeSec,
-                                             float whiteTimeSec,
-                                             int32_t moveCount) {
+void hook_UpdateAuthoritativeSnapshot(void *self,
+                                      void *sfenStr,
+                                      int32_t turn,
+                                      float blackTimeSec,
+                                      float whiteTimeSec,
+                                      int32_t moveCount) {
     // The fact that we just received an authoritative snapshot is the
     // strongest "this is an online match" signal we have. Cache the
     // OnlinePvPMode self so Inject_Move can route to OnPlayerMoveAsync if
@@ -112,7 +112,7 @@ static HandleMoveResult_t orig_HandleMoveResult = NULL;
 
 static uint32_t g_handleResultCount = 0;
 
-static void hook_HandleMoveResult(void *self, void *reply) {
+void hook_HandleMoveResult(void *self, void *reply) {
     if (g_onlineModeCache != self) g_onlineModeCache = self;
     g_lastOnlineEvtUs = mach_absolute_time();
 
@@ -138,12 +138,12 @@ static void hook_HandleMoveResult(void *self, void *reply) {
 // ---------------------------------------------------------------------------
 static UpdateAuthoritativeSnapshot_t orig_CpuStream_UpdateSnapshot = NULL;
 
-static void hook_CpuStream_UpdateSnapshot(void *self,
-                                          void *sfenStr,
-                                          int32_t turn,
-                                          float blackTimeSec,
-                                          float whiteTimeSec,
-                                          int32_t moveCount) {
+void hook_CpuStream_UpdateSnapshot(void *self,
+                                   void *sfenStr,
+                                   int32_t turn,
+                                   float blackTimeSec,
+                                   float whiteTimeSec,
+                                   int32_t moveCount) {
     if (g_cpuStreamModeCache != self) g_cpuStreamModeCache = self;
     g_lastCpuStreamEvtUs = mach_absolute_time();
     if (sfenStr) g_authoritativeSfenString = sfenStr;
