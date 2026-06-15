@@ -4,7 +4,7 @@
 #import <stdatomic.h>
 
 // ===========================================================================
-// Usi_Engine — KiouUsiProxy as a USI client driving an external engine.
+// Usi_Engine — KiouEngineBridge as a USI client driving an external engine.
 //
 // Phase 2 architecture:
 //   tweak (us)            = pure translator between Kiou Engine (the in-app
@@ -156,9 +156,35 @@ void usi_engine_on_match_start(int32_t local_player) {
     }
 }
 
-void usi_engine_on_match_end(void) {
+void usi_engine_on_match_end(usi_match_result_t result) {
+    // Tell the bridge the match is over BEFORE we touch our own state.
+    // The USI spec says the user (us) sends `gameover {win|lose|draw}` to
+    // the engine when the match ends; the bridge in turn forwards it to
+    // YaneuraOu so it can run its end-of-game bookkeeping (clear its
+    // think state, free its position, etc) before the next `position` +
+    // `go` arrives. We omit the gameover line for USI_RESULT_UNKNOWN
+    // (open-seat modes where we can't tell the outcome) — sending a
+    // wrong win/lose to the engine is worse than sending nothing.
+    NSString *resultWord = nil;
+    switch (result) {
+        case USI_RESULT_WIN:  resultWord = @"win";  break;
+        case USI_RESULT_LOSE: resultWord = @"lose"; break;
+        case USI_RESULT_DRAW: resultWord = @"draw"; break;
+        case USI_RESULT_UNKNOWN:
+        default:
+            break;
+    }
+    if (resultWord) {
+        usi_engine_send_line([NSString stringWithFormat:@"gameover %@",
+                              resultWord]);
+    } else {
+        file_log(@"[USI] match_end: result unknown, suppressing gameover");
+    }
+
     atomic_store(&g_localPlayerSide, -1);
-    file_log(@"[USI] match_end — resetting state");
+    file_log([NSString stringWithFormat:
+              @"[USI] match_end result=%@ — resetting state",
+              resultWord ?: @"<unknown>"]);
     // Drop back to READY (not BOOT) — the engine is still connected and
     // through its handshake; we just want a fresh game next time.
     int s = atomic_load(&g_usiState);

@@ -35,7 +35,7 @@
 // then calls Project.ShogiCore.Position.ToSFEN (0x5D44374). That getter
 // reads only readonly fields, so it's safe to invoke from our hook context.
 //
-// All reads. No writes. Logs to NSTemporaryDirectory()/kiou_usi_proxy.log.
+// All reads. No writes. Logs to NSTemporaryDirectory()/kiouenginebridge.log.
 // ===========================================================================
 
 #define RVA_ADAPTER_TRY_MAKE_MOVE_OUT      0x59D0DFC  // bool(this, Move, out Move)
@@ -55,7 +55,8 @@
 #define LIST_OFF_SIZE                      0x18  // int32
 #define ARRAY_OFF_ELEMS                    0x20  // first element
 
-typedef uint32_t SfMove;
+// SfMove typedef は Internal.h に移動 (Hook_GameStateStoreObserve.m など
+// 他ファイルから moveToUsi を呼びたいので公開シグネチャ側に置いた)。
 
 // Original (untrampolined) function pointers — definitions go here, the
 // declarations live in Internal.h so Inject_Move.m can call them directly
@@ -87,7 +88,11 @@ static void *latestPositionFromGameController(void *gameCtrl) {
 
 // Pull SFEN for the current state of a GameController via Position.ToSFEN.
 // Returns nil on any failure — every step is guarded.
-static NSString *sfenFromGameController(void *gameCtrl) {
+//
+// Exported (declared in Internal.h) so Hook_GameStateStoreObserve.m can
+// read the live SFEN after NotifyPieceMoved without re-implementing the
+// PositionHistory walk.
+NSString *sfenFromGameController(void *gameCtrl) {
     if (!g_Position_ToSFEN) return nil;
     void *pos = latestPositionFromGameController(gameCtrl);
     if (!pos) return nil;
@@ -99,19 +104,84 @@ static NSString *sfenFromGameController(void *gameCtrl) {
     }
 }
 
-// Convert a Sunfish.Move (uint32) into its USI string form ("7g7f", "B*5e",
-// "2e2h+", etc.) by calling Sunfish.Move.ToStringSFEN. The C# struct method
-// expects 'this' to be the address of the Move value; we copy onto the stack
-// and pass &local. The callee never escapes the pointer, so it's safe.
-static NSString *moveToUsi(SfMove m) {
-    if (!g_Move_ToStringSFEN) return nil;
+// Pull the full game-record text via Project.ShogiCore.GameController.GetUSIText.
+// KIOU の GameController が握っている手順を「startpos moves ...」/「sfen ...
+// moves ...」のような USI 文字列で返してくれる。 match_end の meta payload
+// に乗せて bridge 側 (Meta_Emitter → Match.finish) で完全な棋譜の
+// グランドトゥルースとして使う。Returns nil on any failure.
+//
+// Exported (declared in Internal.h) so Meta_Emitter.m can pull the
+// snapshot right before it ships match_end.
+NSString *usiTextFromGameController(void *gameCtrl) {
+    if (!g_GameCtrl_GetUSIText) return nil;
+    if (!ptrLooksValid(gameCtrl)) return nil;
     @try {
-        SfMove local = m;
-        void *strPtr = g_Move_ToStringSFEN(&local);
+        void *strPtr = g_GameCtrl_GetUSIText(gameCtrl);
         return il2cppStringToNSString(strPtr);
     } @catch (NSException *e) {
         return nil;
     }
+}
+
+// Convert a PSC (Project.ShogiCore) Move (uint32) into its USI string form
+// ("7g7f", "B*5e", "2e2h+", etc.).
+//
+// 重要: 以前は Sunfish.Move.ToStringSFEN を呼んでいたが、これは Sunfish
+// engine 内部の「file 9 = 高 index」規則で文字列化する。一方 KIOU 内部の
+// Move bits (= NotifyPieceMoved / Adapter に流れるもの) は
+// Project.ShogiCore.Square 規則 (SQ11=0, SQ19=8, SQ91=72, file 1 が低 index、
+// USI 標準と一致) で from/to を持っている。Sunfish 経由だと筋番号が反転
+// した USI が出てしまい、bridge 側で tsshogi が解釈できない (Inject_Move.m
+// の commit history コメント 256-280 行に背景あり)。
+//
+// 自前変換に切り替えて、Inject_Move の inject_buildMove と同じ規則で
+// square (0..80) → "<file><rank>" を起こす。
+//
+//   square = (file - 1) * 9 + (rank - 'a')
+//   file_idx = square / 9  → USI '1' + file_idx
+//   rank_idx = square % 9  → USI 'a' + rank_idx
+//
+// Bit layout (Inject_Move.m:259-264 参照):
+//   bit[6:0]   to
+//   bit[13:7]  from
+//   bit[14]    promote
+//   bit[15]    drop
+//   upper 16   movingPiece など (drop の駒種もここ。レイアウト未確定)
+//
+// drop 時の駒種は upper-16 のレイアウトが reverse engineering 待ちのため、
+// 当面 `?` プレースホルダで出す。bridge 側ログで raw bits を見ながら
+// 突き合わせ → 後続コミットで精度上げる。
+//
+// Exported (declared in Internal.h) so Hook_GameStateStoreObserve.m can reuse
+// the same Move→USI conversion when emitting meta for both sides.
+NSString *moveToUsi(SfMove m) {
+    uint32_t to       = m & 0x7F;
+    uint32_t from     = (m >> 7) & 0x7F;
+    uint32_t promote  = (m >> 14) & 1;
+    uint32_t drop     = (m >> 15) & 1;
+
+    if (to > 80) return nil;
+    char toFile = (char)('1' + (to / 9));
+    char toRank = (char)('a' + (to % 9));
+
+    if (drop) {
+        // 駒種は upper-16 のレイアウト未確定なので '?' を使う。bridge 側で
+        // sfen_after を見れば駒種は逆算できるので、まずは KIOU 内部の Move
+        // が正しく drop と認識されていることだけ担保する。
+        char piece = '?';
+        return [NSString stringWithFormat:@"%c*%c%c", piece, toFile, toRank];
+    }
+
+    if (from > 80) return nil;
+    char fromFile = (char)('1' + (from / 9));
+    char fromRank = (char)('a' + (from % 9));
+
+    if (promote) {
+        return [NSString stringWithFormat:@"%c%c%c%c+",
+                fromFile, fromRank, toFile, toRank];
+    }
+    return [NSString stringWithFormat:@"%c%c%c%c",
+            fromFile, fromRank, toFile, toRank];
 }
 
 static NSString *describeMoveBits(SfMove m) {
@@ -172,6 +242,11 @@ static bool hook_AdapterTryMakeMoveOut(void *self, SfMove move, void *outMove) {
             else if ([side isEqualToString:@"w"]) sideToMove = 1;
         }
         usi_engine_on_move_observed(usi, sfen, sideToMove);
+        // meta_emit_move はここでは出さない — ADAPTER2 は「自分のクライアント
+        // が指した手」しか通らない (オンライン対戦では相手手はサーバ state
+        // 経由で来る) ので、ここで出すと自分側 ply のみの片肺 KIF になる。
+        // 両手番分の meta は Hook_GameStateStoreObserve.m の
+        // NotifyPieceMoved フックに集約してある。
     }
     return ok;
 }

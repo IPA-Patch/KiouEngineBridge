@@ -4,6 +4,7 @@
 #import <mach/mach_time.h>
 #import <pthread.h>
 #import <string.h>
+#import <unistd.h>
 
 // ===========================================================================
 // Inject_Move — host-driven move injection.
@@ -24,8 +25,9 @@
 //     and call those directly, so the WS bridge doesn't get a double-
 //     notification for moves it asked us to play.
 //   - Online ratings protection. Server-side forwarding is gated behind
-//     BOTH `KIOU_USI_PROXY_PLAYER_MOVE=1` in the process env AND a
-//     flag file at /var/mobile/Documents/kiou_usi_player_move.flag. Both
+//     BOTH `KIOU_ENGINE_BRIDGE_PLAYER_MOVE=1` in the process env AND a
+//     flag file at /var/mobile/Documents/kiou_engine_bridge_player_move.flag.
+//     Both
 //     are required, both are read once at install time. Default is local
 //     preview only.
 // ===========================================================================
@@ -43,6 +45,31 @@
 #define RVA_PSC_MOVE_CREATE_DROP           0x5D4538C  // Move.CreateDrop(PieceType, Square)
 #define RVA_POSITION_CREATE_FROM_SFEN      0x5D42650  // Position.CreateFromSFEN(string sfen)
 #define RVA_POSITION_CREATE_BY_TYPE        0x5D423F8  // Position.CreateByInitialPositionType(InitialPositionType)
+#define RVA_GAMESTATESTORE_NOTIFY_PIECE_MOVED  0x5A2CD24  // GameStateStore.NotifyPieceMoved(Move, PlayerSide)
+#define RVA_GAMESTATESTORE_NOTIFY_STATE_SYNCED 0x5A2CE64  // GameStateStore.NotifyStateSynced(Position)
+#define RVA_BOARDPRESENTER_PLAY_MOVE_ANIMATION 0x5968894  // BoardPresenter.PlayMoveAnimationAsync(Move, CT) -> UniTask
+
+// GameOrchestrator -> BoardPresenter field offset (dump.cs:1211404).
+#define OFF_GAMEORCH_BOARD_PRESENTER 0x108
+
+// How long to wait between firing the move animation and committing the
+// underlying TryMakeMove. The animation itself runs on the order of
+// ~0.3s in KIOU; we add ~0.1s headroom so even a slightly long animation
+// completes before the board snaps to the post-move state. Tunable —
+// raise it if the animation visibly clips, lower it if responsiveness
+// suffers across rapid back-to-back injections.
+#define INJECT_ANIMATION_DELAY_SEC 0.40
+
+// _stateStore field offsets per IMatchMode concrete implementor. Verified
+// against dump.cs:1419817 (AI), 1420396 (CPUStream), 1421565 (Online),
+// 1420717 (Local), 1422103 (Replay). LocalPvP / RecordReplay don't pin a
+// seat so their per-move "who just moved" is ambiguous — we skip the
+// NotifyPieceMoved call there rather than guess.
+#define OFF_AI_STATESTORE         0x40
+#define OFF_CPUSTREAM_STATESTORE  0x48
+#define OFF_ONLINE_STATESTORE     0x28
+#define OFF_LOCAL_STATESTORE      0x10
+#define OFF_REPLAY_STATESTORE     0x10
 
 // ---------------------------------------------------------------------------
 // Instance cache definitions — declarations live in Internal.h. Each is a
@@ -93,6 +120,34 @@ static PSCMove_CreateDrop_t      g_PSCMove_CreateDrop      = NULL;
 static Position_CreateFromSFEN_t g_Position_CreateFromSFEN = NULL;
 static Position_CreateByType_t   g_Position_CreateByType   = NULL;
 
+// GameStateStore.NotifyPieceMoved(Move, PlayerSide) — drives the
+// _lastMove ReactiveProperty + the "piece animation" subjects. By itself
+// this didn't flip the _currentMovePlayer / _currentTurn UI on the device
+// (live verification, AIMatchMode CPU run), so we pair it with
+// NotifyStateSynced below.
+typedef void (*GameStateStore_NotifyPieceMoved_t)(void *self, uint32_t move,
+                                                  int32_t playerSide);
+static GameStateStore_NotifyPieceMoved_t g_GameStateStore_NotifyPieceMoved = NULL;
+
+// GameStateStore.NotifyStateSynced(Position) — the "the engine has caught
+// up to here" notification that the in-app UI subscribes to via the
+// _onStateSynced Subject. MoveCountPresenter listens on this; presumably
+// the turn-text presenter does too. Without firing this the side-to-move
+// UI stays on "your turn" after we inject, even though the board itself
+// (BoardPresenter, which listens on a different subject) updates fine.
+typedef void (*GameStateStore_NotifyStateSynced_t)(void *self, void *position);
+static GameStateStore_NotifyStateSynced_t g_GameStateStore_NotifyStateSynced = NULL;
+
+// BoardPresenter.PlayMoveAnimationAsync(Move, CancellationToken) -> UniTask.
+// We fire this BEFORE TryMakeMove so the animation runs against the
+// pre-move board state, then sleep INJECT_ANIMATION_DELAY_SEC and commit
+// the underlying move. We don't await the UniTask — its internal layout is
+// load-bearing and unverified; a fixed delay is good enough.
+typedef UniTaskRet (*BoardPresenter_PlayMoveAnimationAsync_t)(void *self,
+                                                              uint32_t move,
+                                                              void *ct);
+static BoardPresenter_PlayMoveAnimationAsync_t g_BoardPresenter_PlayMoveAnimationAsync = NULL;
+
 // Forward declaration — defined further down where the il2cpp accessors
 // live; the move builder uses it to read the from-square's piece.
 static void *inject_latestPositionFromCachedGameCtrl(void);
@@ -114,7 +169,7 @@ static void *inject_latestPositionFromCachedGameCtrl(void);
 //     CPU-side routes, so a bestmove from the WASM engine lands through
 //     OPM → server, not just the headless adapter.
 //
-// User explicitly approved this — see KiouUsiProxy/CLAUDE-style note in the
+// User explicitly approved this — see KiouEngineBridge/CLAUDE-style note in the
 // repo if you're auditing. The previous default (off) protected ratings;
 // flipping it now means the tweak will play ranked games.
 // ---------------------------------------------------------------------------
@@ -696,47 +751,126 @@ static void inject_runOnMain(const char *usi, uint32_t move,
     // The fix: on top of calling OPM (so the server still gets notified
     // and the rating-side machinery isn't bypassed for online play), also
     // call ShogiGameAdapter.TryMakeMove directly to nudge the local
-    // engine forward. This is the same optimistic update the real player
-    // tap path would produce via the server reply, just applied
-    // immediately so the UI redraws without waiting for a round trip.
-    #define CALL_OPM(SELF, ORIG)                              \
-        do {                                                  \
-            void *self = (SELF);                              \
-            OnPlayerMoveAsync_t fn = (ORIG);                  \
-            if (!self || !fn) { err = "no_session"; break; }  \
-            (void)fn(self, move, NULL);                       \
-            ok = true;                                        \
-            executed = move;                                  \
-            /* Locally apply the same move so the headless engine and */ \
-            /* GameStateStore advance — disasm confirms OPM alone won't */ \
+    // engine forward, AND call GameStateStore.NotifyPieceMoved so the
+    // _currentMovePlayer ReactiveProperty flips to the opponent — without
+    // that, the side-to-move UI text sticks on "your turn" forever even
+    // though the engine has already advanced the position.
+    //
+    // STORE_OFFSET is the byte offset of `_stateStore` on the per-mode
+    // class (different on every mode — see dump.cs). LOCAL_PLAYER is the
+    // PlayerSide value cached at OnMatchStart, or -1 when the mode has
+    // no fixed seat — we skip the notify in that case because the macro
+    // call site can't tell who actually moved.
+    #define CALL_OPM(SELF, ORIG, STORE_OFFSET, LOCAL_PLAYER)              \
+        do {                                                              \
+            void *self = (SELF);                                          \
+            OnPlayerMoveAsync_t fn = (ORIG);                              \
+            if (!self || !fn) { err = "no_session"; break; }              \
+            (void)fn(self, move, NULL);                                   \
+            ok = true;                                                    \
+            executed = move;                                              \
+            /* Locally apply the same move so the headless engine and */  \
+            /* GameStateStore advance — disasm confirms OPM alone won't */\
             /* do it. Failures here are benign (the move might already */ \
-            /* have been applied by an earlier HandleMoveResult) — we */ \
-            /* keep ok=true because the OPM call already succeeded. */   \
+            /* have been applied by an earlier HandleMoveResult) — we */  \
+            /* keep ok=true because the OPM call already succeeded. */    \
             if (g_adapterCache && orig_AdapterTryMakeMoveOut) {           \
                 uint32_t outMv = 0;                                       \
                 bool tryOk = orig_AdapterTryMakeMoveOut(                  \
                     (void *)g_adapterCache, move, &outMv);                \
                 file_log([NSString stringWithFormat:                      \
-                          @"[INJECT-DBG] local TryMakeMove tryOk=%d "    \
-                          @"outMv=0x%x", (int)tryOk, (unsigned)outMv]);  \
+                          @"[INJECT-DBG] local TryMakeMove tryOk=%d "     \
+                          @"outMv=0x%x", (int)tryOk, (unsigned)outMv]);   \
+            }                                                             \
+            /* Flip the side-to-move ReactiveProperty so the "whose */    \
+            /* turn" UI advances. Skipped for open-seat modes */          \
+            /* (LocalPvP / RecordReplay) which pass LOCAL_PLAYER=-1. */   \
+            /* */                                                          \
+            /* NotifyPieceMoved alone wasn't enough — live device tests */ \
+            /* showed the board (BoardPresenter) updates but the turn */  \
+            /* text presenter stayed on "your turn". The MoveCount */     \
+            /* presenter subscribes to GameStateStore._onStateSynced */   \
+            /* (a Subject<Position> at offset 0x158) instead, and that */ \
+            /* Subject only fires from NotifyStateSynced. So we call */   \
+            /* both: NotifyPieceMoved to update the _lastMove side, */    \
+            /* NotifyStateSynced to tick everything that's waiting */     \
+            /* for "the engine just caught up here". */                   \
+            if ((LOCAL_PLAYER) >= 0) {                                    \
+                void *store = readPtr(self, (STORE_OFFSET));              \
+                if (store) {                                              \
+                    if (g_GameStateStore_NotifyPieceMoved) {              \
+                        @try {                                            \
+                            g_GameStateStore_NotifyPieceMoved(            \
+                                store, move,                              \
+                                (int32_t)(LOCAL_PLAYER));                 \
+                            file_log([NSString stringWithFormat:          \
+                                      @"[INJECT-DBG] NotifyPieceMoved "   \
+                                      @"store=%p player=%d",              \
+                                      store, (int)(LOCAL_PLAYER)]);       \
+                        } @catch (NSException *e) {                       \
+                            file_log([NSString stringWithFormat:          \
+                                      @"[INJECT-DBG] NotifyPieceMoved "   \
+                                      @"threw %@", e]);                   \
+                        }                                                 \
+                    }                                                     \
+                    /* Pull the latest Position from the cached */        \
+                    /* GameController. Adapter.TryMakeMove just */        \
+                    /* appended it; reading via */                        \
+                    /* inject_latestPositionFromCachedGameCtrl gets */    \
+                    /* the freshest one. */                               \
+                    if (g_GameStateStore_NotifyStateSynced) {             \
+                        void *pos =                                       \
+                            inject_latestPositionFromCachedGameCtrl();    \
+                        if (pos) {                                        \
+                            @try {                                        \
+                                g_GameStateStore_NotifyStateSynced(       \
+                                    store, pos);                          \
+                                file_log([NSString stringWithFormat:      \
+                                          @"[INJECT-DBG] "                \
+                                          @"NotifyStateSynced store=%p "  \
+                                          @"pos=%p", store, pos]);        \
+                            } @catch (NSException *e) {                   \
+                                file_log([NSString stringWithFormat:      \
+                                          @"[INJECT-DBG] "                \
+                                          @"NotifyStateSynced threw %@",  \
+                                          e]);                            \
+                            }                                             \
+                        } else {                                          \
+                            file_log(@"[INJECT-DBG] "                     \
+                                     @"NotifyStateSynced skipped: no "    \
+                                     @"latest pos");                      \
+                        }                                                 \
+                    }                                                     \
+                } else {                                                  \
+                    file_log(@"[INJECT-DBG] Notify* skipped: no store");  \
+                }                                                         \
             }                                                             \
         } while (0)
 
     switch (route) {
         case KIOU_ROUTE_AI_OPM:
-            CALL_OPM(g_aiMatchModeCache, orig_AIMatchMode_OnPlayerMoveAsync);
+            CALL_OPM(g_aiMatchModeCache, orig_AIMatchMode_OnPlayerMoveAsync,
+                     OFF_AI_STATESTORE, g_aiLocalPlayer);
             break;
         case KIOU_ROUTE_CPUSTREAM_OPM:
-            CALL_OPM(g_cpuStreamModeCache, orig_CPUStreamMode_OnPlayerMoveAsync);
+            CALL_OPM(g_cpuStreamModeCache, orig_CPUStreamMode_OnPlayerMoveAsync,
+                     OFF_CPUSTREAM_STATESTORE, g_cpuStreamLocalPlayer);
             break;
         case KIOU_ROUTE_LOCAL_OPM:
-            CALL_OPM(g_localPvPModeCache, orig_LocalPvPMode_OnPlayerMoveAsync);
+            // LocalPvP has no fixed seat — pass -1 to suppress the
+            // NotifyPieceMoved call (we can't tell which side this
+            // injection represents).
+            CALL_OPM(g_localPvPModeCache, orig_LocalPvPMode_OnPlayerMoveAsync,
+                     OFF_LOCAL_STATESTORE, -1);
             break;
         case KIOU_ROUTE_ONLINE_OPM:
-            CALL_OPM(g_onlineModeCache, orig_OnlinePvPMode_OnPlayerMoveAsync);
+            CALL_OPM(g_onlineModeCache, orig_OnlinePvPMode_OnPlayerMoveAsync,
+                     OFF_ONLINE_STATESTORE, g_onlineLocalPlayer);
             break;
         case KIOU_ROUTE_REPLAY_OPM:
-            CALL_OPM(g_recordReplayModeCache, orig_RecordReplayMode_OnPlayerMoveAsync);
+            // RecordReplay also has no fixed seat — same treatment.
+            CALL_OPM(g_recordReplayModeCache, orig_RecordReplayMode_OnPlayerMoveAsync,
+                     OFF_REPLAY_STATESTORE, -1);
             break;
         case KIOU_ROUTE_ADAPTER: {
             void *self = g_adapterCache;
@@ -943,6 +1077,45 @@ bool inject_apply(NSString *usi,
         return false;
     }
 
+    // Fire the piece-movement animation BEFORE the board state advances.
+    // BoardPresenter.PlayMoveAnimationAsync reads the live Position to
+    // figure out the "from" square, so if we mutate first the animation
+    // sees the move already applied and either does nothing or teleports.
+    // We don't await the UniTask (its layout is unverified) — we just
+    // sleep INJECT_ANIMATION_DELAY_SEC between the animation kick and
+    // the actual mutation. Animation runs in parallel with our wait and
+    // wraps up around the time we resume.
+    if (g_BoardPresenter_PlayMoveAnimationAsync && g_gameOrchestratorCache) {
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            void *boardPresenter = readPtr((void *)g_gameOrchestratorCache,
+                                           OFF_GAMEORCH_BOARD_PRESENTER);
+            if (!boardPresenter) {
+                file_log(@"[INJECT-DBG] PlayMoveAnimation skipped: "
+                         @"no BoardPresenter on orch");
+                return;
+            }
+            @try {
+                (void)g_BoardPresenter_PlayMoveAnimationAsync(boardPresenter,
+                                                              move, NULL);
+                file_log([NSString stringWithFormat:
+                          @"[INJECT-DBG] PlayMoveAnimation fired "
+                          @"presenter=%p move=0x%x",
+                          boardPresenter, (unsigned)move]);
+            } @catch (NSException *e) {
+                file_log([NSString stringWithFormat:
+                          @"[INJECT-DBG] PlayMoveAnimation threw: %@", e]);
+            }
+        });
+        // Sleep on the WS recv queue (NOT the main thread) so the
+        // animation actually runs while we wait. usleep here is safe
+        // because inject_apply is called from the WS recv queue, not
+        // from a Unity callback.
+        usleep((useconds_t)(INJECT_ANIMATION_DELAY_SEC * 1000000.0));
+    } else {
+        file_log(@"[INJECT-DBG] PlayMoveAnimation skipped: "
+                 @"fn or orch cache missing");
+    }
+
     // Second main-thread hop, this time to do the actual mutation.
     __block bool runOk = false;
     __block uint32_t runExecuted = 0;
@@ -992,6 +1165,15 @@ void install_Inject_hook(uintptr_t unityBase) {
         (Position_CreateFromSFEN_t)(void *)(unityBase + RVA_POSITION_CREATE_FROM_SFEN);
     g_Position_CreateByType =
         (Position_CreateByType_t)(void *)(unityBase + RVA_POSITION_CREATE_BY_TYPE);
+    g_GameStateStore_NotifyPieceMoved =
+        (GameStateStore_NotifyPieceMoved_t)(void *)
+        (unityBase + RVA_GAMESTATESTORE_NOTIFY_PIECE_MOVED);
+    g_GameStateStore_NotifyStateSynced =
+        (GameStateStore_NotifyStateSynced_t)(void *)
+        (unityBase + RVA_GAMESTATESTORE_NOTIFY_STATE_SYNCED);
+    g_BoardPresenter_PlayMoveAnimationAsync =
+        (BoardPresenter_PlayMoveAnimationAsync_t)(void *)
+        (unityBase + RVA_BOARDPRESENTER_PLAY_MOVE_ANIMATION);
 
     // g_onlineServerSendAllowed is now a compile-time `true` — the env
     // var + flag-file gate was removed when online auto-play was opted
@@ -1002,11 +1184,15 @@ void install_Inject_hook(uintptr_t unityBase) {
     file_log([NSString stringWithFormat:
               @"[INJECT] installed: create@0x%lx createDrop@0x%lx "
               @"getPiece@0x%lx getPieceType@0x%lx fromSFEN@0x%lx "
-              @"onlineServerSendGate=%d",
+              @"notifyPieceMoved@0x%lx notifyStateSynced@0x%lx "
+              @"playMoveAnim@0x%lx onlineServerSendGate=%d",
               (unsigned long)(unityBase + RVA_PSC_MOVE_CREATE),
               (unsigned long)(unityBase + RVA_PSC_MOVE_CREATE_DROP),
               (unsigned long)(unityBase + RVA_POSITION_GET_PIECE),
               (unsigned long)(unityBase + RVA_PIECE_GET_PIECETYPE),
               (unsigned long)(unityBase + RVA_POSITION_CREATE_FROM_SFEN),
+              (unsigned long)(unityBase + RVA_GAMESTATESTORE_NOTIFY_PIECE_MOVED),
+              (unsigned long)(unityBase + RVA_GAMESTATESTORE_NOTIFY_STATE_SYNCED),
+              (unsigned long)(unityBase + RVA_BOARDPRESENTER_PLAY_MOVE_ANIMATION),
               (int)g_onlineServerSendAllowed]);
 }
