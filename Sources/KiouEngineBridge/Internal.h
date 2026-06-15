@@ -339,6 +339,70 @@ void meta_on_player_info_set(int32_t side, void *playerInfo);
 void install_GameStateStoreObserve_hook(uintptr_t unityBase);
 
 // ---------------------------------------------------------------------------
+// Static binpatch dispatcher (binpatch build only).
+//
+// In the binpatch flavour, every hook site is redirected by a code cave to a
+// single dispatcher function published into a reserved __DATA,__bss SLOT.
+// The cave passes (self, arg1, arg2, hook_id) where hook_id is a 16-bit value
+// from `enum kiou_bridge_hook_id` and arg1/arg2 are the next two argument
+// registers (X1, X2 at the time of the original BL).
+//
+// Hook function bodies live unchanged in their respective Hook_*.m files —
+// the dispatcher just maps hook_id back to the right hook_<foo>(self, ...)
+// call. See docs/plans/kiou_engine_bridge_binpatch.md § 5 for the contract.
+// ---------------------------------------------------------------------------
+
+enum kiou_bridge_hook_id {
+    KIOU_BR_HOOK_AI_INIT = 0,
+    KIOU_BR_HOOK_CPUSTREAM_INIT,
+    KIOU_BR_HOOK_LOCAL_INIT,
+    KIOU_BR_HOOK_ONLINE_INIT,
+    KIOU_BR_HOOK_REPLAY_INIT,
+
+    KIOU_BR_HOOK_AI_START,
+    KIOU_BR_HOOK_CPUSTREAM_START,
+    KIOU_BR_HOOK_LOCAL_START,
+    KIOU_BR_HOOK_ONLINE_START,
+    KIOU_BR_HOOK_REPLAY_START,
+
+    KIOU_BR_HOOK_AI_OPM,
+    KIOU_BR_HOOK_CPUSTREAM_OPM,
+    KIOU_BR_HOOK_LOCAL_OPM,
+    KIOU_BR_HOOK_ONLINE_OPM,
+    KIOU_BR_HOOK_REPLAY_OPM,
+
+    KIOU_BR_HOOK_AI_END,
+    KIOU_BR_HOOK_CPUSTREAM_END,
+    KIOU_BR_HOOK_LOCAL_END,
+    KIOU_BR_HOOK_ONLINE_END,
+    KIOU_BR_HOOK_REPLAY_END,
+
+    KIOU_BR_HOOK_ADAPTER_TRY_MAKE_MOVE_OUT,
+    KIOU_BR_HOOK_ONLINE_UPDATE_SNAPSHOT,
+    KIOU_BR_HOOK_ONLINE_HANDLE_RESULT,
+    KIOU_BR_HOOK_CPUSTREAM_UPDATE_SNAPSHOT,
+    KIOU_BR_HOOK_GAMEORCH_ACTIVATE,
+
+    KIOU_BR_HOOK__COUNT,
+};
+
+// Dispatcher signature. Called from the cave with whatever was in
+// (X0, X1, X2) at the original call site, plus a hook_id loaded by the cave's
+// `MOVZ W2, #imm` (so for the binpatch build, the third real argument is
+// clobbered — none of our hook sites use a third pointer arg).
+typedef void (*kiou_bridge_dispatcher_t)(void *self, void *arg1, uint32_t hook_id);
+
+// Published into the __DATA,__bss slot by BinpatchDispatcher.m's constructor.
+// The recipe pins the slot's VA at patch time; the cave's ADRP+LDR uses that
+// VA to load this pointer at runtime.
+extern kiou_bridge_dispatcher_t volatile g_kiou_bridge_hook_slot;
+
+// Constructor helper. binpatch Tweak.m calls this exactly once after
+// UnityFramework is mapped, in place of all install_*_hook calls. Publishes
+// the dispatcher pointer into the SLOT.
+void kiou_bridge_binpatch_publish(void);
+
+// ---------------------------------------------------------------------------
 // SfMove + low-level helpers, exported so observation hooks living in other
 // files (Hook_GameStateStoreObserve.m's NotifyPieceMoved) can reuse the same
 // SfMove→USI and GameController→SFEN conversion routines.
