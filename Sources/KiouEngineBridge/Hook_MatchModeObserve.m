@@ -129,12 +129,22 @@ static OnMatchEndAsync_t orig_Online_End    = NULL;
 static OnMatchEndAsync_t orig_Replay_End    = NULL;
 
 // OnMatchStart() -> void. Truly synchronous; no UniTask gymnastics.
+//
+// __attribute__((unused)) is needed because on the binpatch build the
+// KIOU_CALL_ORIG_VOID(ORIG_VAR, self) inside DEFINE_START_HOOK expands to
+// ((void)0), leaving these five `orig_*_Start` storage slots unreferenced.
+// MSHookFunction's installer writes through their addresses on the JB
+// build (the `(void **)&orig_..._Start` argument in the entries[] table),
+// so they're not actually unused at runtime in that flavour — and on
+// binpatch they're simply spare slots. `((unused))` tells -Werror to stay
+// quiet for both shapes without forcing us to gate the declarations
+// themselves with #if.
 typedef void (*OnMatchStart_t)(void *self);
-static OnMatchStart_t orig_AI_Start        = NULL;
-static OnMatchStart_t orig_CPUStream_Start = NULL;
-static OnMatchStart_t orig_Local_Start     = NULL;
-static OnMatchStart_t orig_Online_Start    = NULL;
-static OnMatchStart_t orig_Replay_Start    = NULL;
+static OnMatchStart_t orig_AI_Start        __attribute__((unused)) = NULL;
+static OnMatchStart_t orig_CPUStream_Start __attribute__((unused)) = NULL;
+static OnMatchStart_t orig_Local_Start     __attribute__((unused)) = NULL;
+static OnMatchStart_t orig_Online_Start    __attribute__((unused)) = NULL;
+static OnMatchStart_t orig_Replay_Start    __attribute__((unused)) = NULL;
 
 // First-touch logging counters so we don't spam the log file every move.
 // Log the first three calls per mode and every 30th after that.
