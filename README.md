@@ -82,7 +82,7 @@ YaneuraOu (or any other USI engine) is the thinking part.
   read side, function-pointer calls into `Move.Create` /
   `OnPlayerMoveAsync` / `TryMakeMove` for the inject side.
 - **Bridge <-> Wrapper** — WebSocket text frames on
-  `ws://<device>:9527`, USI lines + sidecar `meta {...}` lines.
+  `ws://<device>:9527`, USI lines + sidecar `meta{...}` lines.
 - **Wrapper <-> YaneuraOu** — stdio pipes (the way YaneuraOu
   already expects to be driven).
 
@@ -159,7 +159,7 @@ Two protocol streams share one TCP port:
 | Stream | Direction | Wire | Purpose |
 |---|---|---|---|
 | **USI** | bidirectional | one USI command per text frame | drive the engine, accept `bestmove` back |
-| **meta** | tweak -> host | `meta {...json}\n` per frame | match lifecycle + per-move record for KIF assembly |
+| **meta** | tweak -> host | `meta{...json}\n` per frame | match lifecycle + per-move record for KIF assembly |
 
 The USI state machine (`Usi_Engine.m`) walks the standard
 `usi` -> `usiok` -> `isready` -> `readyok` -> `usinewgame` -> `position` ->
