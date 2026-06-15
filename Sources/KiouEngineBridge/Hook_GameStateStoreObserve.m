@@ -1,5 +1,17 @@
 #import "Internal.h"
 
+#if KIOU_BINPATCH
+// This entire module is meta-sidecar-only. The binpatch flavour drops the
+// meta sidecar (see docs/plans/kiou_engine_bridge_binpatch.md § 2), so the
+// file compiles to nothing. install_GameStateStoreObserve_hook is a no-op
+// shim defined at the bottom of this #if block so Tweak.m doesn't need its
+// own #if to skip the call — keeping the constructor wiring uniform.
+void install_GameStateStoreObserve_hook(uintptr_t unityBase) { (void)unityBase; }
+void meta_on_player_info_set(int32_t side, void *playerInfo) {
+    (void)side; (void)playerInfo;
+}
+#else
+
 // ===========================================================================
 // Hook_GameStateStoreObserve — capture Set*PlayerInfo calls on the store.
 //
@@ -145,3 +157,5 @@ void install_GameStateStoreObserve_hook(uintptr_t unityBase) {
                   (unsigned)RVA_GAMESTATESTORE_NOTIFY_PIECE_MOVED]);
     }
 }
+
+#endif  // !KIOU_BINPATCH

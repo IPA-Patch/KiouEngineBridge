@@ -211,12 +211,17 @@ static bool hook_AdapterTryMakeMoveOut(void *self, SfMove move, void *outMove) {
     if (gcSeen && g_gameCtrlCache != gcSeen) g_gameCtrlCache = gcSeen;
     g_lastAdapterEvtUs = mach_absolute_time();
 
-    // The hook function body no longer calls orig. On the JB build the
-    // MSHookFunction trampoline runs orig; on the binpatch build the static
-    // cave runs the displaced prologue and branches to orig + 4. Either way,
-    // orig completes synchronously inside the current main-runloop iteration,
-    // so a block dispatched to the main queue here runs AFTER orig — by then
-    // PositionHistory has the post-move position appended.
+    // Run the original synchronously on the JB build (no-op on binpatch
+    // because the cave handles orig via the displaced prologue + B orig+4).
+    // The return value flows back to the caller verbatim — KIOU's caller
+    // checks it to know whether the move actually committed.
+    bool ok = KIOU_CALL_ORIG_RET(bool, orig_AdapterTryMakeMoveOut,
+                                 self, move, outMove);
+
+    // orig has completed by this point on JB (synchronous call above) and
+    // will complete on binpatch before the deferred block fires (the cave's
+    // `B orig+4` lands inside the current main-runloop iteration). Either
+    // way the dispatched block observes the post-move PositionHistory.
     //
     // outMove cannot be read from inside the deferred block: the caller's
     // stack frame is gone by then. Instead we copy `move` by value (it's a
@@ -261,14 +266,7 @@ static bool hook_AdapterTryMakeMoveOut(void *self, SfMove move, void *outMove) {
         }
     });
 
-    // orig runs outside this function — driven by the install wrapper on
-    // the JB build, and by the static cave on the binpatch build. The
-    // return value the caller sees is orig's, not ours; this function's
-    // return is unused on both paths. Return false as a defensive default
-    // for the (unreachable on either build) case where the wrapper / cave
-    // forwards our return through.
-    (void)outMove;
-    return false;
+    return ok;
 }
 
 // ---------------------------------------------------------------------------
@@ -295,8 +293,12 @@ static bool hook_GameCtrlTryMakeMove(void *self, SfMove move) {
 }
 
 // ---------------------------------------------------------------------------
-// Installer. Wires the three hooks plus the NativeFunction-style trampolines
-// we use to call ToSFEN / GetUSIText from within them.
+// Installer. Resolves NativeFunction-style trampolines (ToSFEN / GetUSIText /
+// Move.ToStringSFEN) — needed by BOTH builds, because Inject_Move and the
+// observation hooks both call them as function pointers. Then, on the JB
+// build only, installs the two MSHookFunction site hooks; on the binpatch
+// build the symbol-pointer resolves remain but the hook wires are
+// orchestrated by the static cave + SLOT dispatcher.
 // ---------------------------------------------------------------------------
 void install_LowLevelObserve_hook(uintptr_t unityBase) {
     g_Position_ToSFEN =
@@ -306,6 +308,7 @@ void install_LowLevelObserve_hook(uintptr_t unityBase) {
     g_Move_ToStringSFEN =
         (Move_ToStringSFEN_t)(void *)(unityBase + RVA_SUNFISH_MOVE_TO_STRING_SFEN);
 
+#if !KIOU_BINPATCH
     {
         uintptr_t addr = unityBase + RVA_ADAPTER_TRY_MAKE_MOVE_OUT;
         MSHookFunction((void *)addr,
@@ -327,4 +330,17 @@ void install_LowLevelObserve_hook(uintptr_t unityBase) {
                   @"@0x%lx (base+0x%x)",
                   (unsigned long)addr, (unsigned)RVA_GAMECTRL_TRY_MAKE_MOVE]);
     }
+#else
+    // On binpatch:
+    //   ShogiGameAdapter.TryMakeMove(Move,out) → routed via cave entry
+    //     KIOU_BR_HOOK_ADAPTER_TRY_MAKE_MOVE_OUT in
+    //     recipes/kiouenginebridge.py.
+    //   GameController.TryMakeMove(Move) → NOT in CAVE_PATCHES. It was a
+    //     log-only hook on the JB build, and its observation is fully
+    //     covered by hook_AdapterTryMakeMoveOut for every move that
+    //     reaches the board. Dropping it on binpatch saves a cave and
+    //     keeps the hook surface tight.
+    file_log(@"[LOWLEVEL] binpatch build — site hooks driven by cave/SLOT, "
+             @"symbol pointers resolved.");
+#endif  // !KIOU_BINPATCH
 }
