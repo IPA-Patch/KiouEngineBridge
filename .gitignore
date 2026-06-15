@@ -1,6 +1,17 @@
+# Theos build output
 .theos/
+obj/
 packages/
-*.deb
-*.dylib
-*.dSYM/
+
+# macOS metadata
 .DS_Store
+._*
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Local SSH / device IP overrides (THEOS_DEVICE_IP etc)
+.env
+.env.local
