@@ -60,16 +60,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Only the substrate (rootless .deb) flavor is wired up here.
-          # A `jailed` flavor existed in the matrix originally, but the
-          # corresponding `make jailed` target and vendor/dobby static
-          # library were never added to this repo (KiouKifExporter has
-          # them; we don't yet). Reintroduce a jailed entry once Dobby
-          # is vendored and a `jailed::` target lands in the Makefile.
           - flavor: substrate
             make_args: ""
             artifact_name: kiouenginebridge-substrate-deb
             artifact_path: packages/*.deb
+          - flavor: jailed
+            make_args: "jailed"
+            artifact_name: kiouenginebridge-jailed-dylib
+            artifact_path: packages/jailed/KiouEngineBridge.dylib
 
     steps:
       - name: Checkout source
@@ -155,6 +153,24 @@ jobs:
         run: |
           make package
           ls -la packages/
+
+      - name: Sanity check jailed dylib (no external hook engine)
+        if: matrix.flavor == 'jailed'
+        run: |
+          DYLIB=packages/jailed/KiouEngineBridge.dylib
+          test -f "$DYLIB"
+          # otool may be unavailable on Linux; fall back to nm-style scan.
+          if command -v otool >/dev/null 2>&1; then
+              otool -L "$DYLIB"
+              if otool -L "$DYLIB" | grep -E "libsubstrate|libdobby"; then
+                  echo "::error::Jailed dylib leaks an external hook-engine dependency"
+                  exit 1
+              fi
+          else
+              strings "$DYLIB" | grep -E "libsubstrate|libdobby\.dylib" \
+                  && { echo "::error::Jailed dylib leaks an external hook-engine dependency"; exit 1; } \
+                  || echo "no external hook-engine references found"
+          fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
