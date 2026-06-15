@@ -12,7 +12,7 @@
         "GH_TOKEN": "${localEnv:GH_TOKEN}",
         "UV_LINK_MODE": "copy",
         "ANTHROPIC_BASE_URL": "${localEnv:ANTHROPIC_BASE_URL}",
-        "ANTHROPIC_AUTH_TOKEN": "${localEnv:ANTHROPIC_AUTH_TOKEN}",
+        "ANTHROPIC_AUTH_TOKEN": "${localEnv:ANTHROPIC_AUTH_TOKEN}"
     },
     "containerEnv": {
         "CLAUDE_CONFIG_DIR": "/home/vscode/.claude"
