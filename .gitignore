@@ -273,10 +273,6 @@ downloads/
 eggs/
 .eggs/
 lib/
-# Python's lib/ rule above sweeps up vendor/dobby/lib/libdobby.a. Re-include
-# the whole vendored Dobby tree so its prebuilt static archive stays tracked.
-!vendor/dobby/lib/
-!vendor/dobby/lib/**
 lib64/
 parts/
 sdist/
@@ -287,6 +283,13 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
+
+# The generic `lib/` rule above is meant for Python build outputs; the
+# vendored Dobby static library lives under vendor/dobby/lib/ and must
+# ship with the repo so jailed / binpatch builds (CI and local) can
+# link it without an extra fetch step.
+!vendor/dobby/lib/
+!vendor/dobby/lib/libdobby.a
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
