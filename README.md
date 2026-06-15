@@ -73,45 +73,61 @@ Uninstalling the dylib returns KIOU to a fully vanilla state.
 
 ## What you get
 
-When a match is live in KIOU and the host bridge is attached, two
-streams share one WebSocket on `:9527` — the standard USI handshake +
-think loop, and a sidecar `meta` channel that carries match-lifecycle
-JSON the host can use to build a KIF on its end.
+Four actors, three wires. KIOU is the game itself; Bridge is this
+tweak loaded into KIOU's process; Wrapper is the host-side process
+that translates between WebSocket and a vanilla USI engine's stdio;
+YaneuraOu (or any other USI engine) is the thinking part.
+
+- **KIOU <-> Bridge** — in-process: il2cpp hook callbacks for the
+  read side, function-pointer calls into `Move.Create` /
+  `OnPlayerMoveAsync` / `TryMakeMove` for the inject side.
+- **Bridge <-> Wrapper** — WebSocket text frames on
+  `ws://<device>:9527`, USI lines + sidecar `meta {...}` lines.
+- **Wrapper <-> YaneuraOu** — stdio pipes (the way YaneuraOu
+  already expects to be driven).
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant K as KIOU (this tweak)
-    participant H as Host bridge<br/>(YaneuraOu wrapper)
-    participant E as USI Engine<br/>(YaneuraOu)
+    participant K as KIOU
+    participant B as Bridge (this tweak)
+    participant W as Wrapper (host)
+    participant E as YaneuraOu
 
-    Note over K,H: USI handshake (text frames on ws://device:9527)
-    H->>K: usi
-    K-->>H: id name ... / id author ... / usiok
-    H->>K: isready
-    K-->>H: readyok
-    H->>K: usinewgame
+    Note over K,B: in-process hooks
+    Note over B,W: ws://device:9527 (USI + meta)
+    Note over W,E: stdio pipes
 
-    Note over K,H: Match start — tweak emits sidecar meta
-    K-->>H: meta {"type":"match_start","mode":"OnlinePvPMode","local_player":0, ...}
+    Note over B,W: USI handshake
+    W->>B: usi
+    B-->>W: id name ... / id author ... / usiok
+    W->>B: isready
+    B-->>W: readyok
+    W->>B: usinewgame
+
+    Note over K,W: Match start — Bridge emits sidecar meta
+    K-->>B: IMatchMode.InitializeAsync (latch self / local_player)
+    B-->>W: meta {"type":"match_start","mode":"OnlinePvPMode","local_player":0, ...}
 
     loop Per move while it's our turn
-        K->>H: position sfen <SFEN>
-        K->>H: go btime ... wtime ...
-        H->>E: position sfen <SFEN> / go ...
-        E-->>H: bestmove 7g7f
-        H->>K: bestmove 7g7f
-        Note over K: inject_apply -> Move.Create -> OnPlayerMoveAsync -> Adapter.TryMakeMove
-        K-->>H: meta {"type":"move","usi":"7g7f","sfen_after":"...", ...}
+        K-->>B: TryMakeMove observation -> SFEN / side_to_move
+        B->>W: position sfen <SFEN>
+        B->>W: go btime ... wtime ...
+        W->>E: position sfen <SFEN> / go ...
+        E-->>W: bestmove 7g7f
+        W->>B: bestmove 7g7f
+        Note over B,K: inject_apply -> Move.Create -> OnPlayerMoveAsync -> TryMakeMove
+        B->>K: replay move through KIOU's move pipeline
+        B-->>W: meta {"type":"move","usi":"7g7f","sfen_after":"...", ...}
     end
 
-    Note over K,H: OnMatchEndAsync fires
-    K-->>H: meta {"type":"match_end","result":"win","final_sfen":"...","usi_text":"..."}
+    K-->>B: IMatchMode.OnMatchEndAsync (result + final SFEN + GetUSIText)
+    B-->>W: meta {"type":"match_end","result":"win","final_sfen":"...","usi_text":"..."}
 ```
 
-Each `meta` frame is a single line prefixed with `meta ` so the host
-can demux it from real USI traffic without parsing JSON for every
-line.
+Each `meta` frame is a single line prefixed with `meta ` so the
+Wrapper can demux it from real USI traffic without parsing JSON for
+every line.
 
 Each frame is a single line, prefixed with `meta ` so the host can
 demux it from real USI traffic without parsing JSON for every line.
