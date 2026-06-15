@@ -23,6 +23,10 @@ KiouEngineBridge_FRAMEWORKS = Foundation
 # Hook engine selection.
 #
 #   default (JB / rootless): MobileSubstrate (MSHookFunction in libsubstrate)
+#   JAILED=1                : Dobby statically linked from vendor/dobby. No
+#                             libsubstrate dependency, so the resulting
+#                             .dylib can be injected via Sideloadly into a
+#                             non-jailbroken iOS 15-17 install.
 #   BINPATCH=1              : static binary patch + __DATA,__bss SLOT
 #                             dispatcher. No runtime __TEXT writes, so works
 #                             on iOS 18 CSM (Sideloadly / TrollStore /
@@ -31,12 +35,24 @@ KiouEngineBridge_FRAMEWORKS = Foundation
 #                             cave; this dylib only publishes a function
 #                             pointer into the reserved slot at constructor
 #                             time. See docs/plans/kiou_engine_bridge_binpatch.md.
+#                             Implies JAILED=1 so libsubstrate is dropped.
 #
-# Sources/Common/hookengine.h picks the API at compile time.
+# Sources/Common/hookengine.h picks the API at compile time via IPA_JAILED.
 # ---------------------------------------------------------------------------
 ifeq ($(BINPATCH),1)
+    JAILED                   := 1
     KiouEngineBridge_CFLAGS  += -DKIOU_BINPATCH=1 -DIPA_LOG_TO_DOCUMENTS=1
-    KiouEngineBridge_LDFLAGS  = -Wl,-undefined,error
+endif
+
+ifeq ($(JAILED),1)
+    KiouEngineBridge_CFLAGS  += -DIPA_JAILED=1 -Ivendor/dobby/include
+    # Dobby is C++; pull in libc++ for __cxa_guard_*, __cxa_pure_virtual, etc.
+    KiouEngineBridge_LDFLAGS := -Lvendor/dobby/lib -ldobby -lc++ -lc++abi
+ifeq ($(BINPATCH),1)
+    # binpatch path never actually invokes Dobby at runtime but keeps the
+    # same link shape; refuse to silently fall back to a host hook engine.
+    KiouEngineBridge_LDFLAGS += -Wl,-undefined,error
+endif
 else
     KiouEngineBridge_LDFLAGS  = -lsubstrate
 endif
@@ -46,6 +62,21 @@ include $(THEOS_MAKE_PATH)/tweak.mk
 after-install::
 	install.exec "chmod 755 /var/jb/Library/MobileSubstrate/DynamicLibraries/KiouEngineBridge.dylib"
 	install.exec "sleep 1; (open com.neconome.shogi 2>/dev/null || uiopen com.neconome.shogi:// 2>/dev/null || echo 'no launcher tool (uiopen/open); start KIOU manually')"
+
+# jailed distribution: rebuild with Dobby statically linked, then copy the
+# resulting .dylib into packages/jailed/ for Sideloadly injection. Verifies
+# the final binary has no libsubstrate / libdobby external dep (libdobby.a
+# is bundled as a static archive, so it must not appear in the load list).
+jailed::
+	$(MAKE) JAILED=1 clean
+	$(MAKE) JAILED=1 all
+	$(ECHO_NOTHING)mkdir -p packages/jailed$(ECHO_END)
+	$(ECHO_NOTHING)cp $(THEOS_OBJ_DIR)/KiouEngineBridge.dylib packages/jailed/KiouEngineBridge.dylib$(ECHO_END)
+	@echo "jailed dylib -> packages/jailed/KiouEngineBridge.dylib"
+	@echo "--- otool -L (must NOT list libsubstrate or libdobby) ---"
+	@$(THEOS)/toolchain/linux/iphone/bin/otool -L packages/jailed/KiouEngineBridge.dylib 2>/dev/null \
+	  || otool -L packages/jailed/KiouEngineBridge.dylib 2>/dev/null \
+	  || echo "(otool unavailable on host; inspect the dylib on a Mac/iOS device)"
 
 # binpatch distribution: rebuild with KIOU_BINPATCH=1, drop libsubstrate, copy
 # into packages/binpatch/ for the build_patched_ipa.sh pipeline.
