@@ -258,29 +258,44 @@ DEFINE_INIT_HOOK(replay,    "RecordReplayMode", g_recordReplayModeCache,
 // we just call through.
 // ---------------------------------------------------------------------------
 
+// The hook function body no longer calls orig itself. On the JB build the
+// MSHookFunction trampoline runs orig before/after our hook depending on how
+// the trampoline is wired; on the binpatch build the static cave runs the
+// displaced prologue and branches to orig + 4. Either way, orig completes
+// synchronously inside the same main-runloop iteration that entered this
+// hook, so a block dispatched to dispatch_get_main_queue() here runs AFTER
+// orig has finished and `_localPlayer` is populated.
+//
+// We capture `self` and `lp_offset` by value into the block (both are POD —
+// `self` is a void *, no ARC retain). The LP_CACHE / file_log / usi /
+// meta calls all happen inside the deferred block so they observe the
+// post-orig state.
 #define DEFINE_START_HOOK(MODE_LOWER, MODE_TAG, CACHE_VAR, LP_CACHE, LP_OFFSET, ORIG_VAR) \
     static void hook_##MODE_LOWER##_Start(void *self) {                                   \
         if ((CACHE_VAR) != self) (CACHE_VAR) = self;                                      \
-        if (ORIG_VAR) (ORIG_VAR)(self);                                                   \
-        int32_t lp = -1;                                                                  \
-        if ((LP_OFFSET) != 0 && self) {                                                   \
-            lp = readI32(self, (LP_OFFSET));                                              \
-            (LP_CACHE) = lp;                                                              \
-        }                                                                                 \
-        file_log([NSString stringWithFormat:                                              \
-                  @"[MMODE] " MODE_TAG " Start self=%p localPlayer=%d",                   \
-                  self, (int)lp]);                                                        \
-        /* Tell the USI engine driver that a match just started so it can */              \
-        /* prep its state machine and (when we're the side to move first) */              \
-        /* kickstart a position+go without waiting for the first observed */              \
-        /* opponent move. */                                                              \
-        usi_engine_on_match_start(lp);                                                    \
-        /* Emit the match_start meta line so the bridge can begin assembling */          \
-        /* its KIF header (player names, mode, time control). MatchConfig is */          \
-        /* already cached from the InitializeAsync hook above, and lp is what */         \
-        /* we've just read — same call site keeps the two notifications in */            \
-        /* lockstep. */                                                                   \
-        meta_emit_match_start(lp);                                                        \
+        void *selfCap = self;                                                             \
+        uintptr_t lpOffsetCap = (uintptr_t)(LP_OFFSET);                                   \
+        dispatch_async(dispatch_get_main_queue(), ^{                                      \
+            int32_t lp = -1;                                                              \
+            if (lpOffsetCap != 0 && selfCap) {                                            \
+                lp = readI32(selfCap, lpOffsetCap);                                       \
+                (LP_CACHE) = lp;                                                          \
+            }                                                                             \
+            file_log([NSString stringWithFormat:                                          \
+                      @"[MMODE] " MODE_TAG " Start self=%p localPlayer=%d",               \
+                      selfCap, (int)lp]);                                                 \
+            /* Tell the USI engine driver that a match just started so it can */          \
+            /* prep its state machine and (when we're the side to move first) */          \
+            /* kickstart a position+go without waiting for the first observed */          \
+            /* opponent move. */                                                          \
+            usi_engine_on_match_start(lp);                                                \
+            /* Emit the match_start meta line so the bridge can begin assembling */       \
+            /* its KIF header (player names, mode, time control). MatchConfig is */       \
+            /* already cached from the InitializeAsync hook above, and lp is what */      \
+            /* we've just read — same call site keeps the two notifications in */         \
+            /* lockstep. */                                                                \
+            meta_emit_match_start(lp);                                                    \
+        });                                                                                \
     }
 
 // AIMatchMode / CPUStreamMode / OnlinePvPMode capture _localPlayer.

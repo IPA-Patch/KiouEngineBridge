@@ -211,44 +211,64 @@ static bool hook_AdapterTryMakeMoveOut(void *self, SfMove move, void *outMove) {
     if (gcSeen && g_gameCtrlCache != gcSeen) g_gameCtrlCache = gcSeen;
     g_lastAdapterEvtUs = mach_absolute_time();
 
-    bool ok = orig_AdapterTryMakeMoveOut
-                  ? orig_AdapterTryMakeMoveOut(self, move, outMove) : false;
-    void *gameCtrl = readPtr(self, ADAPTER_OFF_GAME_CONTROLLER);
-    NSString *sfen = sfenFromGameController(gameCtrl);
-    SfMove executed = 0;
-    if (ptrLooksValid(outMove)) {
-        executed = (SfMove)(uint32_t)readI32(outMove, 0);
-    }
-    NSString *usi = moveToUsi(move);
-    file_log([NSString stringWithFormat:
-              @"[ADAPTER2] TryMakeMove self=%p ok=%d "
-              @"usi=\"%@\" argMove={%@} outMove=0x%x sfen_after=\"%@\"",
-              self, (int)ok, usi ?: @"", describeMoveBits(move),
-              (unsigned)executed, sfen ?: @""]);
+    // The hook function body no longer calls orig. On the JB build the
+    // MSHookFunction trampoline runs orig; on the binpatch build the static
+    // cave runs the displaced prologue and branches to orig + 4. Either way,
+    // orig completes synchronously inside the current main-runloop iteration,
+    // so a block dispatched to the main queue here runs AFTER orig — by then
+    // PositionHistory has the post-move position appended.
+    //
+    // outMove cannot be read from inside the deferred block: the caller's
+    // stack frame is gone by then. Instead we copy `move` by value (it's a
+    // packed uint32_t) and reconstruct the USI string from it via moveToUsi
+    // inside the block. The post-move SFEN walks PositionHistory[size-1]
+    // off the cached GameController, which is post-orig truth regardless of
+    // outMove.
+    void *selfCap = self;
+    uint32_t mv_copy = (uint32_t)move;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        void *gameCtrl = readPtr(selfCap, ADAPTER_OFF_GAME_CONTROLLER);
+        NSString *sfen = sfenFromGameController(gameCtrl);
+        NSString *usi  = moveToUsi((SfMove)mv_copy);
+        file_log([NSString stringWithFormat:
+                  @"[ADAPTER2] TryMakeMove self=%p "
+                  @"usi=\"%@\" argMove={%@} sfen_after=\"%@\"",
+                  selfCap, usi ?: @"", describeMoveBits((SfMove)mv_copy),
+                  sfen ?: @""]);
 
-    // Phase 2: forward the observation to the USI engine driver. It decides
-    // whether the next side to move is ours (= time to ask YaneuraOu for a
-    // bestmove) or the opponent's (= just sit and wait).
-    if (ok && sfen) {
-        // Pull `side_to_move` straight from the SFEN's "b"/"w" token rather
-        // than reach into Position internals — keeps this hook lean and
-        // avoids the il2cpp call back into Position fields from the Unity
-        // thread we're already on.
-        int32_t sideToMove = -1;
-        NSArray<NSString *> *parts = [sfen componentsSeparatedByString:@" "];
-        if (parts.count >= 2) {
-            NSString *side = parts[1];
-            if ([side isEqualToString:@"b"]) sideToMove = 0;
-            else if ([side isEqualToString:@"w"]) sideToMove = 1;
+        // Phase 2: forward the observation to the USI engine driver. It
+        // decides whether the next side to move is ours (= time to ask
+        // YaneuraOu for a bestmove) or the opponent's (= just sit and wait).
+        if (sfen) {
+            // Pull `side_to_move` straight from the SFEN's "b"/"w" token
+            // rather than reach into Position internals — keeps this hook
+            // lean and avoids the il2cpp call back into Position fields
+            // from the Unity thread we're already on.
+            int32_t sideToMove = -1;
+            NSArray<NSString *> *parts =
+                [sfen componentsSeparatedByString:@" "];
+            if (parts.count >= 2) {
+                NSString *side = parts[1];
+                if ([side isEqualToString:@"b"]) sideToMove = 0;
+                else if ([side isEqualToString:@"w"]) sideToMove = 1;
+            }
+            usi_engine_on_move_observed(usi, sfen, sideToMove);
+            // meta_emit_move はここでは出さない — ADAPTER2 は「自分のクライアント
+            // が指した手」しか通らない (オンライン対戦では相手手はサーバ state
+            // 経由で来る) ので、ここで出すと自分側 ply のみの片肺 KIF になる。
+            // 両手番分の meta は Hook_GameStateStoreObserve.m の
+            // NotifyPieceMoved フックに集約してある。
         }
-        usi_engine_on_move_observed(usi, sfen, sideToMove);
-        // meta_emit_move はここでは出さない — ADAPTER2 は「自分のクライアント
-        // が指した手」しか通らない (オンライン対戦では相手手はサーバ state
-        // 経由で来る) ので、ここで出すと自分側 ply のみの片肺 KIF になる。
-        // 両手番分の meta は Hook_GameStateStoreObserve.m の
-        // NotifyPieceMoved フックに集約してある。
-    }
-    return ok;
+    });
+
+    // orig runs outside this function — driven by the install wrapper on
+    // the JB build, and by the static cave on the binpatch build. The
+    // return value the caller sees is orig's, not ours; this function's
+    // return is unused on both paths. Return false as a defensive default
+    // for the (unreachable on either build) case where the wrapper / cave
+    // forwards our return through.
+    (void)outMove;
+    return false;
 }
 
 // ---------------------------------------------------------------------------
