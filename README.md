@@ -101,7 +101,7 @@ sequenceDiagram
         H->>E: position sfen <SFEN> / go ...
         E-->>H: bestmove 7g7f
         H->>K: bestmove 7g7f
-        Note over K: inject_apply() &rarr; Move.Create &rarr;<br/>OnPlayerMoveAsync &rarr; Adapter.TryMakeMove
+        Note over K: inject_apply -> Move.Create -> OnPlayerMoveAsync -> Adapter.TryMakeMove
         K-->>H: meta {"type":"move","usi":"7g7f","sfen_after":"...", ...}
     end
 
