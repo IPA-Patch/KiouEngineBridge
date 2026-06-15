@@ -107,7 +107,7 @@ sequenceDiagram
 
     Note over K,W: Match start — Bridge emits sidecar meta
     K-->>B: IMatchMode.InitializeAsync (latch self / local_player)
-    B-->>W: meta {"type":"match_start","mode":"OnlinePvPMode","local_player":0, ...}
+    B-->>W: meta{"type":"match_start","mode":"OnlinePvPMode","local_player":0,...}
 
     loop Per move while it's our turn
         K-->>B: TryMakeMove observation -> SFEN / side_to_move
@@ -118,19 +118,16 @@ sequenceDiagram
         W->>B: bestmove 7g7f
         Note over B,K: inject_apply -> Move.Create -> OnPlayerMoveAsync -> TryMakeMove
         B->>K: replay move through KIOU's move pipeline
-        B-->>W: meta {"type":"move","usi":"7g7f","sfen_after":"...", ...}
+        B-->>W: meta{"type":"move","usi":"7g7f","sfen_after":"...",...}
     end
 
     K-->>B: IMatchMode.OnMatchEndAsync (result + final SFEN + GetUSIText)
-    B-->>W: meta {"type":"match_end","result":"win","final_sfen":"...","usi_text":"..."}
+    B-->>W: meta{"type":"match_end","result":"win","final_sfen":"...","usi_text":"..."}
 ```
 
-Each `meta` frame is a single line prefixed with `meta ` so the
-Wrapper can demux it from real USI traffic without parsing JSON for
-every line.
-
-Each frame is a single line, prefixed with `meta ` so the host can
-demux it from real USI traffic without parsing JSON for every line.
+Each `meta` frame is a single line prefixed with the literal
+`meta` followed by a single JSON object, so the Wrapper can demux
+it from real USI traffic without parsing JSON for every line.
 
 ## How it works
 
