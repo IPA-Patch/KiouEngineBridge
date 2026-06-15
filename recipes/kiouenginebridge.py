@@ -89,10 +89,12 @@ CAVE_REGION = (0x826A000, 0x826C000)  # (start, end exclusive)
 # Bridge needs a different slot at least 8 bytes away; we subtract 16
 # bytes to land at ``0x8F90CC0`` (validated via ``assert_slot_in_bss``).
 # If a future UnityFramework changes the __bss layout, re-run
-# reserve_hook_slot() and update this constant.
+# reserve_hook_slot() and update PROBED_HOOK_SLOT_RVA plus this sibling
+# constant.
 # ---------------------------------------------------------------------------
 
 HOOK_SLOT_RVA = 0x8F90CC0
+PROBED_HOOK_SLOT_RVA = 0x8F90CD0
 
 
 # ---------------------------------------------------------------------------
@@ -376,14 +378,17 @@ CAVE_PATCHES: list = [
 #
 # Bridge talks to its host bridge over plain TCP on port 9527 — it does
 # not use Bonjour / mDNS, so iOS 14+'s NSLocalNetworkUsageDescription
-# permission gate is not triggered. No plist keys are required for the
-# Bridge binpatch flavour. (KifExporter sets UIFileSharingEnabled /
-# LSSupportsOpeningDocumentsInPlace independently when both recipes are
-# applied to the same IPA.)
+# permission gate is not triggered. The plist keys below are only for
+# Files.app access to the app sandbox, so the Common logging helper can
+# expose the binpatch log from Documents when IPA_LOG_TO_DOCUMENTS=1 is
+# enabled by the consumer build.
 #
-# See docs/plans/kiou_engine_bridge_binpatch.md § 8 for the rationale
-# and the Phase C measurement that confirmed iOS 18 does not pop the
-# local-network gate for plain ``0.0.0.0:9527`` listeners.
+# See docs/plans/kiou_engine_bridge_binpatch.md § 8 for the local-network
+# rationale and the Phase C measurement that confirmed iOS 18 does not pop
+# the local-network gate for plain ``0.0.0.0:9527`` listeners.
 # ---------------------------------------------------------------------------
 
-PLIST_KEYS: dict = {}
+PLIST_KEYS: dict = {
+    "UIFileSharingEnabled": True,
+    "LSSupportsOpeningDocumentsInPlace": True,
+}

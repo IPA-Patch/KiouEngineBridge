@@ -9,14 +9,14 @@ include $(THEOS)/makefiles/common.mk
 TWEAK_NAME = KiouEngineBridge
 
 KiouEngineBridge_FILES = $(shell find Sources/KiouEngineBridge -name '*.m' -o -name '*.c' -o -name '*.mm' -o -name '*.cpp')
-# Shared logging implementation lives in ./_shared/. il2cpp / hook-engine
-# headers are inline-only so they don't need to be listed here.
-KiouEngineBridge_FILES += _shared/kiou_logging.m
+# Shared logging implementation lives in Sources/Common. il2cpp helpers are
+# inline-only, so they don't need to be listed here.
+KiouEngineBridge_FILES += Sources/Common/logging.m
 
 # Build-time git short HEAD (7 chars). No -dirty suffix for now.
 KIOU_ENGINE_BRIDGE_COMMIT ?= $(shell git rev-parse --short=7 HEAD 2>/dev/null || echo unknown)
 
-KiouEngineBridge_CFLAGS = -fobjc-arc -Wno-unused-function -DKIOU_ENGINE_BRIDGE_COMMIT=\"$(KIOU_ENGINE_BRIDGE_COMMIT)\" -I_shared
+KiouEngineBridge_CFLAGS = -fobjc-arc -Wno-unused-function -DKIOU_ENGINE_BRIDGE_COMMIT=\"$(KIOU_ENGINE_BRIDGE_COMMIT)\" -ISources/Common
 KiouEngineBridge_FRAMEWORKS = Foundation
 
 # ---------------------------------------------------------------------------
@@ -32,10 +32,10 @@ KiouEngineBridge_FRAMEWORKS = Foundation
 #                             pointer into the reserved slot at constructor
 #                             time. See docs/plans/kiou_engine_bridge_binpatch.md.
 #
-# _shared/kiou_hookengine.h picks the API at compile time.
+# Sources/Common/hookengine.h picks the API at compile time.
 # ---------------------------------------------------------------------------
 ifeq ($(BINPATCH),1)
-    KiouEngineBridge_CFLAGS  += -DKIOU_BINPATCH=1
+    KiouEngineBridge_CFLAGS  += -DKIOU_BINPATCH=1 -DIPA_LOG_TO_DOCUMENTS=1
     KiouEngineBridge_LDFLAGS  = -Wl,-undefined,error
 else
     KiouEngineBridge_LDFLAGS  = -lsubstrate

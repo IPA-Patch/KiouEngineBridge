@@ -4,9 +4,9 @@
 #import <stdint.h>
 #import <stdbool.h>
 
-#import "kiou_il2cpp.h"
-#import "kiou_hookengine.h"
-#import "kiou_logging.h"
+#import "il2cpp.h"
+#import "hookengine.h"
+#import "logging.h"
 
 // ===========================================================================
 // Internal.h — KiouEngineBridge-private declarations.
@@ -25,7 +25,7 @@
 //
 // What the injection layer is NOT allowed to do:
 //   - Touch il2cpp object fields directly. The shared header
-//     `kiou_il2cpp.h` is intentionally read-only, and the write-side helpers
+//     `il2cpp.h` is intentionally read-only, and the write-side helpers
 //     (writeU8 / writeI32) that KiouEditor declares in its own Internal.h
 //     are still NOT included here. Any future "let's tweak a board field"
 //     regression must opt in explicitly by adding those helpers — they
