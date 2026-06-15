@@ -464,6 +464,11 @@ packages/
 .idea/
 *.swp
 
+# Claude Code worktrees — `EnterWorktree` (and manual `git worktree add`
+# checkouts) drop their working copies under .claude/worktrees/. They are
+# real, separate working trees of this repo, not source.
+.claude/worktrees/
+
 # On-device test artifacts dropped by the operator (crash reports from
 # iPhone "Analytics Data", run logs out of the sandbox, captured .kif
 # samples). These are useful for debugging but are not source. Distinct

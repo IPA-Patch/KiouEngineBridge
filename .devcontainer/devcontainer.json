@@ -23,8 +23,7 @@
         "source=${env:HOME}/.ssh,target=/home/vscode/.ssh,type=bind,consistency=cached,readonly",
         "source=${env:HOME}/.config/gh,target=/home/vscode/.config/gh,type=bind,consistency=cached",
         "source=${env:HOME}/.codex,target=/home/vscode/.codex,type=bind,consistency=cached",
-        "source=${env:HOME}/.gnupg,target=/home/vscode/.gnupg-host,type=bind,consistency=cached,readonly",
-        "source=${env:HOME}/.gitconfig,target=/home/vscode/.gitconfig,type=bind,consistency=cached,readonly"
+        "source=${env:HOME}/.gnupg,target=/home/vscode/.gnupg-host,type=bind,consistency=cached,readonly"
     ],
     "features": {
         "ghcr.io/devcontainers/features/common-utils:2": {
