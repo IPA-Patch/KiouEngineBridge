@@ -71,7 +71,7 @@ jobs:
 
     steps:
       - name: Checkout source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           # Sources/Common is a submodule and the build references files
           # inside it (logging.m, binpatch.m, ...). The default
