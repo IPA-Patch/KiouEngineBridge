@@ -6,18 +6,18 @@ THEOS_DEVICE_IP = 192.168.0.49
 
 include $(THEOS)/makefiles/common.mk
 
-TWEAK_NAME = KiouUsiProxy
+TWEAK_NAME = KiouEngineBridge
 
-KiouUsiProxy_FILES = $(shell find Sources/KiouUsiProxy -name '*.m' -o -name '*.c' -o -name '*.mm' -o -name '*.cpp')
+KiouEngineBridge_FILES = $(shell find Sources/KiouEngineBridge -name '*.m' -o -name '*.c' -o -name '*.mm' -o -name '*.cpp')
 # Shared logging implementation lives in ../_shared/. il2cpp / hook-engine
 # headers are inline-only so they don't need to be listed here.
-KiouUsiProxy_FILES += ../_shared/kiou_logging.m
+KiouEngineBridge_FILES += ../_shared/kiou_logging.m
 
 # Build-time git short HEAD (7 chars). No -dirty suffix for now.
-KIOU_USI_PROXY_COMMIT ?= $(shell git rev-parse --short=7 HEAD 2>/dev/null || echo unknown)
+KIOU_ENGINE_BRIDGE_COMMIT ?= $(shell git rev-parse --short=7 HEAD 2>/dev/null || echo unknown)
 
-KiouUsiProxy_CFLAGS = -fobjc-arc -Wno-unused-function -DKIOU_USI_PROXY_COMMIT=\"$(KIOU_USI_PROXY_COMMIT)\" -I../_shared
-KiouUsiProxy_FRAMEWORKS = Foundation
+KiouEngineBridge_CFLAGS = -fobjc-arc -Wno-unused-function -DKIOU_ENGINE_BRIDGE_COMMIT=\"$(KIOU_ENGINE_BRIDGE_COMMIT)\" -I../_shared
+KiouEngineBridge_FRAMEWORKS = Foundation
 
 # ---------------------------------------------------------------------------
 # Hook engine selection — mirrors KiouEditor/Makefile.
@@ -30,16 +30,16 @@ KiouUsiProxy_FRAMEWORKS = Foundation
 # share a single Dobby checkout. _shared/kiou_hookengine.h picks the API.
 # ---------------------------------------------------------------------------
 ifeq ($(JAILED),1)
-    KiouUsiProxy_CFLAGS  += -DKIOU_JAILED=1 -Ivendor/dobby/include
-    KiouUsiProxy_LDFLAGS  = -Lvendor/dobby/lib -ldobby -lc++ -lc++abi
+    KiouEngineBridge_CFLAGS  += -DKIOU_JAILED=1 -Ivendor/dobby/include
+    KiouEngineBridge_LDFLAGS  = -Lvendor/dobby/lib -ldobby -lc++ -lc++abi
 else
-    KiouUsiProxy_LDFLAGS  = -lsubstrate
+    KiouEngineBridge_LDFLAGS  = -lsubstrate
 endif
 
 include $(THEOS_MAKE_PATH)/tweak.mk
 
 after-install::
-	install.exec "chmod 755 /var/jb/Library/MobileSubstrate/DynamicLibraries/KiouUsiProxy.dylib"
+	install.exec "chmod 755 /var/jb/Library/MobileSubstrate/DynamicLibraries/KiouEngineBridge.dylib"
 	install.exec "sleep 1; (open com.neconome.shogi 2>/dev/null || uiopen com.neconome.shogi:// 2>/dev/null || echo 'no launcher tool (uiopen/open); start KIOU manually')"
 
 # jailed distribution: rebuild with Dobby statically linked, copy into
@@ -48,9 +48,9 @@ jailed::
 	$(MAKE) JAILED=1 clean
 	$(MAKE) JAILED=1 all
 	$(ECHO_NOTHING)mkdir -p packages/jailed$(ECHO_END)
-	$(ECHO_NOTHING)cp $(THEOS_OBJ_DIR)/KiouUsiProxy.dylib packages/jailed/KiouUsiProxy.dylib$(ECHO_END)
-	@echo "jailed dylib -> packages/jailed/KiouUsiProxy.dylib"
+	$(ECHO_NOTHING)cp $(THEOS_OBJ_DIR)/KiouEngineBridge.dylib packages/jailed/KiouEngineBridge.dylib$(ECHO_END)
+	@echo "jailed dylib -> packages/jailed/KiouEngineBridge.dylib"
 	@echo "--- otool -L (must NOT list libsubstrate or libdobby) ---"
-	@$(THEOS)/toolchain/linux/iphone/bin/otool -L packages/jailed/KiouUsiProxy.dylib 2>/dev/null \
-	  || otool -L packages/jailed/KiouUsiProxy.dylib 2>/dev/null \
+	@$(THEOS)/toolchain/linux/iphone/bin/otool -L packages/jailed/KiouEngineBridge.dylib 2>/dev/null \
+	  || otool -L packages/jailed/KiouEngineBridge.dylib 2>/dev/null \
 	  || echo "(otool unavailable on host; inspect the dylib on a Mac/iOS device)"

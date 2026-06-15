@@ -216,11 +216,17 @@ DEFINE_OPM_HOOK(replay,   "RecordReplayMode", g_recordReplayModeCache,
             void *gc = readPtr(adapter, KIOU_ADAPTER_OFF_GAME_CONTROLLER);              \
             if (gc && g_gameCtrlCache != gc) g_gameCtrlCache = gc;                      \
         }                                                                               \
+        /* Stash MatchConfig so Meta_Emitter can read player names, time */            \
+        /* control, and mode at match_start time. The cfg pointer is stable */         \
+        /* for the lifetime of the match — il2cpp's Boehm GC won't move it, */         \
+        /* and IMatchMode keeps a strong ref through _matchConfig (Online) */          \
+        /* or via the captured arg itself (the simpler modes). */                      \
+        meta_set_match_config(cfg);                                                     \
         UniTaskRet ret = { NULL, NULL };                                                \
         if (ORIG_VAR) ret = (ORIG_VAR)(self, cfg, store, adapter, ct);                  \
         file_log([NSString stringWithFormat:                                            \
-                  @"[MMODE] " MODE_TAG " Init self=%p store=%p adapter=%p",             \
-                  self, store, adapter]);                                               \
+                  @"[MMODE] " MODE_TAG " Init self=%p store=%p adapter=%p cfg=%p",      \
+                  self, store, adapter, cfg]);                                          \
         return ret;                                                                     \
     }
 
@@ -269,6 +275,12 @@ DEFINE_INIT_HOOK(replay,    "RecordReplayMode", g_recordReplayModeCache,
         /* kickstart a position+go without waiting for the first observed */              \
         /* opponent move. */                                                              \
         usi_engine_on_match_start(lp);                                                    \
+        /* Emit the match_start meta line so the bridge can begin assembling */          \
+        /* its KIF header (player names, mode, time control). MatchConfig is */          \
+        /* already cached from the InitializeAsync hook above, and lp is what */         \
+        /* we've just read — same call site keeps the two notifications in */            \
+        /* lockstep. */                                                                   \
+        meta_emit_match_start(lp);                                                        \
     }
 
 // AIMatchMode / CPUStreamMode / OnlinePvPMode capture _localPlayer.
@@ -290,39 +302,251 @@ DEFINE_START_HOOK(replay, "RecordReplayMode", g_recordReplayModeCache,
 #undef DEFINE_START_HOOK
 
 // ---------------------------------------------------------------------------
-// OnMatchEndAsync hooks. Clear the mode self cache and (for the three
-// fixed-seat modes) reset `_localPlayer` to "unknown" (-1). We do the
-// clear BEFORE calling the original so that if the original tears down
-// state asynchronously, Inject_Move's route picker stops picking this
-// mode immediately rather than racing the teardown.
+// OnMatchEndAsync hooks. Three responsibilities now:
+//   1. Tell Usi_Engine the match is over, with the inferred result
+//      (win/lose/unknown) so it can ship the `gameover` line to the
+//      bridge. Drawing isn't reliably distinguishable from win/lose
+//      via the local board state alone, so we stay conservative and
+//      emit win/lose only.
+//   2. Clear the mode self cache + `_localPlayer` BEFORE the original
+//      runs so that if the original tears down state asynchronously,
+//      Inject_Move's route picker stops picking this mode immediately
+//      rather than racing the teardown.
+//   3. Schedule the auto-rematch sequence on the main queue:
+//        +3.5s  GameOrchestrator.OnEndSequenceCompleted (close result overlay)
+//        +5.5s  CpuMatchStarter.StartCpuFreeMatchAsync  (CPU modes)
+//             | MatchingHandler.StartRankMatchingAsync   (Online)
+//             | (nothing)                                (LocalPvP/Replay)
+//
+//      Open-seat modes (LocalPvP/RecordReplay) skip the rematch kick —
+//      those are human-controlled or a kifu replay; we have no business
+//      auto-starting either.
 // ---------------------------------------------------------------------------
 
-#define DEFINE_END_HOOK(MODE_LOWER, MODE_TAG, CACHE_VAR, LP_CACHE, HAS_LP, ORIG_VAR) \
-    static UniTaskRet hook_##MODE_LOWER##_End(void *self, void *ct) {               \
-        file_log([NSString stringWithFormat:                                        \
-                  @"[MMODE] " MODE_TAG " End self=%p", self]);                      \
-        (CACHE_VAR) = NULL;                                                         \
-        if (HAS_LP) (LP_CACHE) = -1;                                                \
-        /* Whichever match owned the cached SFEN is over now. Clear it so the */    \
+// Match-end result inference. We can't reach into
+// GameStateStore._matchResult cleanly (it lives behind a ReactiveProperty<T>
+// whose internal layout dump.cs doesn't pin down), so instead we look at
+// the final SFEN's side-to-move:
+//
+//   sideToMove == localPlayer → the local seat had to move and couldn't
+//                               (checkmate against us, timeout) → lose
+//   sideToMove != localPlayer → opponent has to move and can't → win
+//
+// Open-seat modes (LocalPvP/Replay) pass localPlayer == -1; we return
+// UNKNOWN there so Usi_Engine suppresses the gameover line.
+static usi_match_result_t inferMatchResult(int32_t localPlayer) {
+    if (localPlayer != 0 && localPlayer != 1) return USI_RESULT_UNKNOWN;
+    NSString *sfen = inject_currentSfen();
+    if (sfen.length == 0) return USI_RESULT_UNKNOWN;
+    NSArray<NSString *> *parts = [sfen componentsSeparatedByString:@" "];
+    if (parts.count < 2) return USI_RESULT_UNKNOWN;
+    NSString *s = parts[1];
+    int32_t sideToMove = -1;
+    if      ([s isEqualToString:@"b"]) sideToMove = 0;
+    else if ([s isEqualToString:@"w"]) sideToMove = 1;
+    else return USI_RESULT_UNKNOWN;
+    return (sideToMove == localPlayer) ? USI_RESULT_LOSE : USI_RESULT_WIN;
+}
+
+// ---------------------------------------------------------------------------
+// Static il2cpp entry points used by the rematch path. Resolved on demand
+// inside the dispatch blocks from g_unityBase (set by Tweak.m).
+// ---------------------------------------------------------------------------
+#define RVA_GAMEORCH_ON_END_SEQUENCE_COMPLETED  0x594AE5C
+// CpuMatchStarter.StartCpuFreeMatchAsync(CPUStrengthType, bool, CT) -> UniTask
+#define RVA_CPU_MATCH_START_FREE                0x5D02FE8
+// MatchingHandler.StartRankMatchingAsync(RankMatchRuleType, bool, CT) -> UniTask
+#define RVA_MATCHING_START_RANK                 0x5D0478C
+
+// GameOrchestrator field offsets reachable from the cached self.
+//   _resolvedConfig : GameSetup       (dump.cs:1211399) — 0xE0
+// GameSetup field offsets.
+//   <Params>k__BackingField : GameParams (dump.cs:1209649) — 0x10
+// GameParams field offsets.
+//   <CpuStrength>k__BackingField : Nullable<CPUStrengthType> (dump.cs:1208715)
+//     — 0x30, packed as { int32 value @0; bool hasValue @4 } in il2cpp.
+#define OFF_GAMEORCH_RESOLVED_CONFIG 0xE0
+#define OFF_GAMESETUP_PARAMS         0x10
+#define OFF_GAMEPARAMS_CPU_STRENGTH  0x30
+
+// CPUStrengthType values (dump.cs lookups):
+//   Invalid=0, Unspecified=1, Easy=2, Normal=3, Hard=4
+#define CPU_STRENGTH_NORMAL 3
+#define CPU_STRENGTH_HARD   4
+
+// RankMatchRuleType.Bullet3Min = 5 (dump.cs:1609733). User-selected default
+// for auto-rematch on OnlinePvPMode (see KiouEngineBridge README / commit msg).
+#define RANK_RULE_BULLET3MIN 5
+
+typedef UniTaskRet (*StartCpuFreeMatch_t)(int32_t strength, bool beginnerSupport,
+                                          void *ct);
+typedef UniTaskRet (*StartRankMatching_t)(int32_t ruleType, bool beginnerSupport,
+                                          void *ct);
+typedef void (*GameOrch_OnEndSequenceCompleted_t)(void *self);
+
+// Read CPU strength from the cached GameOrchestrator, falling back to -1
+// (= "skip the rematch's strength field, let the caller decide") when the
+// chain isn't reachable.
+//
+// IMPORTANT: il2cpp's Nullable<T> layout follows the System.Nullable C#
+// source order — { bool hasValue @0; T value @4 } (with the natural
+// alignment padding between them for T = int32). The earlier
+// "value @0, hasValue @4" assumption silently picked up Unspecified(=1)
+// for every rematch, which the CPU match starter then quietly downgraded
+// to the easiest strength tier (it treats Unspecified as "server picks").
+// That's the bug the user reported as "rematch is always the weakest".
+static int32_t readCpuStrengthFromOrchestrator(void) {
+    void *orch = g_gameOrchestratorCache;
+    if (!orch) return -1;
+    void *setup = readPtr(orch, OFF_GAMEORCH_RESOLVED_CONFIG);
+    if (!setup) return -1;
+    void *params = readPtr(setup, OFF_GAMESETUP_PARAMS);
+    if (!params) return -1;
+    // Nullable<CPUStrengthType> layout: bool hasValue @0 (+ 3 bytes pad),
+    // int32 value @4.
+    uint8_t hasValue = readU8(params, OFF_GAMEPARAMS_CPU_STRENGTH);
+    int32_t value    = readI32(params, OFF_GAMEPARAMS_CPU_STRENGTH + 4);
+    file_log([NSString stringWithFormat:
+              @"[REMATCH] readCpuStrength: orch=%p setup=%p params=%p "
+              @"hasValue=%u value=%d",
+              orch, setup, params, (unsigned)hasValue, (int)value]);
+    if (!hasValue) return -1;
+    return value;
+}
+
+// Auto-rematch scheduler. Called from the END_HOOK after we've notified
+// Usi_Engine and cleared the caches.
+//
+// mode is "ai_cpu" / "online" / NULL. NULL = no auto-rematch (LocalPvP,
+// RecordReplay). Anything else is logged + a rematch kick is scheduled.
+static void scheduleAutoRematch(const char *modeTag) {
+    if (!modeTag) {
+        file_log(@"[REMATCH] skipped: mode opts out");
+        return;
+    }
+    bool isOnline = (strcmp(modeTag, "online") == 0);
+
+    file_log([NSString stringWithFormat:
+              @"[REMATCH] scheduling auto-rematch mode=%s orch=%p",
+              modeTag, g_gameOrchestratorCache]);
+
+    // Step 1 (+3.5s): close the result overlay by tapping the same path
+    // the player's "back" button would. GameOrchestrator.OnEndSequenceCompleted
+    // is private but call-compatible from C — disassembly shows it just
+    // walks the exit flow.
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
+                                 (int64_t)(3.5 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        void *orch = g_gameOrchestratorCache;
+        if (!orch || g_unityBase == 0) {
+            file_log(@"[REMATCH] step1 skipped: no orchestrator/unityBase");
+            return;
+        }
+        GameOrch_OnEndSequenceCompleted_t fn =
+            (GameOrch_OnEndSequenceCompleted_t)(void *)
+            (g_unityBase + RVA_GAMEORCH_ON_END_SEQUENCE_COMPLETED);
+        @try {
+            fn(orch);
+            file_log([NSString stringWithFormat:
+                      @"[REMATCH] step1: OnEndSequenceCompleted invoked "
+                      @"orch=%p", orch]);
+        } @catch (NSException *e) {
+            file_log([NSString stringWithFormat:
+                      @"[REMATCH] step1 threw: %@", e]);
+        }
+    });
+
+    // Step 2 (+5.5s): kick the next match. CPU path reads the previous
+    // strength off the cached GameOrchestrator → GameSetup → GameParams
+    // chain so the rematch matches what the player started.
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
+                                 (int64_t)(5.5 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        if (g_unityBase == 0) {
+            file_log(@"[REMATCH] step2 skipped: no unityBase");
+            return;
+        }
+        if (isOnline) {
+            StartRankMatching_t fn = (StartRankMatching_t)(void *)
+                (g_unityBase + RVA_MATCHING_START_RANK);
+            @try {
+                (void)fn(RANK_RULE_BULLET3MIN, false, NULL);
+                file_log([NSString stringWithFormat:
+                          @"[REMATCH] step2: StartRankMatchingAsync "
+                          @"rule=Bullet3Min(%d)", RANK_RULE_BULLET3MIN]);
+            } @catch (NSException *e) {
+                file_log([NSString stringWithFormat:
+                          @"[REMATCH] step2 (online) threw: %@", e]);
+            }
+        } else {
+            int32_t strength = readCpuStrengthFromOrchestrator();
+            if (strength < 0) {
+                strength = CPU_STRENGTH_NORMAL;
+                file_log([NSString stringWithFormat:
+                          @"[REMATCH] step2: CPU strength unreadable, "
+                          @"falling back to Normal(%d)", strength]);
+            }
+            StartCpuFreeMatch_t fn = (StartCpuFreeMatch_t)(void *)
+                (g_unityBase + RVA_CPU_MATCH_START_FREE);
+            @try {
+                (void)fn(strength, false, NULL);
+                file_log([NSString stringWithFormat:
+                          @"[REMATCH] step2: StartCpuFreeMatchAsync "
+                          @"strength=%d", (int)strength]);
+            } @catch (NSException *e) {
+                file_log([NSString stringWithFormat:
+                          @"[REMATCH] step2 (cpu) threw: %@", e]);
+            }
+        }
+    });
+}
+
+#define DEFINE_END_HOOK(MODE_LOWER, MODE_TAG, CACHE_VAR, LP_CACHE, HAS_LP,         \
+                        REMATCH_TAG, ORIG_VAR)                                     \
+    static UniTaskRet hook_##MODE_LOWER##_End(void *self, void *ct) {              \
+        /* Snapshot localPlayer BEFORE clearing it so we can infer the result. */  \
+        int32_t lpSnapshot = (HAS_LP) ? (LP_CACHE) : -1;                           \
+        usi_match_result_t result = inferMatchResult(lpSnapshot);                  \
+        /* Grab the final SFEN now, before the cache gets cleared and the */       \
+        /* re-resolved-to-Standard fallback kicks in. */                           \
+        NSString *finalSfen = inject_currentSfen();                                \
+        /* Pull the full game record straight off the GameController while it's */ \
+        /* still live. Bridge 側で Match.finish のグランドトゥルースに使う。 */     \
+        NSString *usiText = usiTextFromGameController(g_gameCtrlCache);            \
+        file_log([NSString stringWithFormat:                                       \
+                  @"[MMODE] " MODE_TAG " End self=%p localPlayer=%d "              \
+                  @"result=%d sfen=\"%@\"",                                        \
+                  self, (int)lpSnapshot, (int)result, finalSfen ?: @""]);          \
+        (CACHE_VAR) = NULL;                                                        \
+        if (HAS_LP) (LP_CACHE) = -1;                                               \
+        /* Whichever match owned the cached SFEN is over now. Clear it so the */   \
         /* next match doesn't inherit a stale board on its first injection. */     \
-        g_authoritativeSfenString = NULL;                                           \
-        /* Roll the USI engine state machine back to READY so a new game's */       \
-        /* usinewgame is sent before the next position+go. */                       \
-        usi_engine_on_match_end();                                                  \
-        if (ORIG_VAR) return (ORIG_VAR)(self, ct);                                  \
-        return (UniTaskRet){ NULL, NULL };                                          \
+        g_authoritativeSfenString = NULL;                                          \
+        /* Roll the USI engine state machine back to READY (after shipping */      \
+        /* `gameover` to the bridge) so a new game's usinewgame is sent */         \
+        /* before the next position+go. */                                         \
+        usi_engine_on_match_end(result);                                           \
+        /* Emit the match_end meta line so the bridge can finalize its KIF */      \
+        /* assembly. After this point we drop the MatchConfig cache so the */      \
+        /* next match's meta_match_start reads fresh. */                           \
+        meta_emit_match_end(result, finalSfen, usiText);                           \
+        meta_set_match_config(NULL);                                               \
+        /* Schedule the auto-rematch sequence. REMATCH_TAG = NULL opts out. */     \
+        scheduleAutoRematch(REMATCH_TAG);                                          \
+        if (ORIG_VAR) return (ORIG_VAR)(self, ct);                                 \
+        return (UniTaskRet){ NULL, NULL };                                         \
     }
 
 DEFINE_END_HOOK(ai,        "AIMatchMode",      g_aiMatchModeCache,
-                g_aiLocalPlayer,        true,  orig_AI_End)
+                g_aiLocalPlayer,        true,  "ai_cpu",  orig_AI_End)
 DEFINE_END_HOOK(cpustream, "CPUStreamMode",    g_cpuStreamModeCache,
-                g_cpuStreamLocalPlayer, true,  orig_CPUStream_End)
+                g_cpuStreamLocalPlayer, true,  "ai_cpu",  orig_CPUStream_End)
 DEFINE_END_HOOK(online,    "OnlinePvPMode",    g_onlineModeCache,
-                g_onlineLocalPlayer,    true,  orig_Online_End)
+                g_onlineLocalPlayer,    true,  "online",  orig_Online_End)
 DEFINE_END_HOOK(local,     "LocalPvPMode",     g_localPvPModeCache,
-                g_unusedLocalPlayerSlot, false, orig_Local_End)
+                g_unusedLocalPlayerSlot, false, NULL,     orig_Local_End)
 DEFINE_END_HOOK(replay,    "RecordReplayMode", g_recordReplayModeCache,
-                g_unusedLocalPlayerSlot, false, orig_Replay_End)
+                g_unusedLocalPlayerSlot, false, NULL,     orig_Replay_End)
 
 #undef DEFINE_END_HOOK
 
