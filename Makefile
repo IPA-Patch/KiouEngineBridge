@@ -9,25 +9,26 @@ include $(THEOS)/makefiles/common.mk
 TWEAK_NAME = KiouEngineBridge
 
 KiouEngineBridge_FILES = $(shell find Sources/KiouEngineBridge -name '*.m' -o -name '*.c' -o -name '*.mm' -o -name '*.cpp')
-# Shared logging implementation lives in ../_shared/. il2cpp / hook-engine
+# Shared logging implementation lives in ./_shared/. il2cpp / hook-engine
 # headers are inline-only so they don't need to be listed here.
-KiouEngineBridge_FILES += ../_shared/kiou_logging.m
+KiouEngineBridge_FILES += _shared/kiou_logging.m
 
 # Build-time git short HEAD (7 chars). No -dirty suffix for now.
 KIOU_ENGINE_BRIDGE_COMMIT ?= $(shell git rev-parse --short=7 HEAD 2>/dev/null || echo unknown)
 
-KiouEngineBridge_CFLAGS = -fobjc-arc -Wno-unused-function -DKIOU_ENGINE_BRIDGE_COMMIT=\"$(KIOU_ENGINE_BRIDGE_COMMIT)\" -I../_shared
+KiouEngineBridge_CFLAGS = -fobjc-arc -Wno-unused-function -DKIOU_ENGINE_BRIDGE_COMMIT=\"$(KIOU_ENGINE_BRIDGE_COMMIT)\" -I_shared
 KiouEngineBridge_FRAMEWORKS = Foundation
 
 # ---------------------------------------------------------------------------
-# Hook engine selection — mirrors KiouEditor/Makefile.
+# Hook engine selection — mirrors KiouKifExporter/Makefile.
 #
 #   default (JB / rootless): MobileSubstrate (MSHookFunction in libsubstrate)
-#   JAILED=1                : Dobby, statically linked from the KiouEditor
-#                             vendor tree so we don't duplicate the .a.
+#   JAILED=1                : Dobby, statically linked from the vendor tree
+#                             in vendor/dobby/.
 #
-# The vendor/ symlink points at ../KiouEditor/vendor/dobby/ so the two tweaks
-# share a single Dobby checkout. _shared/kiou_hookengine.h picks the API.
+# vendor/dobby/{include,lib}/ is vendored verbatim so this repo builds
+# standalone (without depending on a sibling KiouEditor checkout).
+# _shared/kiou_hookengine.h picks the API at compile time.
 # ---------------------------------------------------------------------------
 ifeq ($(JAILED),1)
     KiouEngineBridge_CFLAGS  += -DKIOU_JAILED=1 -Ivendor/dobby/include

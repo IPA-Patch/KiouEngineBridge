@@ -1,6 +1,10 @@
 <h1 align="center">Kiou Engine Bridge</h1>
 
 <p align="center">
+  <img src="icon.webp" alt="Kiou Engine Bridge icon" width="180" />
+</p>
+
+<p align="center">
   <em>Bridge <strong>KIOU</strong> to a desktop USI shogi engine (YaneuraOu
   and friends) — observe the live board, ship the SFEN to the engine,
   replay the engine's <code>bestmove</code> back into the running match.<br/>
@@ -69,25 +73,45 @@ Uninstalling the dylib returns KIOU to a fully vanilla state.
 
 ## What you get
 
-When a match is live in KIOU and the host bridge is attached:
+When a match is live in KIOU and the host bridge is attached, two
+streams share one WebSocket on `:9527` — the standard USI handshake +
+think loop, and a sidecar `meta` channel that carries match-lifecycle
+JSON the host can use to build a KIF on its end.
 
-```
-KIOU (this tweak)                  host (your machine)
-  ----- usiok / readyok -----> ws://device:9527
-  <---- position sfen ... -----     YaneuraOu (or any USI engine)
-  <---- go btime ... wtime ... -----
-   ----- bestmove 7g7f -----> [inject -> TryMakeMove / OnPlayerMoveAsync]
+```mermaid
+sequenceDiagram
+    autonumber
+    participant K as KIOU (this tweak)
+    participant H as Host bridge<br/>(YaneuraOu wrapper)
+    participant E as USI Engine<br/>(YaneuraOu)
+
+    Note over K,H: USI handshake (text frames on ws://device:9527)
+    H->>K: usi
+    K-->>H: id name ... / id author ... / usiok
+    H->>K: isready
+    K-->>H: readyok
+    H->>K: usinewgame
+
+    Note over K,H: Match start — tweak emits sidecar meta
+    K-->>H: meta {"type":"match_start","mode":"OnlinePvPMode","local_player":0, ...}
+
+    loop Per move while it's our turn
+        K->>H: position sfen <SFEN>
+        K->>H: go btime ... wtime ...
+        H->>E: position sfen <SFEN> / go ...
+        E-->>H: bestmove 7g7f
+        H->>K: bestmove 7g7f
+        Note over K: inject_apply() &rarr; Move.Create &rarr;<br/>OnPlayerMoveAsync &rarr; Adapter.TryMakeMove
+        K-->>H: meta {"type":"move","usi":"7g7f","sfen_after":"...", ...}
+    end
+
+    Note over K,H: OnMatchEndAsync fires
+    K-->>H: meta {"type":"match_end","result":"win","final_sfen":"...","usi_text":"..."}
 ```
 
-On the same socket, a sidecar **meta stream** emits one-line JSON
-records for `match_start` / `move` / `match_end` so the host bridge
-can build a KIF on its end if you want a record:
-
-```text
-meta {"type":"match_start","mode":"OnlinePvPMode","local_player":0, ...}
-meta {"type":"move","usi":"7g7f","sfen_after":"...","side_to_move":1, ...}
-meta {"type":"match_end","result":"win","final_sfen":"...","usi_text":"..."}
-```
+Each `meta` frame is a single line prefixed with `meta ` so the host
+can demux it from real USI traffic without parsing JSON for every
+line.
 
 Each frame is a single line, prefixed with `meta ` so the host can
 demux it from real USI traffic without parsing JSON for every line.
