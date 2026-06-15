@@ -166,7 +166,7 @@ static inline BOOL shouldLog(uint32_t n) {
 // ---------------------------------------------------------------------------
 
 #define DEFINE_OPM_HOOK(MODE_LOWER, MODE_TAG, CACHE_VAR, TS_VAR, SEEN_VAR, ORIG_VAR) \
-    static UniTaskRet hook_##MODE_LOWER##_OPM(void *self, uint32_t mv, void *ct) {  \
+    UniTaskRet hook_##MODE_LOWER##_OPM(void *self, uint32_t mv, void *ct) {         \
         if ((CACHE_VAR) != self) (CACHE_VAR) = self;                                \
         (TS_VAR) = mach_absolute_time();                                            \
         uint32_t n = ++(SEEN_VAR);                                                  \
@@ -212,9 +212,9 @@ DEFINE_OPM_HOOK(replay,   "RecordReplayMode", g_recordReplayModeCache,
 // ---------------------------------------------------------------------------
 
 #define DEFINE_INIT_HOOK(MODE_LOWER, MODE_TAG, CACHE_VAR, ORIG_VAR)                     \
-    static UniTaskRet hook_##MODE_LOWER##_Init(void *self, void *cfg,                   \
-                                               void *store, void *adapter,              \
-                                               void *ct) {                              \
+    UniTaskRet hook_##MODE_LOWER##_Init(void *self, void *cfg,                          \
+                                        void *store, void *adapter,                     \
+                                        void *ct) {                                     \
         if ((CACHE_VAR) != self) (CACHE_VAR) = self;                                    \
         /* Capture the adapter the moment IMatchMode.InitializeAsync hands */          \
         /* it over. Without this, g_adapterCache stays NULL until the first */         \
@@ -281,7 +281,7 @@ DEFINE_INIT_HOOK(replay,    "RecordReplayMode", g_recordReplayModeCache,
 // meta calls all happen inside the deferred block so they observe the
 // post-orig state.
 #define DEFINE_START_HOOK(MODE_LOWER, MODE_TAG, CACHE_VAR, LP_CACHE, LP_OFFSET, ORIG_VAR) \
-    static void hook_##MODE_LOWER##_Start(void *self) {                                   \
+    void hook_##MODE_LOWER##_Start(void *self) {                                          \
         if ((CACHE_VAR) != self) (CACHE_VAR) = self;                                      \
         KIOU_CALL_ORIG_VOID(ORIG_VAR, self);                                              \
         void *selfCap = self;                                                             \
@@ -529,7 +529,7 @@ static void scheduleAutoRematch(const char *modeTag) {
 
 #define DEFINE_END_HOOK(MODE_LOWER, MODE_TAG, CACHE_VAR, LP_CACHE, HAS_LP,         \
                         REMATCH_TAG, ORIG_VAR)                                     \
-    static UniTaskRet hook_##MODE_LOWER##_End(void *self, void *ct) {              \
+    UniTaskRet hook_##MODE_LOWER##_End(void *self, void *ct) {                     \
         /* Snapshot localPlayer BEFORE clearing it so we can infer the result. */  \
         int32_t lpSnapshot = (HAS_LP) ? (LP_CACHE) : -1;                           \
         usi_match_result_t result = inferMatchResult(lpSnapshot);                  \

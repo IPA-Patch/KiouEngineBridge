@@ -377,15 +377,28 @@ void install_GameStateStoreObserve_hook(uintptr_t unityBase);
 // Static binpatch dispatcher (binpatch build only).
 //
 // In the binpatch flavour, every hook site is redirected by a code cave to a
-// single dispatcher function published into a reserved __DATA,__bss SLOT.
-// The cave passes (self, arg1, arg2, hook_id) where hook_id is a 16-bit value
-// from `enum kiou_bridge_hook_id` and arg1/arg2 are the next two argument
-// registers (X1, X2 at the time of the original BL).
+// single dispatcher function published into a reserved __DATA,__bss SLOT
+// inside UnityFramework. The cave preserves X0-X7, materialises the slot
+// address from `unityBase + KIOU_BR_HOOK_SLOT_RVA`, loads the function
+// pointer, stuffs the per-site hook id into W6, calls the dispatcher, then
+// restores X0-X7 and resumes orig via the displaced prologue + `B orig+4`.
+//
+// W6 is used for the hook id (not W2) so the dispatcher can forward the
+// real call-site arguments in X0-X5/X7 to the hook function bodies; several
+// Bridge sites carry a real argument in X2 (`OnPlayerMoveAsync`'s ct,
+// `UpdateAuthoritativeSnapshot`'s turn, `Adapter.TryMakeMove(Move, out)`'s
+// out pointer).
 //
 // Hook function bodies live unchanged in their respective Hook_*.m files —
 // the dispatcher just maps hook_id back to the right hook_<foo>(self, ...)
 // call. See docs/plans/kiou_engine_bridge_binpatch.md § 5 for the contract.
 // ---------------------------------------------------------------------------
+
+// RVA of the 8-byte slot the recipe reserves inside UnityFramework's
+// __DATA,__bss. MUST match `HOOK_SLOT_RVA` in recipes/kiouenginebridge.py;
+// if one moves, both move together (the recipe pins the slot at patch
+// time, this header pins where the dylib publishes its dispatcher).
+#define KIOU_BR_HOOK_SLOT_RVA 0x8F90CC0
 
 enum kiou_bridge_hook_id {
     KIOU_BR_HOOK_AI_INIT = 0,
@@ -421,21 +434,68 @@ enum kiou_bridge_hook_id {
     KIOU_BR_HOOK__COUNT,
 };
 
-// Dispatcher signature. Called from the cave with whatever was in
-// (X0, X1, X2) at the original call site, plus a hook_id loaded by the cave's
-// `MOVZ W2, #imm` (so for the binpatch build, the third real argument is
-// clobbered — none of our hook sites use a third pointer arg).
-typedef void (*kiou_bridge_dispatcher_t)(void *self, void *arg1, uint32_t hook_id);
-
-// Published into the __DATA,__bss slot by BinpatchDispatcher.m's constructor.
-// The recipe pins the slot's VA at patch time; the cave's ADRP+LDR uses that
-// VA to load this pointer at runtime.
-extern kiou_bridge_dispatcher_t volatile g_kiou_bridge_hook_slot;
+// Dispatcher signature. Called from the cave with whatever was in X0-X5/X7
+// at the original call site, plus a hook id loaded by the cave's
+// `MOVZ W6, #imm`. The trailing void* x7 parameter ensures hook_id lands in
+// W6 under AAPCS64 (8 integer-class parameters fill X0..X7 in order); X4,
+// X5, X7 are placeholders for hooks that have extra register arguments.
+typedef void (*kiou_bridge_dispatcher_t)(void *x0, void *x1, void *x2,
+                                         void *x3, void *x4, void *x5,
+                                         uint32_t hook_id, void *x7);
 
 // Constructor helper. binpatch Tweak.m calls this exactly once after
-// UnityFramework is mapped, in place of all install_*_hook calls. Publishes
-// the dispatcher pointer into the SLOT.
+// UnityFramework is mapped, in place of all install_*_hook calls.
+// Publishes the dispatcher pointer into the slot at
+// `g_unityBase + KIOU_BR_HOOK_SLOT_RVA` inside UnityFramework's
+// __DATA,__bss. The dylib does NOT host its own copy of the slot — the
+// cave reads from the framework's __bss, so the dispatcher pointer must
+// live there.
 void kiou_bridge_binpatch_publish(void);
+
+// ---------------------------------------------------------------------------
+// Hook function bodies reached from the binpatch dispatcher. Defined in
+// their respective Hook_*.m files; the dispatcher forwards each cave call
+// to the matching body. Declared here so the dispatcher TU sees them.
+//
+// The bodies are written for the JB build (they call orig via
+// KIOU_CALL_ORIG_*); on binpatch KIOU_CALL_ORIG_* expands to a no-op and
+// orig runs via the cave's displaced prologue + `B orig+4` after the
+// dispatcher returns.
+// ---------------------------------------------------------------------------
+UniTaskRet hook_ai_Init(void *self, void *cfg, void *store, void *adapter, void *ct);
+UniTaskRet hook_cpustream_Init(void *self, void *cfg, void *store, void *adapter, void *ct);
+UniTaskRet hook_local_Init(void *self, void *cfg, void *store, void *adapter, void *ct);
+UniTaskRet hook_online_Init(void *self, void *cfg, void *store, void *adapter, void *ct);
+UniTaskRet hook_replay_Init(void *self, void *cfg, void *store, void *adapter, void *ct);
+
+void hook_ai_Start(void *self);
+void hook_cpustream_Start(void *self);
+void hook_local_Start(void *self);
+void hook_online_Start(void *self);
+void hook_replay_Start(void *self);
+
+UniTaskRet hook_ai_OPM(void *self, uint32_t mv, void *ct);
+UniTaskRet hook_cpustream_OPM(void *self, uint32_t mv, void *ct);
+UniTaskRet hook_local_OPM(void *self, uint32_t mv, void *ct);
+UniTaskRet hook_online_OPM(void *self, uint32_t mv, void *ct);
+UniTaskRet hook_replay_OPM(void *self, uint32_t mv, void *ct);
+
+UniTaskRet hook_ai_End(void *self, void *ct);
+UniTaskRet hook_cpustream_End(void *self, void *ct);
+UniTaskRet hook_local_End(void *self, void *ct);
+UniTaskRet hook_online_End(void *self, void *ct);
+UniTaskRet hook_replay_End(void *self, void *ct);
+
+bool hook_AdapterTryMakeMoveOut(void *self, uint32_t move, void *outMove);
+void hook_UpdateAuthoritativeSnapshot(void *self, void *sfenStr, int32_t turn,
+                                      float blackTimeSec, float whiteTimeSec,
+                                      int32_t moveCount);
+void hook_HandleMoveResult(void *self, void *reply);
+void hook_CpuStream_UpdateSnapshot(void *self, void *sfenStr, int32_t turn,
+                                   float blackTimeSec, float whiteTimeSec,
+                                   int32_t moveCount);
+UniTaskRet hook_GameOrch_ActivateAsync(void *self, void *setup,
+                                       void *assetLoader, void *ct);
 
 // ---------------------------------------------------------------------------
 // SfMove + low-level helpers, exported so observation hooks living in other
