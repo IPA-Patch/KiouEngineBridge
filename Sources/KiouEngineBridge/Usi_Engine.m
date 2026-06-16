@@ -1,3 +1,13 @@
+// ===========================================================================
+// DEPRECATED — USI protocol implementation.
+// Replaced by CSA server protocol in the CSA migration plan
+// (docs/plans/kiou_engine_bridge_csa_migration.md). Excluded from the build
+// via Makefile filter; kept in tree for historical reference and so the git
+// blame on the CSA implementation's state-machine derivatives stays
+// readable.
+// ===========================================================================
+#if 0
+
 #import "Internal.h"
 
 #import <mach/mach_time.h>
@@ -460,3 +470,5 @@ void UsiEngineInstall(void) {
     KEBWsServerSetTextHandler(usi_engine_text_handler);
     file_log(@"[USI] engine installed (text handler registered)");
 }
+
+#endif  // 0 — DEPRECATED USI implementation

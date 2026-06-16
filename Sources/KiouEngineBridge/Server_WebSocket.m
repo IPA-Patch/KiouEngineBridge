@@ -1,3 +1,13 @@
+// ===========================================================================
+// DEPRECATED — WebSocket server for the USI protocol.
+// Replaced by the plain TCP CSA server (Server_CSA.m) in the CSA migration
+// plan (docs/plans/kiou_engine_bridge_csa_migration.md). Excluded from the
+// build via Makefile filter; kept in tree as a reference for the accept
+// loop / send/recv plumbing that Server_CSA.m mirrors with WS framing
+// stripped out.
+// ===========================================================================
+#if 0
+
 #import "Internal.h"
 
 #import <CommonCrypto/CommonDigest.h>
@@ -560,3 +570,5 @@ void KEBWsServerPush(NSString *json) {
         }
     });
 }
+
+#endif  // 0 — DEPRECATED USI WebSocket server

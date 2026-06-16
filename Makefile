@@ -8,7 +8,14 @@ include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = KiouEngineBridge
 
-KiouEngineBridge_FILES = $(shell find Sources/KiouEngineBridge -name '*.m' -o -name '*.c' -o -name '*.mm' -o -name '*.cpp')
+# CSA migration: Server_WebSocket.m and Usi_Engine.m are kept in tree as
+# `#if 0` blocks for historical reference; exclude them from the build so
+# we link only the active CSA implementation. See
+# docs/plans/kiou_engine_bridge_csa_migration.md Task 2.
+KiouEngineBridge_FILES = $(shell find Sources/KiouEngineBridge \
+    \( -name '*.m' -o -name '*.c' -o -name '*.mm' -o -name '*.cpp' \) \
+    ! -name 'Server_WebSocket.m' \
+    ! -name 'Usi_Engine.m')
 # Shared logging implementation lives in Sources/Common. il2cpp helpers are
 # inline-only, so they don't need to be listed here.
 KiouEngineBridge_FILES += Sources/Common/logging.m

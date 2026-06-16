@@ -124,18 +124,38 @@ extern uintptr_t g_unityBase;
 extern void *volatile g_gameOrchestratorCache;
 
 // ---------------------------------------------------------------------------
-// WebSocket server (Server_WebSocket.m). Boot once at constructor time,
-// then any hook can push a single JSON-encoded line to whichever host is
-// currently connected. No-op when no host is attached.
+// CSA TCP server (Server_CSA.m). Boot once at constructor time, then any
+// hook can push a single CSA-protocol line to whichever engine is currently
+// connected. No-op when no engine is attached.
+// ---------------------------------------------------------------------------
+void KEBCsaServerStart(uint16_t port);
+void KEBCsaServerPush(NSString *line);
+
+// Tear down the current TCP client (if any). Used by the CSA engine driver
+// when an inbound `LOGOUT` arrives, or to force a teardown on shutdown.
+// Idempotent. Runs the actual close on the accept queue so it composes
+// safely with concurrent KEBCsaServerPush calls.
+void KEBCsaServerClose(void);
+
+// Register a callback for inbound LF-terminated lines. The handler is
+// invoked on the recv queue (a serial dispatch queue, NOT the main thread).
+// `line` is already UTF-8-decoded with CR/LF terminators stripped; the
+// caller may retain it freely. Replace by passing NULL.
+typedef void (*kiou_csa_line_handler_t)(NSString *line);
+void KEBCsaServerSetLineHandler(kiou_csa_line_handler_t fn);
+
+// ---------------------------------------------------------------------------
+// DEPRECATED — WebSocket server API.
+//
+// The USI-era WebSocket sink (Server_WebSocket.m) is excluded from the
+// build by Makefile filter as part of the CSA migration. The declarations
+// below stay so half-migrated translation units still compile; the
+// implementations live in Csa_Stubs.m as no-ops. Once Tasks 4-5 retarget
+// every hook call site to the CSA APIs above, these declarations and the
+// stub file are deleted.
 // ---------------------------------------------------------------------------
 void KEBWsServerStart(uint16_t port);
 void KEBWsServerPush(NSString *json);
-
-// Register a callback for inbound TEXT frames (opcode 0x1). The handler is
-// invoked on the recv queue (a serial dispatch queue, NOT the main thread).
-// `data` is NOT null-terminated; treat it as a length-bounded byte slice and
-// copy what you need before returning — the buffer is freed by the recv loop
-// immediately after the handler returns. Replace by passing NULL.
 typedef void (*kiou_ws_text_handler_t)(const char *data, size_t len);
 void KEBWsServerSetTextHandler(kiou_ws_text_handler_t fn);
 
@@ -336,6 +356,17 @@ void UsiEngineOnMatchEnd(usi_match_result_t result);
 // accept queue so the engine can drive the handshake.
 void UsiEngineOnWsClientConnected(void);
 void UsiEngineOnWsClientDisconnected(void);
+
+// ---------------------------------------------------------------------------
+// Csa_Engine.m — the CSA-protocol server-side state machine that drives
+// the connected engine through Game_Summary / AGREE / per-move exchange /
+// gameover. Symbols are declared here and stubbed in Csa_Stubs.m during
+// the CSA migration; the real implementation lands in Task 4.
+// ---------------------------------------------------------------------------
+
+// Lifecycle callbacks invoked by Server_CSA.m from the accept queue.
+void CsaEngineOnTcpClientConnected(void);
+void CsaEngineOnTcpClientDisconnected(void);
 
 // ---------------------------------------------------------------------------
 // Meta_Emitter.m — 1-line JSON metadata stream that runs alongside the USI
