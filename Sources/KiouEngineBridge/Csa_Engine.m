@@ -132,7 +132,16 @@ static void csa_send_game_summary(int32_t local_player) {
     g_csaLastGameSummary = summary;
     g_csaLastGameID = gameId ?: @"GAME";
     CsaEngineSendBlock(summary);
-    csa_set_state(CSA_STATE_AGREE_WAIT);
+    // KIOU does not wait for the engine's AGREE — its CPU starts thinking
+    // (and committing moves) the moment OnMatchStart fires. If we sit in
+    // AGREE_WAIT until the engine replies, every move the CPU makes in the
+    // gap is dropped by CsaEngineOnMoveObserved's state check. Send START
+    // immediately and advance to PLAYING so observed moves flow through.
+    // A later inbound AGREE in PLAYING is treated as a no-op (csa_handle_agree
+    // logs and drops it when the state is already PLAYING).
+    CsaEngineSendLine([NSString stringWithFormat:@"START:%@",
+                       g_csaLastGameID]);
+    csa_set_state(CSA_STATE_PLAYING);
 }
 
 // ---------------------------------------------------------------------------
@@ -159,14 +168,21 @@ static void csa_handle_login(NSString *line) {
 }
 
 static void csa_handle_agree(NSString *line) {
+    (void)line;  // optional <GameID> suffix is accepted but not validated
     int s = atomic_load(&g_csaState);
+    if (s == CSA_STATE_PLAYING) {
+        // csa_send_game_summary already shipped START and rolled us into
+        // PLAYING because KIOU does not wait for AGREE. A late AGREE from
+        // the engine is harmless — log and drop.
+        file_log(@"[CSA-ENG] AGREE in PLAYING — already started, dropping");
+        return;
+    }
     if (s != CSA_STATE_AGREE_WAIT) {
         file_log([NSString stringWithFormat:
                   @"[CSA-ENG] AGREE in state %s — ignoring",
                   csa_state_name(s)]);
         return;
     }
-    (void)line;  // optional <GameID> suffix is accepted but not validated
     NSString *gid = g_csaLastGameID ?: @"GAME";
     CsaEngineSendLine([NSString stringWithFormat:@"START:%@", gid]);
     csa_set_state(CSA_STATE_PLAYING);

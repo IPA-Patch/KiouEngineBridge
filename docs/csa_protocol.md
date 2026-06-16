@@ -64,8 +64,8 @@ BOOT
 LOGIN
   ↓  inbound "LOGIN <name> <pass>"        →  send "LOGIN:<name> OK"
   ↓  (if KIOU match already in progress)  →  send "BEGIN Game_Summary ..."
-AGREE_WAIT
-  ↓  inbound "AGREE [<Game_ID>]"          →  send "START:<Game_ID>"
+                                              + "START:<Game_ID>"
+                                              (KIOU does not wait for AGREE)
 PLAYING
   ↓  inbound move "+7776FU"               →  inject into KIOU
   ↓  KIOU move observed                   →  send "+7776FU,T10"
@@ -76,10 +76,19 @@ GAME_OVER
   ↓  inbound "LOGOUT"                     →  send "LOGOUT:completed", close
 ```
 
-`AGREE_WAIT` is also entered directly from `LOGIN` if `Game_Summary` has
-already been sent (KIOU match started before the engine logged in). The
-engine doesn't need to know whether `Game_Summary` was scheduled or just
-delivered — the state always advances when it sees the block.
+**Important deviation from the CSA spec.** KIOU's match-start event fires
+its in-game CPU immediately; KEB has no way to pause KIOU until the
+engine has replied with `AGREE`. To prevent the CPU's first moves from
+being dropped while we sit in `AGREE_WAIT`, KEB emits `START:<Game_ID>`
+*together with* `Game_Summary` and advances straight to `PLAYING`. A
+later inbound `AGREE` from the engine is logged and silently dropped —
+the engine sees `START:` arrive without an explicit acknowledgement of
+its `AGREE`, which most CSA clients accept without complaint.
+
+The `AGREE_WAIT` state still exists in the enum but is now reserved for
+future use (e.g. a build flavour that does pause KIOU during the
+handshake); in the live path the state machine goes `LOGIN → PLAYING`
+directly.
 
 ## CSA commands handled
 
