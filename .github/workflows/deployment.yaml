@@ -37,43 +37,93 @@ jobs:
           fi
 
       - name: Checkout source at tag
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           ref: ${{ steps.tag.outputs.value }}
           fetch-depth: 0
+          # Sources/Common is a submodule (IPA-Patch/Shared); the build
+          # references logging.m and binpatch.m from inside it.
+          submodules: recursive
+
+      - name: Verify control version matches tag
+        # Catch the "bumped the tag but forgot to update control" class of
+        # mistake before the build wastes several minutes producing a .deb
+        # whose embedded version disagrees with the GitHub Release name.
+        # control's Version field must equal the tag without the leading "v".
+        run: |
+          TAG="${{ steps.tag.outputs.value }}"
+          VER="${TAG#v}"
+          CTRL_VER=$(grep -E '^Version:' control | awk '{print $2}')
+          echo "Tag version : ${VER}"
+          echo "Control version: ${CTRL_VER}"
+          if [ "${VER}" != "${CTRL_VER}" ]; then
+              echo "::error::control Version (${CTRL_VER}) does not match tag (${VER})"
+              exit 1
+          fi
 
       - name: Install host build tools
         run: |
+          # Mirrors integration.yaml: ldid is NOT in the noble apt repos
+          # and is installed separately below. libtinfo6 / libncurses6 are
+          # the runtime deps the Procursus ldid binary links against.
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-              build-essential curl git make perl ldid xz-utils \
-              libplist-utils libc++-dev
+              build-essential curl git make perl xz-utils \
+              libplist-utils libc++-dev \
+              libtinfo6 libncurses6
+
+      - name: Install ldid
+        # apt has no ldid on Ubuntu noble (24.04), so pull the prebuilt
+        # Linux x86_64 binary from the ProcursusTeam release. SHA256
+        # pinned so a release-asset swap can't silently swap our signer.
+        env:
+          LDID_VERSION: "v2.1.5-procursus7"
+          LDID_SHA256: "4b8862b2fefa2cd7fa8f88cb0310779619aeaa8c72d6aff22f019b470f2fa99a"
+        run: |
+          curl -L -o /tmp/ldid \
+              "https://github.com/ProcursusTeam/ldid/releases/download/${LDID_VERSION}/ldid_linux_x86_64"
+          echo "${LDID_SHA256}  /tmp/ldid" | sha256sum -c -
+          sudo install -m 0755 /tmp/ldid /usr/local/bin/ldid
+          ldid -V || ldid 2>&1 | head -1 || true
 
       - name: Cache Theos
         id: theos-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             theos
-          key: theos-linux-${{ env.IOS_SDK_VERSION }}-v1
+          # Bump on toolchain layout changes (see Install Theos comment).
+          key: theos-linux-${{ env.IOS_SDK_VERSION }}-v3
 
       - name: Install Theos
         if: steps.theos-cache.outputs.cache-hit != 'true'
         run: |
+          # Mirrors integration.yaml.
+          # Theos itself.
           git clone --recursive https://github.com/theos/theos.git "$THEOS"
 
-          mkdir -p "$THEOS/toolchain"
-          curl -L -o /tmp/toolchain.tar.xz \
-              "https://github.com/sbingner/llvm-project/releases/download/v10.0.0-1/linux-ios-arm64e-clang-toolchain.tar.lzma"
-          tar -xf /tmp/toolchain.tar.xz -C "$THEOS/toolchain"
-          mv "$THEOS/toolchain/linux" "$THEOS/toolchain/linux2" || true
+          # iOS cross-toolchain from L1ghtmann/llvm-project. The tarball
+          # already lays out the linux/iphone/ directory under
+          # $THEOS/toolchain, which is what Theos's makefiles expect --
+          # no rename needed.
+          ARCH=$(uname -m)
+          curl -fsSL \
+              "https://github.com/L1ghtmann/llvm-project/releases/latest/download/iOSToolchain-${ARCH}.tar.xz" \
+            | tar xJ -C "$THEOS/toolchain"
 
+          # iOS SDK matching IOS_SDK_VERSION.
           mkdir -p "$THEOS/sdks"
-          curl -L -o /tmp/sdk.tar.xz \
+          curl -L -o /tmp/sdk.tar.gz \
               "https://github.com/theos/sdks/archive/master.tar.gz"
-          tar -xf /tmp/sdk.tar.xz -C /tmp
+          tar -xf /tmp/sdk.tar.gz -C /tmp
           cp -R "/tmp/sdks-master/iPhoneOS${IOS_SDK_VERSION}.sdk" \
                 "$THEOS/sdks/"
+
+      - name: Verify Theos
+        run: |
+          ls "$THEOS"
+          ls "$THEOS/sdks"
+          test -d "$THEOS/sdks/iPhoneOS${IOS_SDK_VERSION}.sdk"
 
       - name: Build rootless .deb (MobileSubstrate)
         run: |
@@ -123,7 +173,7 @@ jobs:
           cat SHA256SUMS
 
       - name: Publish release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.tag.outputs.value }}
           name: ${{ steps.tag.outputs.value }}
