@@ -59,6 +59,8 @@ endif
 
 include $(THEOS_MAKE_PATH)/tweak.mk
 
+.PHONY: jailed binpatch ipa hooks
+
 after-install::
 	install.exec "chmod 755 /var/jb/Library/MobileSubstrate/DynamicLibraries/KiouEngineBridge.dylib"
 	install.exec "sleep 1; (open com.neconome.shogi 2>/dev/null || uiopen com.neconome.shogi:// 2>/dev/null || echo 'no launcher tool (uiopen/open); start KIOU manually')"
@@ -121,3 +123,14 @@ ipa:: binpatch
 	  --framework "$(KIOU_IPA_FRAMEWORK)" \
 	  --dylib     "$(KIOU_IPA_DYLIB)" \
 	  --input     "$(KIOU_CLEAN_IPA)"
+
+# ---------------------------------------------------------------------------
+# Developer hooks. Point core.hooksPath at scripts/ so scripts/pre-commit
+# fires before every commit. The hook runs the recipe<->dump cross-check
+# (verify_sites) when a commit touches recipes/ or shared/tools/, and is
+# a no-op otherwise -- including on workstations without the local dump
+# index. See scripts/pre-commit for the full contract.
+# ---------------------------------------------------------------------------
+hooks::
+	git config core.hooksPath scripts
+	@echo "git hooks now resolve under scripts/ (pre-commit installed)"

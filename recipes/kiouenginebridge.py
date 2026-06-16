@@ -401,3 +401,19 @@ PLIST_KEYS: dict = {
     "UIFileSharingEnabled": True,
     "LSSupportsOpeningDocumentsInPlace": True,
 }
+
+# ---------------------------------------------------------------------------
+# _SITES — verify_sites-compatible view of _BRIDGE_SITES.
+#
+# tools.verify_sites expects a flat iterable of
+#     (slot_index, site_rva, prologue_hex_str, label)
+# which matches the (rva, prologue_hex, hook_id_name, label) shape of
+# _BRIDGE_SITES once we substitute the slot_index with the _HOOK_IDS value.
+# Exposing this alias lets ``make hooks`` / scripts/pre-commit run the
+# same cross-check gate as KiouEditor / KiouKifExporter without changing
+# the upstream verify_sites contract.
+# ---------------------------------------------------------------------------
+_SITES: list[tuple[int, int, str, str]] = [
+    (_HOOK_IDS[hook_id_name], site_rva, prologue_hex, label)
+    for site_rva, prologue_hex, hook_id_name, label in _BRIDGE_SITES
+]
