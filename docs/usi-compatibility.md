@@ -77,11 +77,11 @@ Instead, the same information is delivered in two ways:
 
 | CSA field | CSA line | KEB equivalent | Status |
 |---|---|---|---|
-| Protocol version | `Protocol_Version:1.2` | `meta protocol_version 1.0` | ✅ JB build |
-| Game ID | `Game_ID:...` | `meta game_id ...` | ✅ JB build |
-| Black player name | `Name+:YaneuraOu` | `meta name+ ...` | ✅ JB build |
-| White player name | `Name-:Kristallweizen` | `meta name- ...` | ✅ JB build |
-| Your seat | `Your_Turn:+` | `meta your_turn b\|w\|-` | ✅ JB build |
+| Protocol version | `Protocol_Version:1.2` | `meta ProtocolVersion 1.0` | ✅ JB build |
+| Game ID | `Game_ID:...` | `meta GameId ...` | ✅ JB build |
+| Black player name | `Name+:YaneuraOu` | `meta Name+ ...` | ✅ JB build |
+| White player name | `Name-:Kristallweizen` | `meta Name- ...` | ✅ JB build |
+| Your seat | `Your_Turn:+` | `meta YourTurn b\|w\|-` | ✅ JB build |
 | First to move | `To_Move:+` | SFEN side-to-move in first `position` | ✅ |
 | Max moves | `Max_Moves:256` | — | ⛔ KIOU limit not exposed |
 | Rematch on draw | `Rematch_On_Draw:NO` | — | ⛔ omitted |
@@ -96,10 +96,10 @@ derived from `MatchConfig.TimeControlConfig` and the live snapshot cache.
 
 | CSA field | CSA line | KEB equivalent | Status |
 |---|---|---|---|
-| Time unit | `Time_Unit:1sec` | implicit (ms in `go`) | ✅ always ms |
-| Total (main) time | `Total_Time:600` | `btime` / `wtime` in `go` | ✅ when snapshot available |
-| Byoyomi | `Byoyomi:30` | `byoyomi` in `go` | ✅ |
-| Increment | `Increment:10` | `binc` / `winc` in `go` | ✅ |
+| Time unit | `Time_Unit:1sec` | `meta TimeUnit 1sec` + implicit ms in `go` | ✅ JB build |
+| Total (main) time | `Total_Time:600` | `meta TotalTime 600` + `btime`/`wtime` in `go` | ✅ JB build / when snapshot available |
+| Byoyomi | `Byoyomi:30` | `meta Byoyomi 30` + `byoyomi` in `go` | ✅ |
+| Increment | `Increment:10` | `meta Increment 10` + `binc`/`winc` in `go` | ✅ |
 | Delay | `Delay:5` | — | ⛔ not exposed by KIOU |
 | Min time per move | `Least_Time_Per_Move:1` | — | ⛔ not exposed by KIOU |
 | Time roundup | `Time_Roundup:YES` | — | ⛔ not exposed by KIOU |
