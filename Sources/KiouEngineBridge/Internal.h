@@ -128,8 +128,8 @@ extern void *volatile g_gameOrchestratorCache;
 // then any hook can push a single JSON-encoded line to whichever host is
 // currently connected. No-op when no host is attached.
 // ---------------------------------------------------------------------------
-void KiouWsServerStart(uint16_t port);
-void KiouWsServerPush(NSString *json);
+void KebWsServerStart(uint16_t port);
+void KebWsServerPush(NSString *json);
 
 // Register a callback for inbound TEXT frames (opcode 0x1). The handler is
 // invoked on the recv queue (a serial dispatch queue, NOT the main thread).
@@ -137,7 +137,7 @@ void KiouWsServerPush(NSString *json);
 // copy what you need before returning — the buffer is freed by the recv loop
 // immediately after the handler returns. Replace by passing NULL.
 typedef void (*kiou_ws_text_handler_t)(const char *data, size_t len);
-void KiouWsServerSetTextHandler(kiou_ws_text_handler_t fn);
+void KebWsServerSetTextHandler(kiou_ws_text_handler_t fn);
 
 // ---------------------------------------------------------------------------
 // Observation-side instance cache, populated by Hook_LowLevelObserve.m and
@@ -271,7 +271,7 @@ typedef struct {
 // Dump the most recent ring contents into the shared file log. Intended for
 // manual debugging (e.g. fired from a SIGUSR1 handler or at unload). Safe to
 // call from any thread.
-void KiouInjectDumpRecent(void);
+void KebInjectDumpRecent(void);
 
 // ---------------------------------------------------------------------------
 // Injection bridge — called by Usi_Engine.m when YaneuraOu sends us a
@@ -466,7 +466,7 @@ enum kiou_bridge_hook_id {
 };
 
 // g_inject_entry is binpatch-only — it's populated by
-// KiouBridgeBinpatchPublish() with per-site cave-bypass entry pointers,
+// KebBridgeBinpatchPublish() with per-site cave-bypass entry pointers,
 // so injection on binpatch can call the original OPM body without
 // re-entering the dispatcher cave. On JB the trampolines installed by
 // MSHookFunction already provide that bypass via `orig_*`, so the array
@@ -558,7 +558,7 @@ typedef void (*kiou_bridge_dispatcher_t)(void *x0, void *x1, void *x2,
 // __DATA,__bss. The dylib does NOT host its own copy of the slot — the
 // cave reads from the framework's __bss, so the dispatcher pointer must
 // live there.
-void KiouBridgeBinpatchPublish(void);
+void KebBridgeBinpatchPublish(void);
 
 // ---------------------------------------------------------------------------
 // Hook function bodies reached from the binpatch dispatcher. Defined in
@@ -630,5 +630,5 @@ NSString *UsiTextFromGameController(void *gameCtrl);
 
 // Send a literal USI line out to the engine (without trailing newline —
 // the helper adds one). Safe to call from any thread; serializes onto the
-// WS accept queue via KiouWsServerPush.
+// WS accept queue via KebWsServerPush.
 void UsiEngineSendLine(NSString *line);

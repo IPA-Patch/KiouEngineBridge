@@ -301,7 +301,7 @@ static void meta_emit_dict(NSDictionary *payload) {
     }
     NSString *line = [NSString stringWithFormat:@"meta %@\n", body];
     file_log([NSString stringWithFormat:@"[META>] %@", body]);
-    KiouWsServerPush(line);
+    KebWsServerPush(line);
 }
 
 // ---------------------------------------------------------------------------
