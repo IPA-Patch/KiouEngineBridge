@@ -92,7 +92,7 @@ static void *latestPositionFromGameController(void *gameCtrl) {
 // Exported (declared in Internal.h) so Hook_GameStateStoreObserve.m can
 // read the live SFEN after NotifyPieceMoved without re-implementing the
 // PositionHistory walk.
-NSString *sfenFromGameController(void *gameCtrl) {
+NSString *SfenFromGameController(void *gameCtrl) {
     if (!g_Position_ToSFEN) return nil;
     void *pos = latestPositionFromGameController(gameCtrl);
     if (!pos) return nil;
@@ -112,7 +112,7 @@ NSString *sfenFromGameController(void *gameCtrl) {
 //
 // Exported (declared in Internal.h) so Meta_Emitter.m can pull the
 // snapshot right before it ships match_end.
-NSString *usiTextFromGameController(void *gameCtrl) {
+NSString *UsiTextFromGameController(void *gameCtrl) {
     if (!g_GameCtrl_GetUSIText) return nil;
     if (!ptrLooksValid(gameCtrl)) return nil;
     @try {
@@ -200,7 +200,7 @@ static NSString *describeMoveBits(SfMove m) {
 // ---------------------------------------------------------------------------
 // ShogiGameAdapter.TryMakeMove(Move, out Move)
 // ---------------------------------------------------------------------------
-bool hook_AdapterTryMakeMoveOut(void *self, SfMove move, void *outMove) {
+bool HookAdapterTryMakeMoveOut(void *self, SfMove move, void *outMove) {
     // Update the injection-side cache before the original runs. Order matters:
     // we want g_adapterCache to be non-NULL as soon as anything goes through
     // this path, and we want g_gameCtrlCache to point at the same Adapter's
@@ -233,7 +233,7 @@ bool hook_AdapterTryMakeMoveOut(void *self, SfMove move, void *outMove) {
     uint32_t mv_copy = (uint32_t)move;
     dispatch_async(dispatch_get_main_queue(), ^{
         void *gameCtrl = readPtr(selfCap, ADAPTER_OFF_GAME_CONTROLLER);
-        NSString *sfen = sfenFromGameController(gameCtrl);
+        NSString *sfen = SfenFromGameController(gameCtrl);
         NSString *usi  = moveToUsi((SfMove)mv_copy);
         file_log([NSString stringWithFormat:
                   @"[ADAPTER2] TryMakeMove self=%p "
@@ -257,8 +257,8 @@ bool hook_AdapterTryMakeMoveOut(void *self, SfMove move, void *outMove) {
                 if ([side isEqualToString:@"b"]) sideToMove = 0;
                 else if ([side isEqualToString:@"w"]) sideToMove = 1;
             }
-            usi_engine_on_move_observed(usi, sfen, sideToMove);
-            // meta_emit_move はここでは出さない — ADAPTER2 は「自分のクライアント
+            UsiEngineOnMoveObserved(usi, sfen, sideToMove);
+            // MetaEmitMove はここでは出さない — ADAPTER2 は「自分のクライアント
             // が指した手」しか通らない (オンライン対戦では相手手はサーバ state
             // 経由で来る) ので、ここで出すと自分側 ply のみの片肺 KIF になる。
             // 両手番分の meta は Hook_GameStateStoreObserve.m の
@@ -272,7 +272,7 @@ bool hook_AdapterTryMakeMoveOut(void *self, SfMove move, void *outMove) {
 // ---------------------------------------------------------------------------
 // Project.ShogiCore.GameController.TryMakeMove(Move)
 // ---------------------------------------------------------------------------
-static bool hook_GameCtrlTryMakeMove(void *self, SfMove move) {
+static bool HookGameCtrlTryMakeMove(void *self, SfMove move) {
     // Cache the GameController self pointer for the injection path. We don't
     // know an Adapter from here, so leave g_adapterCache alone — Inject_Move
     // can fall back to gamectrl-only routing if it never saw an adapter.
@@ -281,7 +281,7 @@ static bool hook_GameCtrlTryMakeMove(void *self, SfMove move) {
 
     bool ok = orig_GameCtrlTryMakeMove
                   ? orig_GameCtrlTryMakeMove(self, move) : false;
-    NSString *sfen = sfenFromGameController(self);
+    NSString *sfen = SfenFromGameController(self);
     NSString *usi  = moveToUsi(move);
     file_log([NSString stringWithFormat:
               @"[GAMECTRL] TryMakeMove self=%p ok=%d usi=\"%@\" move={%@} sfen_after=\"%@\"",
@@ -300,7 +300,7 @@ static bool hook_GameCtrlTryMakeMove(void *self, SfMove move) {
 // build the symbol-pointer resolves remain but the hook wires are
 // orchestrated by the static cave + SLOT dispatcher.
 // ---------------------------------------------------------------------------
-void install_LowLevelObserve_hook(uintptr_t unityBase) {
+void InstallLowLevelObserveHook(uintptr_t unityBase) {
     g_Position_ToSFEN =
         (Position_ToSFEN_t)(void *)(unityBase + RVA_POSITION_TO_SFEN);
     g_GameCtrl_GetUSIText =
@@ -312,7 +312,7 @@ void install_LowLevelObserve_hook(uintptr_t unityBase) {
     {
         uintptr_t addr = unityBase + RVA_ADAPTER_TRY_MAKE_MOVE_OUT;
         MSHookFunction((void *)addr,
-                       (void *)hook_AdapterTryMakeMoveOut,
+                       (void *)HookAdapterTryMakeMoveOut,
                        (void **)&orig_AdapterTryMakeMoveOut);
         file_log([NSString stringWithFormat:
                   @"[LOWLEVEL] hooked ShogiGameAdapter.TryMakeMove(Move,out) "
@@ -323,7 +323,7 @@ void install_LowLevelObserve_hook(uintptr_t unityBase) {
     {
         uintptr_t addr = unityBase + RVA_GAMECTRL_TRY_MAKE_MOVE;
         MSHookFunction((void *)addr,
-                       (void *)hook_GameCtrlTryMakeMove,
+                       (void *)HookGameCtrlTryMakeMove,
                        (void **)&orig_GameCtrlTryMakeMove);
         file_log([NSString stringWithFormat:
                   @"[LOWLEVEL] hooked GameController.TryMakeMove "
@@ -337,7 +337,7 @@ void install_LowLevelObserve_hook(uintptr_t unityBase) {
     //     recipes/kiouenginebridge.py.
     //   GameController.TryMakeMove(Move) → NOT in CAVE_PATCHES. It was a
     //     log-only hook on the JB build, and its observation is fully
-    //     covered by hook_AdapterTryMakeMoveOut for every move that
+    //     covered by HookAdapterTryMakeMoveOut for every move that
     //     reaches the board. Dropping it on binpatch saves a cave and
     //     keeps the hook surface tight.
     file_log(@"[LOWLEVEL] binpatch build — site hooks driven by cave/SLOT, "

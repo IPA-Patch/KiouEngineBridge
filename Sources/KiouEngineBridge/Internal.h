@@ -41,11 +41,11 @@
 //
 // Hook installers are added per feature module:
 //
-//   install_OnlineObserve_hook    (Hook_OnlineObserve.m)
-//   install_LowLevelObserve_hook  (Hook_LowLevelObserve.m)
-//   install_MatchModeObserve_hook (Hook_MatchModeObserve.m)
-//   install_Inject_hook           (Inject_Move.m)
-//   usi_engine_install            (Usi_Engine.m, Phase 2 — USI client)
+//   InstallOnlineObserveHook    (Hook_OnlineObserve.m)
+//   InstallLowLevelObserveHook  (Hook_LowLevelObserve.m)
+//   InstallMatchModeObserveHook (Hook_MatchModeObserve.m)
+//   InstallInjectHook           (Inject_Move.m)
+//   UsiEngineInstall            (Usi_Engine.m, Phase 2 — USI client)
 //
 // Tweak.m wires them up the same way KiouEditor/Tweak.m does — scan dyld
 // for UnityFramework, dispatch each installer once with the base address.
@@ -103,13 +103,13 @@
 // Per-module hook installers. Tweak.m calls each one once UnityFramework has
 // shown up; each installer guards itself if invoked twice.
 // ---------------------------------------------------------------------------
-void install_OnlineObserve_hook(uintptr_t unityBase);
-void install_LowLevelObserve_hook(uintptr_t unityBase);
-void install_MatchModeObserve_hook(uintptr_t unityBase);
-void install_Inject_hook(uintptr_t unityBase);
-void install_AfkSuppress_hook(uintptr_t unityBase);
-void install_GameOrchestratorObserve_hook(uintptr_t unityBase);
-void usi_engine_install(void);
+void InstallOnlineObserveHook(uintptr_t unityBase);
+void InstallLowLevelObserveHook(uintptr_t unityBase);
+void InstallMatchModeObserveHook(uintptr_t unityBase);
+void InstallInjectHook(uintptr_t unityBase);
+void InstallAfkSuppressHook(uintptr_t unityBase);
+void InstallGameOrchestratorObserveHook(uintptr_t unityBase);
+void UsiEngineInstall(void);
 
 // UnityFramework base address captured at install time. Exposed so the
 // match-end auto-rematch path can resolve static il2cpp methods
@@ -128,8 +128,8 @@ extern void *volatile g_gameOrchestratorCache;
 // then any hook can push a single JSON-encoded line to whichever host is
 // currently connected. No-op when no host is attached.
 // ---------------------------------------------------------------------------
-void kiou_ws_server_start(uint16_t port);
-void kiou_ws_server_push(NSString *json);
+void KiouWsServerStart(uint16_t port);
+void KiouWsServerPush(NSString *json);
 
 // Register a callback for inbound TEXT frames (opcode 0x1). The handler is
 // invoked on the recv queue (a serial dispatch queue, NOT the main thread).
@@ -137,7 +137,7 @@ void kiou_ws_server_push(NSString *json);
 // copy what you need before returning — the buffer is freed by the recv loop
 // immediately after the handler returns. Replace by passing NULL.
 typedef void (*kiou_ws_text_handler_t)(const char *data, size_t len);
-void kiou_ws_server_set_text_handler(kiou_ws_text_handler_t fn);
+void KiouWsServerSetTextHandler(kiou_ws_text_handler_t fn);
 
 // ---------------------------------------------------------------------------
 // Observation-side instance cache, populated by Hook_LowLevelObserve.m and
@@ -196,6 +196,13 @@ extern uint64_t volatile g_lastAiMatchEvtUs;     // AIMatchMode.OnPlayerMoveAsyn
 extern uint64_t volatile g_lastCpuStreamEvtUs;   // CPUStreamMode.OnPlayerMoveAsync
 extern uint64_t volatile g_lastLocalPvPEvtUs;    // LocalPvPMode.OnPlayerMoveAsync
 extern uint64_t volatile g_lastRecordReplayEvtUs;// RecordReplayMode.OnPlayerMoveAsync
+
+// Latest server-authoritative remaining time (seconds). Updated by
+// HookUpdateAuthoritativeSnapshot (Online) and HookCpuStreamUpdateSnapshot.
+// 0.0f means no snapshot this match yet (AI / Local modes never receive one).
+// Cleared on OnMatchEndAsync.
+extern float volatile g_latestBlackTimeSec;
+extern float volatile g_latestWhiteTimeSec;
 
 // ---------------------------------------------------------------------------
 // Original (untrampolined) function pointers captured by hook installers.
@@ -264,7 +271,7 @@ typedef struct {
 // Dump the most recent ring contents into the shared file log. Intended for
 // manual debugging (e.g. fired from a SIGUSR1 handler or at unload). Safe to
 // call from any thread.
-void kiou_inject_dumpRecent(void);
+void KiouInjectDumpRecent(void);
 
 // ---------------------------------------------------------------------------
 // Injection bridge — called by Usi_Engine.m when YaneuraOu sends us a
@@ -297,19 +304,19 @@ typedef enum {
     USI_STATE_INJECTING  = 4,  // bestmove received, applying to KIOU
 } usi_state_t;
 
-// Notified by Hook_LowLevelObserve.m::hook_AdapterTryMakeMoveOut every time
+// Notified by Hook_LowLevelObserve.m::HookAdapterTryMakeMoveOut every time
 // a move lands on the board. `usi` is the move that was just applied,
 // `sfen_after` is the resulting position, `side_to_move` is the side that
 // will move next (0=Black, 1=White). The engine compares side_to_move
 // against the cached local-player side to decide whether to send a new
 // `position` + `go` to YaneuraOu.
-void usi_engine_on_move_observed(NSString *usi,
+void UsiEngineOnMoveObserved(NSString *usi,
                                  NSString *sfen_after,
                                  int32_t side_to_move);
 
 // Match lifecycle hooks. `local_player` is 0 (Black) or 1 (White), or -1
 // when the seat isn't fixed (LocalPvP / RecordReplay).
-void usi_engine_on_match_start(int32_t local_player);
+void UsiEngineOnMatchStart(int32_t local_player);
 
 // `result` is 0 (we won), 1 (we lost), 2 (draw), or -1 (unknown — no
 // gameover is sent to the bridge in that case). The seat-fixed modes
@@ -323,12 +330,12 @@ typedef enum {
     USI_RESULT_DRAW    = 2,
 } usi_match_result_t;
 
-void usi_engine_on_match_end(usi_match_result_t result);
+void UsiEngineOnMatchEnd(usi_match_result_t result);
 
 // WS client connection lifecycle. Server_WebSocket.m calls these from the
 // accept queue so the engine can drive the handshake.
-void usi_engine_on_ws_client_connected(void);
-void usi_engine_on_ws_client_disconnected(void);
+void UsiEngineOnWsClientConnected(void);
+void UsiEngineOnWsClientDisconnected(void);
 
 // ---------------------------------------------------------------------------
 // Meta_Emitter.m — 1-line JSON metadata stream that runs alongside the USI
@@ -340,18 +347,18 @@ void usi_engine_on_ws_client_disconnected(void);
 
 // Stash the MatchConfig that InitializeAsync passes in. Called from
 // Hook_MatchModeObserve's Init hook with the cfg arg, and from the End hook
-// with NULL to clear it. Subsequent meta_emit_match_start reads off this.
-void meta_set_match_config(void *cfg);
+// with NULL to clear it. Subsequent MetaEmitMatchStart reads off this.
+void MetaSetMatchConfig(void *cfg);
 
 // Emit "meta {type:match_start, ...}". Called right after OnMatchStart
 // latches the local-player seat (so we can carry it in the payload).
-void meta_emit_match_start(int32_t local_player);
+void MetaEmitMatchStart(int32_t local_player);
 
 // Emit "meta {type:move, ...}". Called from Hook_LowLevelObserve's adapter
-// observation, right alongside usi_engine_on_move_observed. side_to_move is
+// observation, right alongside UsiEngineOnMoveObserved. side_to_move is
 // the side whose turn it is NEXT — we flip to "who just moved" in the
 // payload.
-void meta_emit_move(NSString *usi, NSString *sfen_after, int32_t side_to_move);
+void MetaEmitMove(NSString *usi, NSString *sfen_after, int32_t side_to_move);
 
 // Emit "meta {type:match_end, ...}". Called from Hook_MatchModeObserve's
 // END_HOOK after the result has been inferred. final_sfen is the SFEN read
@@ -359,7 +366,7 @@ void meta_emit_move(NSString *usi, NSString *sfen_after, int32_t side_to_move);
 // the full game record (GameController.GetUSIText) — bridge 側でこれが
 // 入っていれば、これまで積んだ move 経路の Record を上書きして
 // グランドトゥルースとして使う。
-void meta_emit_match_end(usi_match_result_t result,
+void MetaEmitMatchEnd(usi_match_result_t result,
                          NSString *final_sfen,
                          NSString *usi_text);
 
@@ -368,10 +375,10 @@ void meta_emit_match_end(usi_match_result_t result,
 // If a match_start emit is pending and BOTH sides are now in, this fires
 // match_start with the store-supplied PlayerInfo. CPU matches typically
 // don't reach this — the 1.5s OnMatchStart fallback timer covers them.
-void meta_on_player_info_set(int32_t side, void *playerInfo);
+void MetaOnPlayerInfoSet(int32_t side, void *playerInfo);
 
 // Installer for the GameStateStore.Set*PlayerInfo hooks.
-void install_GameStateStoreObserve_hook(uintptr_t unityBase);
+void InstallGameStateStoreObserveHook(uintptr_t unityBase);
 
 // ---------------------------------------------------------------------------
 // Static binpatch dispatcher (binpatch build only).
@@ -459,7 +466,7 @@ enum kiou_bridge_hook_id {
 };
 
 // g_inject_entry is binpatch-only — it's populated by
-// kiou_bridge_binpatch_publish() with per-site cave-bypass entry pointers,
+// KiouBridgeBinpatchPublish() with per-site cave-bypass entry pointers,
 // so injection on binpatch can call the original OPM body without
 // re-entering the dispatcher cave. On JB the trampolines installed by
 // MSHookFunction already provide that bypass via `orig_*`, so the array
@@ -551,7 +558,7 @@ typedef void (*kiou_bridge_dispatcher_t)(void *x0, void *x1, void *x2,
 // __DATA,__bss. The dylib does NOT host its own copy of the slot — the
 // cave reads from the framework's __bss, so the dispatcher pointer must
 // live there.
-void kiou_bridge_binpatch_publish(void);
+void KiouBridgeBinpatchPublish(void);
 
 // ---------------------------------------------------------------------------
 // Hook function bodies reached from the binpatch dispatcher. Defined in
@@ -563,39 +570,39 @@ void kiou_bridge_binpatch_publish(void);
 // orig runs via the cave's displaced prologue + `B orig+4` after the
 // dispatcher returns.
 // ---------------------------------------------------------------------------
-UniTaskRet hook_ai_Init(void *self, void *cfg, void *store, void *adapter, void *ct);
-UniTaskRet hook_cpustream_Init(void *self, void *cfg, void *store, void *adapter, void *ct);
-UniTaskRet hook_local_Init(void *self, void *cfg, void *store, void *adapter, void *ct);
-UniTaskRet hook_online_Init(void *self, void *cfg, void *store, void *adapter, void *ct);
-UniTaskRet hook_replay_Init(void *self, void *cfg, void *store, void *adapter, void *ct);
+UniTaskRet HookAiInit(void *self, void *cfg, void *store, void *adapter, void *ct);
+UniTaskRet HookCpuStreamInit(void *self, void *cfg, void *store, void *adapter, void *ct);
+UniTaskRet HookLocalInit(void *self, void *cfg, void *store, void *adapter, void *ct);
+UniTaskRet HookOnlineInit(void *self, void *cfg, void *store, void *adapter, void *ct);
+UniTaskRet HookReplayInit(void *self, void *cfg, void *store, void *adapter, void *ct);
 
-void hook_ai_Start(void *self);
-void hook_cpustream_Start(void *self);
-void hook_local_Start(void *self);
-void hook_online_Start(void *self);
-void hook_replay_Start(void *self);
+void HookAiStart(void *self);
+void HookCpuStreamStart(void *self);
+void HookLocalStart(void *self);
+void HookOnlineStart(void *self);
+void HookReplayStart(void *self);
 
-UniTaskRet hook_ai_OPM(void *self, uint32_t mv, void *ct);
-UniTaskRet hook_cpustream_OPM(void *self, uint32_t mv, void *ct);
-UniTaskRet hook_local_OPM(void *self, uint32_t mv, void *ct);
-UniTaskRet hook_online_OPM(void *self, uint32_t mv, void *ct);
-UniTaskRet hook_replay_OPM(void *self, uint32_t mv, void *ct);
+UniTaskRet HookAiOpm(void *self, uint32_t mv, void *ct);
+UniTaskRet HookCpuStreamOpm(void *self, uint32_t mv, void *ct);
+UniTaskRet HookLocalOpm(void *self, uint32_t mv, void *ct);
+UniTaskRet HookOnlineOpm(void *self, uint32_t mv, void *ct);
+UniTaskRet HookReplayOpm(void *self, uint32_t mv, void *ct);
 
-UniTaskRet hook_ai_End(void *self, void *ct);
-UniTaskRet hook_cpustream_End(void *self, void *ct);
-UniTaskRet hook_local_End(void *self, void *ct);
-UniTaskRet hook_online_End(void *self, void *ct);
-UniTaskRet hook_replay_End(void *self, void *ct);
+UniTaskRet HookAiEnd(void *self, void *ct);
+UniTaskRet HookCpuStreamEnd(void *self, void *ct);
+UniTaskRet HookLocalEnd(void *self, void *ct);
+UniTaskRet HookOnlineEnd(void *self, void *ct);
+UniTaskRet HookReplayEnd(void *self, void *ct);
 
-bool hook_AdapterTryMakeMoveOut(void *self, uint32_t move, void *outMove);
-void hook_UpdateAuthoritativeSnapshot(void *self, void *sfenStr, int32_t turn,
+bool HookAdapterTryMakeMoveOut(void *self, uint32_t move, void *outMove);
+void HookUpdateAuthoritativeSnapshot(void *self, void *sfenStr, int32_t turn,
                                       float blackTimeSec, float whiteTimeSec,
                                       int32_t moveCount);
-void hook_HandleMoveResult(void *self, void *reply);
-void hook_CpuStream_UpdateSnapshot(void *self, void *sfenStr, int32_t turn,
+void HookHandleMoveResult(void *self, void *reply);
+void HookCpuStreamUpdateSnapshot(void *self, void *sfenStr, int32_t turn,
                                    float blackTimeSec, float whiteTimeSec,
                                    int32_t moveCount);
-UniTaskRet hook_GameOrch_ActivateAsync(void *self, void *setup,
+UniTaskRet HookGameOrchActivateAsync(void *self, void *setup,
                                        void *assetLoader, void *ct);
 
 // ---------------------------------------------------------------------------
@@ -613,15 +620,15 @@ NSString *moveToUsi(SfMove m);
 // Read the live SFEN of a GameController by walking its PositionHistory and
 // calling Position.ToSFEN. Returns nil on any failure. Implementation in
 // Hook_LowLevelObserve.m.
-NSString *sfenFromGameController(void *gameCtrl);
+NSString *SfenFromGameController(void *gameCtrl);
 
 // Read the full game-record text via GameController.GetUSIText. Returns nil
 // on any failure. Used by Meta_Emitter to attach the authoritative game
 // record to the match_end meta payload. Implementation in
 // Hook_LowLevelObserve.m.
-NSString *usiTextFromGameController(void *gameCtrl);
+NSString *UsiTextFromGameController(void *gameCtrl);
 
 // Send a literal USI line out to the engine (without trailing newline —
 // the helper adds one). Safe to call from any thread; serializes onto the
-// WS accept queue via kiou_ws_server_push.
-void usi_engine_send_line(NSString *line);
+// WS accept queue via KiouWsServerPush.
+void UsiEngineSendLine(NSString *line);

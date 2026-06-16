@@ -163,7 +163,7 @@ static void *inject_latestPositionFromCachedGameCtrl(void);
 // way CPU games do — the previous env/flag-file gate is wired off.
 //
 // What this enables:
-//   - usi_engine_on_match_start fires with the OnlinePvPMode's _localPlayer,
+//   - UsiEngineOnMatchStart fires with the OnlinePvPMode's _localPlayer,
 //     so the engine knows which seat to think for.
 //   - Injection's route picker treats online_opm as eligible just like the
 //     CPU-side routes, so a bestmove from the WASM engine lands through
@@ -626,7 +626,7 @@ static kiou_route_t inject_pickRoute(void) {
 // ---------------------------------------------------------------------------
 // Ring buffer for recent injections. Single producer (the recv-queue handler
 // after the main-thread dispatch returns), so a simple mutex is overkill,
-// but kiou_inject_dumpRecent() can be called from any thread (signal handler
+// but KiouInjectDumpRecent() can be called from any thread (signal handler
 // etc.), so a lock is the cheapest correct option.
 // ---------------------------------------------------------------------------
 static kiou_inject_record_t g_ring[KIOU_INJECT_RING_SIZE];
@@ -642,7 +642,7 @@ static void inject_pushRecord(const kiou_inject_record_t *rec) {
     pthread_mutex_unlock(&g_ringMu);
 }
 
-void kiou_inject_dumpRecent(void) {
+void KiouInjectDumpRecent(void) {
     pthread_mutex_lock(&g_ringMu);
     size_t count = g_ringCount;
     size_t head  = g_ringHead;
@@ -1179,7 +1179,7 @@ NSString *inject_currentSfen(void) {
     return inject_sfenFromCachedGameCtrl();
 }
 
-void install_Inject_hook(uintptr_t unityBase) {
+void InstallInjectHook(uintptr_t unityBase) {
     if (g_SunfishMoveDrop) {
         file_log(@"[INJECT] install: already initialized, skipping");
         return;

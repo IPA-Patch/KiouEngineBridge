@@ -159,14 +159,38 @@ Two protocol streams share one TCP port:
 
 | Stream | Direction | Wire | Purpose |
 |---|---|---|---|
-| **USI** | bidirectional | one USI command per text frame | drive the engine, accept `bestmove` back |
+| **USI** | bidirectional | one USI command per text frame | carry the tweak-owned handshake, `position sfen ...`, `bestmove ...`, and end-of-game notifications |
 | **meta** | tweak -> host | `meta{...json}\n` per frame | match lifecycle + per-move record for KIF assembly |
 
-The USI state machine (`Usi_Engine.m`) walks the standard
-`usi` -> `usiok` -> `isready` -> `readyok` -> `usinewgame` -> `position` ->
-`go` -> `bestmove` cycle; on `bestmove` it hops onto the Unity main
-thread and calls `inject_apply` to commit the move through KIOU's own
-move pipeline.
+The USI state machine in `Sources/KiouEngineBridge/Usi_Engine.m`
+currently owns this surface on the WebSocket link:
+
+| Command | Direction | Status | Notes |
+|---|---|---|---|
+| `usi` | tweak -> peer | supported | sent on WS connect |
+| `id name ...` / `id author ...` | peer -> tweak | observed | logged, not interpreted |
+| `option ...` | peer -> tweak | observed | logged, not interpreted |
+| `usiok` | peer -> tweak | supported | advances handshake to `isready` |
+| `isready` | tweak -> peer | supported | sent after `usiok` |
+| `readyok` | peer -> tweak | supported | advances to READY and triggers `usinewgame` |
+| `usinewgame` | tweak -> peer | supported | sent once the peer reports ready |
+| `position sfen <sfen>` | tweak -> peer | supported | emitted when observation says it is our turn |
+| `info ...` | peer -> tweak | partially supported | `info string ...` is cached; other forms are logged and ignored |
+| `bestmove <usi>` | peer -> tweak | supported | injected through KIOU's normal move pipeline |
+| `gameover win|lose|draw` | tweak -> peer | supported | sent on match end when the result is known |
+| `setoption ...` | either | not handled by the tweak | expected to live on the host peer / wrapper side |
+| `go ...` | either | not handled by the tweak | current design leaves think-limit policy to the host peer / wrapper side |
+| `stop` | peer -> tweak | not supported yet | currently ignored |
+| `ponderhit` | peer -> tweak | not supported yet | current flow does not expose ponder mode |
+| `quit` | peer -> tweak | not supported yet | current flow treats WS disconnect as session end |
+| `position startpos moves ...` | either | not emitted | outbound path uses `position sfen ...` from KIOU's live board snapshot |
+| `bestmove <move> ponder <move2>` | peer -> tweak | partial | only the primary bestmove token is consumed |
+
+YaneuraOu-specific extensions such as `go depth`, `go nodes`,
+`go movetime`, `go rtime`, `getoption`, `bench`, `moves`, `side`, and
+other debug / benchmark commands are intentionally **out of scope** for
+this tweak-level protocol surface. If you need them, implement them in
+your host-side peer or wrapper and translate them there.
 
 ## Install
 
