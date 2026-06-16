@@ -59,7 +59,7 @@ static void installUnityHooks(void) {
     // Inject_Move is still a symbol-only resolver (no MSHookFunction) so it
     // runs in both flavours. USI engine init must come after Inject_Move so
     // inject_apply is wired before the WS handler can reach it.
-    KebBridgeBinpatchPublish();
+    KEBBridgeBinpatchPublish();
     InstallLowLevelObserveHook(unityBase);  // symbol pointer resolves only
     // No-op on binpatch (see Hook_MatchModeObserve.m's binpatch installer).
     // orig_*OnPlayerMoveAsync is intentionally left NULL so the route picker
@@ -130,8 +130,8 @@ __attribute__((constructor)) static void init(void) {
 
     // Bring the WebSocket sink up as early as possible. It binds 0.0.0.0:9527
     // and just sits there until a host connects — no host attached means
-    // every KebWsServerPush() call below is a no-op.
-    KebWsServerStart(9527);
+    // every KEBWsServerPush() call below is a no-op.
+    KEBWsServerStart(9527);
 
     // UnityFramework is almost certainly not mapped yet at constructor time.
     installUnityHooks();

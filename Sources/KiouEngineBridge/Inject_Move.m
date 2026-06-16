@@ -626,7 +626,7 @@ static kiou_route_t inject_pickRoute(void) {
 // ---------------------------------------------------------------------------
 // Ring buffer for recent injections. Single producer (the recv-queue handler
 // after the main-thread dispatch returns), so a simple mutex is overkill,
-// but KebInjectDumpRecent() can be called from any thread (signal handler
+// but KEBInjectDumpRecent() can be called from any thread (signal handler
 // etc.), so a lock is the cheapest correct option.
 // ---------------------------------------------------------------------------
 static kiou_inject_record_t g_ring[KIOU_INJECT_RING_SIZE];
@@ -642,7 +642,7 @@ static void inject_pushRecord(const kiou_inject_record_t *rec) {
     pthread_mutex_unlock(&g_ringMu);
 }
 
-void KebInjectDumpRecent(void) {
+void KEBInjectDumpRecent(void) {
     pthread_mutex_lock(&g_ringMu);
     size_t count = g_ringCount;
     size_t head  = g_ringHead;
