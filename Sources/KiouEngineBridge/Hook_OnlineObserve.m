@@ -39,6 +39,13 @@
 #define RVA_ONLINE_HANDLE_RESULT       0x5A0CBD0
 #define RVA_CPUSTREAM_UPDATE_SNAPSHOT  0x59EB0E0  // CPUStreamMode counterpart
 
+// Latest server-authoritative remaining time, cached from
+// UpdateAuthoritativeSnapshot (Online) and CpuStream_UpdateSnapshot.
+// Exported via Internal.h so Meta_Emitter can embed them in meta_move.
+// 0.0f means "no snapshot received yet this match".
+float volatile g_latestBlackTimeSec = 0.0f;
+float volatile g_latestWhiteTimeSec = 0.0f;
+
 // ---------------------------------------------------------------------------
 // (A) UpdateAuthoritativeSnapshot
 //
@@ -58,7 +65,7 @@ typedef void (*UpdateAuthoritativeSnapshot_t)(void *self,
                                               int32_t moveCount);
 static UpdateAuthoritativeSnapshot_t orig_UpdateAuthoritativeSnapshot = NULL;
 
-void hook_UpdateAuthoritativeSnapshot(void *self,
+void HookUpdateAuthoritativeSnapshot(void *self,
                                       void *sfenStr,
                                       int32_t turn,
                                       float blackTimeSec,
@@ -71,6 +78,8 @@ void hook_UpdateAuthoritativeSnapshot(void *self,
     if (g_onlineModeCache != self) g_onlineModeCache = self;
     g_lastOnlineEvtUs = mach_absolute_time();
     if (sfenStr) g_authoritativeSfenString = sfenStr;
+    g_latestBlackTimeSec = blackTimeSec;
+    g_latestWhiteTimeSec = whiteTimeSec;
 
     NSString *sfen = il2cppStringToNSString(sfenStr);
     file_log([NSString stringWithFormat:
@@ -112,7 +121,7 @@ static HandleMoveResult_t orig_HandleMoveResult = NULL;
 
 static uint32_t g_handleResultCount = 0;
 
-void hook_HandleMoveResult(void *self, void *reply) {
+void HookHandleMoveResult(void *self, void *reply) {
     if (g_onlineModeCache != self) g_onlineModeCache = self;
     g_lastOnlineEvtUs = mach_absolute_time();
 
@@ -138,7 +147,7 @@ void hook_HandleMoveResult(void *self, void *reply) {
 // ---------------------------------------------------------------------------
 static UpdateAuthoritativeSnapshot_t orig_CpuStream_UpdateSnapshot = NULL;
 
-void hook_CpuStream_UpdateSnapshot(void *self,
+void HookCpuStreamUpdateSnapshot(void *self,
                                    void *sfenStr,
                                    int32_t turn,
                                    float blackTimeSec,
@@ -147,6 +156,8 @@ void hook_CpuStream_UpdateSnapshot(void *self,
     if (g_cpuStreamModeCache != self) g_cpuStreamModeCache = self;
     g_lastCpuStreamEvtUs = mach_absolute_time();
     if (sfenStr) g_authoritativeSfenString = sfenStr;
+    g_latestBlackTimeSec = blackTimeSec;
+    g_latestWhiteTimeSec = whiteTimeSec;
 
     NSString *sfen = il2cppStringToNSString(sfenStr);
     file_log([NSString stringWithFormat:
@@ -155,7 +166,7 @@ void hook_CpuStream_UpdateSnapshot(void *self,
               (int)turn, (int)moveCount,
               (double)blackTimeSec, (double)whiteTimeSec,
               sfen ?: @""]);
-    // Phase 2: see comment in hook_UpdateAuthoritativeSnapshot — snapshots
+    // Phase 2: see comment in HookUpdateAuthoritativeSnapshot — snapshots
     // stay file_log-only and the USI engine tracks turns via ADAPTER2.
     (void)sfen;
     if (orig_CpuStream_UpdateSnapshot) {
@@ -169,10 +180,10 @@ void hook_CpuStream_UpdateSnapshot(void *self,
 // Installer.
 // ---------------------------------------------------------------------------
 #if !KIOU_BINPATCH
-void install_OnlineObserve_hook(uintptr_t unityBase) {
+void InstallOnlineObserveHook(uintptr_t unityBase) {
     uintptr_t addrSnap = unityBase + RVA_ONLINE_UPDATE_SNAPSHOT;
     MSHookFunction((void *)addrSnap,
-                   (void *)hook_UpdateAuthoritativeSnapshot,
+                   (void *)HookUpdateAuthoritativeSnapshot,
                    (void **)&orig_UpdateAuthoritativeSnapshot);
     file_log([NSString stringWithFormat:
               @"[ONLINE] hooked OnlinePvPMode.UpdateAuthoritativeSnapshot "
@@ -182,7 +193,7 @@ void install_OnlineObserve_hook(uintptr_t unityBase) {
 
     uintptr_t addrRes = unityBase + RVA_ONLINE_HANDLE_RESULT;
     MSHookFunction((void *)addrRes,
-                   (void *)hook_HandleMoveResult,
+                   (void *)HookHandleMoveResult,
                    (void **)&orig_HandleMoveResult);
     file_log([NSString stringWithFormat:
               @"[ONLINE] hooked OnlinePvPMode.HandleMoveResult "
@@ -192,7 +203,7 @@ void install_OnlineObserve_hook(uintptr_t unityBase) {
 
     uintptr_t addrCpuSnap = unityBase + RVA_CPUSTREAM_UPDATE_SNAPSHOT;
     MSHookFunction((void *)addrCpuSnap,
-                   (void *)hook_CpuStream_UpdateSnapshot,
+                   (void *)HookCpuStreamUpdateSnapshot,
                    (void **)&orig_CpuStream_UpdateSnapshot);
     file_log([NSString stringWithFormat:
               @"[ONLINE] hooked CPUStreamMode.UpdateAuthoritativeSnapshot "

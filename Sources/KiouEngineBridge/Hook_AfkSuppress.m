@@ -44,7 +44,7 @@ static IsAfkEnabled_t orig_IsAfkEnabled = NULL;
 // 600th (= ~ once every 10 seconds at 60 fps).
 static uint32_t g_afkCheckCount = 0;
 
-static bool hook_IsAfkEnabled(void *self) {
+static bool HookIsAfkEnabled(void *self) {
     uint32_t n = ++g_afkCheckCount;
     if (n <= 3 || (n % 600) == 0) {
         file_log([NSString stringWithFormat:
@@ -59,10 +59,10 @@ static bool hook_IsAfkEnabled(void *self) {
 }
 
 #if !KIOU_BINPATCH
-void install_AfkSuppress_hook(uintptr_t unityBase) {
+void InstallAfkSuppressHook(uintptr_t unityBase) {
     uintptr_t addr = unityBase + RVA_GAMEORCH_IS_AFK_ENABLED;
     MSHookFunction((void *)addr,
-                   (void *)hook_IsAfkEnabled,
+                   (void *)HookIsAfkEnabled,
                    (void **)&orig_IsAfkEnabled);
     file_log([NSString stringWithFormat:
               @"[AFK] hooked GameOrchestrator.IsAfkEnabled @0x%lx "
@@ -73,4 +73,4 @@ void install_AfkSuppress_hook(uintptr_t unityBase) {
 #endif  // !KIOU_BINPATCH
 // On the binpatch build, IsAfkEnabled is replaced wholesale by a
 // `MOVZ W0, #0; RET` inline patch in recipes/kiouenginebridge.py (PATCHES),
-// so install_AfkSuppress_hook is intentionally omitted here.
+// so InstallAfkSuppressHook is intentionally omitted here.

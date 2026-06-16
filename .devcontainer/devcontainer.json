@@ -56,22 +56,17 @@
             "extensions": [
                 "Anthropic.claude-code",
                 "EditorConfig.EditorConfig",
-                "GitHub.copilot",
-                "GitHub.copilot-chat",
                 "PKief.material-icon-theme",
                 "antfu.file-nesting",
-                "bierner.markdown-mermaid",
                 "bierner.markdown-preview-github-styles",
                 "charliermarsh.ruff",
-                "eamodio.gitlens",
                 "jebbs.markdown-extended",
                 "ms-python.black-formatter",
                 "ms-python.python",
                 "pHofer94.vscode-taskviewexplorer",
                 "redhat.vscode-yaml",
                 "swiftlang.swift-vscode",
-                "tamasfe.even-better-toml",
-                "vsls-contrib.gitdoc"
+                "tamasfe.even-better-toml"
             ],
             "settings": {}
         }

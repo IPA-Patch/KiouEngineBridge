@@ -3,11 +3,11 @@
 #if KIOU_BINPATCH
 // This entire module is meta-sidecar-only. The binpatch flavour drops the
 // meta sidecar (see docs/plans/kiou_engine_bridge_binpatch.md § 2), so the
-// file compiles to nothing. install_GameStateStoreObserve_hook is a no-op
+// file compiles to nothing. InstallGameStateStoreObserveHook is a no-op
 // shim defined at the bottom of this #if block so Tweak.m doesn't need its
 // own #if to skip the call — keeping the constructor wiring uniform.
-void install_GameStateStoreObserve_hook(uintptr_t unityBase) { (void)unityBase; }
-void meta_on_player_info_set(int32_t side, void *playerInfo) {
+void InstallGameStateStoreObserveHook(uintptr_t unityBase) { (void)unityBase; }
+void MetaOnPlayerInfoSet(int32_t side, void *playerInfo) {
     (void)side; (void)playerInfo;
 }
 #else
@@ -46,7 +46,7 @@ void meta_on_player_info_set(int32_t side, void *playerInfo) {
 #define RVA_GAMESTATESTORE_SET_WHITE_PLAYER_INFO 0x5A2CBA0
 // NotifyPieceMoved は自分手・相手手どちらの apply 時も通る GameStateStore
 // 上のチョークポイント。ADAPTER2 (Hook_LowLevelObserve.m) は自分手しか
-// 通らないので、meta_emit_move の発火点はこちらに集約する。
+// 通らないので、MetaEmitMove の発火点はこちらに集約する。
 #define RVA_GAMESTATESTORE_NOTIFY_PIECE_MOVED    0x5A2CD24
 
 // ---------------------------------------------------------------------------
@@ -60,15 +60,15 @@ static SetPlayerInfo_t orig_SetWhitePlayerInfo = NULL;
 
 // ---------------------------------------------------------------------------
 // Hook bodies. Both share the same shape; the side argument to
-// meta_on_player_info_set tells Meta_Emitter which slot was just written.
+// MetaOnPlayerInfoSet tells Meta_Emitter which slot was just written.
 // ---------------------------------------------------------------------------
-static void hook_SetBlackPlayerInfo(void *self, void *playerInfo) {
-    meta_on_player_info_set(/*side=*/0, playerInfo);
+static void HookSetBlackPlayerInfo(void *self, void *playerInfo) {
+    MetaOnPlayerInfoSet(/*side=*/0, playerInfo);
     if (orig_SetBlackPlayerInfo) orig_SetBlackPlayerInfo(self, playerInfo);
 }
 
-static void hook_SetWhitePlayerInfo(void *self, void *playerInfo) {
-    meta_on_player_info_set(/*side=*/1, playerInfo);
+static void HookSetWhitePlayerInfo(void *self, void *playerInfo) {
+    MetaOnPlayerInfoSet(/*side=*/1, playerInfo);
     if (orig_SetWhitePlayerInfo) orig_SetWhitePlayerInfo(self, playerInfo);
 }
 
@@ -82,8 +82,8 @@ static void hook_SetWhitePlayerInfo(void *self, void *playerInfo) {
 //
 // 自分のクライアントが指したとき (ADAPTER2 経由) も、サーバから相手手の
 // state 更新が降ってきたときも、最終的にこの NotifyPieceMoved を通る。
-// したがってここで meta_emit_move を 1 度だけ発火すれば、片肺 KIF
-// 問題は解消する。meta_emit_move は引数として「次の手番」を受け取る
+// したがってここで MetaEmitMove を 1 度だけ発火すれば、片肺 KIF
+// 問題は解消する。MetaEmitMove は引数として「次の手番」を受け取る
 // 設計なので、API は崩さずに `playerSide == 0 ? 1 : 0` で flip して渡す。
 // ---------------------------------------------------------------------------
 typedef void (*GameStateStore_NotifyPieceMoved_t)(void *self,
@@ -91,7 +91,7 @@ typedef void (*GameStateStore_NotifyPieceMoved_t)(void *self,
                                                   int32_t playerSide);
 static GameStateStore_NotifyPieceMoved_t orig_NotifyPieceMoved = NULL;
 
-static void hook_NotifyPieceMoved(void *self,
+static void HookNotifyPieceMoved(void *self,
                                   uint32_t move,
                                   int32_t playerSide) {
     // Call original FIRST so the GameController applies the move and the
@@ -104,11 +104,11 @@ static void hook_NotifyPieceMoved(void *self,
     // 1 度でも走っていれば NULL ではない。相手手側 (ADAPTER2 を通らない)
     // でも、初手以降は同じ GameController インスタンスが使い回されるので
     // キャッシュは有効。
-    NSString *sfen = sfenFromGameController(g_gameCtrlCache);
+    NSString *sfen = SfenFromGameController(g_gameCtrlCache);
     NSString *usi  = moveToUsi((SfMove)move);
 
     // playerSide はこの NotifyPieceMoved 呼び出しの「指した側」。
-    // meta_emit_move は「次の手番」を引数に取るので flip して渡す。
+    // MetaEmitMove は「次の手番」を引数に取るので flip して渡す。
     int32_t nextSide = (playerSide == 0) ? 1
                      : (playerSide == 1) ? 0
                      : -1;
@@ -116,17 +116,17 @@ static void hook_NotifyPieceMoved(void *self,
               @"[GSTATE-MOVE] NotifyPieceMoved self=%p moved_side=%d "
               @"usi=\"%@\" sfen=\"%@\"",
               self, (int)playerSide, usi ?: @"", sfen ?: @""]);
-    meta_emit_move(usi, sfen, nextSide);
+    MetaEmitMove(usi, sfen, nextSide);
 }
 
 // ---------------------------------------------------------------------------
 // Installer. Called once from Tweak.m::installUnityHooks().
 // ---------------------------------------------------------------------------
-void install_GameStateStoreObserve_hook(uintptr_t unityBase) {
+void InstallGameStateStoreObserveHook(uintptr_t unityBase) {
     {
         uintptr_t addr = unityBase + RVA_GAMESTATESTORE_SET_BLACK_PLAYER_INFO;
         MSHookFunction((void *)addr,
-                       (void *)hook_SetBlackPlayerInfo,
+                       (void *)HookSetBlackPlayerInfo,
                        (void **)&orig_SetBlackPlayerInfo);
         file_log([NSString stringWithFormat:
                   @"[GSTATE] hooked GameStateStore.SetBlackPlayerInfo "
@@ -137,7 +137,7 @@ void install_GameStateStoreObserve_hook(uintptr_t unityBase) {
     {
         uintptr_t addr = unityBase + RVA_GAMESTATESTORE_SET_WHITE_PLAYER_INFO;
         MSHookFunction((void *)addr,
-                       (void *)hook_SetWhitePlayerInfo,
+                       (void *)HookSetWhitePlayerInfo,
                        (void **)&orig_SetWhitePlayerInfo);
         file_log([NSString stringWithFormat:
                   @"[GSTATE] hooked GameStateStore.SetWhitePlayerInfo "
@@ -148,7 +148,7 @@ void install_GameStateStoreObserve_hook(uintptr_t unityBase) {
     {
         uintptr_t addr = unityBase + RVA_GAMESTATESTORE_NOTIFY_PIECE_MOVED;
         MSHookFunction((void *)addr,
-                       (void *)hook_NotifyPieceMoved,
+                       (void *)HookNotifyPieceMoved,
                        (void **)&orig_NotifyPieceMoved);
         file_log([NSString stringWithFormat:
                   @"[GSTATE] hooked GameStateStore.NotifyPieceMoved "
