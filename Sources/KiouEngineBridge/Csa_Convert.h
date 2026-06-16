@@ -161,3 +161,24 @@ BOOL MoveBitsFromCsaText(NSString *csa,
 // ---------------------------------------------------------------------------
 
 NSString *CsaPositionFromSfen(NSString *sfen);
+
+// ---------------------------------------------------------------------------
+// Helpers for reconstructing piece type from an SFEN snapshot.
+//
+// The Move bits surfaced by KIOU's NotifyPieceMoved hook carry the
+// destination square but not (in any reverse-engineered form) the piece
+// type that just landed there. Reading the post-move SFEN and pulling the
+// letter sitting on the destination square is a robust workaround until the
+// upper-16 layout is decoded (Task 7).
+// ---------------------------------------------------------------------------
+
+// Read the piece occupying `square` (0..80) in `sfen`. Returns the PSC
+// PieceType integer (1..14) of the piece — promoted variants land on
+// 9..14. Returns -1 if the square is empty or sfen is malformed.
+int32_t PscPieceTypeAtSquare(NSString *sfen, uint32_t square);
+
+// Convenience: given a CSA-formatted move that's missing its `,T<n>`
+// suffix, append `,T<seconds>` (or return the original unchanged when
+// `seconds` < 0). Used by the engine driver when it knows the time spent
+// at emit time but had to build the CSA prefix earlier.
+NSString *CsaTextAppendingTime(NSString *csaMove, int32_t seconds);

@@ -81,18 +81,5 @@ void UsiEngineInstall(void) {
     file_log(@"[STUB] UsiEngineInstall called during CSA migration — no-op");
 }
 
-// ---------------------------------------------------------------------------
-// CSA engine driver stubs. Real implementations land in Task 4 once
-// Csa_Engine.m is written; until then Server_CSA.m's accept handler hits
-// these no-ops so the build links.
-// ---------------------------------------------------------------------------
-
-void CsaEngineOnTcpClientConnected(void) {
-    file_log(@"[STUB] CsaEngineOnTcpClientConnected — engine driver lands "
-             @"in Task 4");
-}
-
-void CsaEngineOnTcpClientDisconnected(void) {
-    file_log(@"[STUB] CsaEngineOnTcpClientDisconnected — engine driver "
-             @"lands in Task 4");
-}
+// (Inject_Resign.m now provides the real InjectResign /
+// InjectNyugyokuDeclaration entry points — Task 6 has landed.)

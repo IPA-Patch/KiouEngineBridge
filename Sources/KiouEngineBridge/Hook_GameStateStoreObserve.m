@@ -64,11 +64,13 @@ static SetPlayerInfo_t orig_SetWhitePlayerInfo = NULL;
 // ---------------------------------------------------------------------------
 static void HookSetBlackPlayerInfo(void *self, void *playerInfo) {
     MetaOnPlayerInfoSet(/*side=*/0, playerInfo);
+    CsaOnPlayerInfoSet(/*side=*/0, playerInfo);
     if (orig_SetBlackPlayerInfo) orig_SetBlackPlayerInfo(self, playerInfo);
 }
 
 static void HookSetWhitePlayerInfo(void *self, void *playerInfo) {
     MetaOnPlayerInfoSet(/*side=*/1, playerInfo);
+    CsaOnPlayerInfoSet(/*side=*/1, playerInfo);
     if (orig_SetWhitePlayerInfo) orig_SetWhitePlayerInfo(self, playerInfo);
 }
 
@@ -117,6 +119,10 @@ static void HookNotifyPieceMoved(void *self,
               @"usi=\"%@\" sfen=\"%@\"",
               self, (int)playerSide, usi ?: @"", sfen ?: @""]);
     MetaEmitMove(usi, sfen, nextSide);
+    // CSA engine driver wants the raw Move bits + post-move SFEN so it can
+    // reconstruct the piece type at the destination square and ship a
+    // `+7776FU,T10`-style notification.
+    CsaEngineOnMoveObserved((uint32_t)move, playerSide, sfen);
 }
 
 // ---------------------------------------------------------------------------

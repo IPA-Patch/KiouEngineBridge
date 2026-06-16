@@ -70,8 +70,9 @@ static void installUnityHooks(void) {
     // patched `B <cave>` instruction.
     InstallMatchModeObserveHook(unityBase);
     InstallInjectHook(unityBase);
-    // CSA migration Task 2: USI engine driver removed. Task 4 will plug in
-    // CsaEngineInstall() here once Csa_Engine.m lands.
+    // CSA engine driver. Must come AFTER InstallInjectHook so inject_apply
+    // is fully wired before the CSA recv queue can dispatch into it.
+    CsaEngineInstall();
 #else
     InstallOnlineObserveHook(unityBase);
     InstallLowLevelObserveHook(unityBase);
@@ -91,10 +92,9 @@ static void installUnityHooks(void) {
     // match_start with the matchmaking-resolved opponent identity on
     // Online matches (MatchConfig alone holds placeholders there).
     InstallGameStateStoreObserveHook(unityBase);
-    // CSA migration Task 2: USI engine driver removed. Task 4 will plug in
-    // CsaEngineInstall() here once Csa_Engine.m lands. Must come AFTER
-    // InstallInjectHook so inject_apply is fully wired before the TCP
-    // handler can call into it.
+    // CSA engine driver. Must come AFTER InstallInjectHook so inject_apply
+    // is fully wired before the CSA recv queue can dispatch into it.
+    CsaEngineInstall();
 #endif
 
     g_unityHooked = YES;
