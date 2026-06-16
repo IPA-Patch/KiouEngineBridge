@@ -234,12 +234,14 @@ DEFINE_OPM_HOOK(Replay,    "RecordReplayMode", g_recordReplayModeCache,
             void *gc = readPtr(adapter, KIOU_ADAPTER_OFF_GAME_CONTROLLER);              \
             if (gc && g_gameCtrlCache != gc) g_gameCtrlCache = gc;                      \
         }                                                                               \
-        /* Stash MatchConfig so Meta_Emitter can read player names, time */            \
-        /* control, and mode at match_start time. The cfg pointer is stable */         \
-        /* for the lifetime of the match — il2cpp's Boehm GC won't move it, */         \
-        /* and IMatchMode keeps a strong ref through _matchConfig (Online) */          \
-        /* or via the captured arg itself (the simpler modes). */                      \
+        /* Stash MatchConfig so Csa_GameInfo (and the legacy Meta_Emitter) */         \
+        /* can read player names, time control, and mode at match_start time. */       \
+        /* The cfg pointer is stable for the lifetime of the match — il2cpp's */       \
+        /* Boehm GC won't move it, and IMatchMode keeps a strong ref through */         \
+        /* _matchConfig (Online) or via the captured arg itself (the simpler */        \
+        /* modes). */                                                                  \
         MetaSetMatchConfig(cfg);                                                     \
+        CsaSetMatchConfig(cfg);                                                       \
         /* On binpatch KIOU_CALL_ORIG_RET is a no-op (cave handles orig). */ \
         UniTaskRet ret =                                                                \
             KIOU_CALL_ORIG_RET(UniTaskRet, ORIG_VAR, self, cfg, store, adapter, ct);   \
@@ -304,16 +306,14 @@ DEFINE_INIT_HOOK(Replay,    "RecordReplayMode", g_recordReplayModeCache,
             file_log([NSString stringWithFormat:                                          \
                       @"[MMODE] " MODE_TAG " Start self=%p localPlayer=%d",               \
                       selfCap, (int)lp]);                                                 \
-            /* Tell the USI engine driver that a match just started so it can */          \
-            /* prep its state machine and (when we're the side to move first) */          \
-            /* kickstart a position+go without waiting for the first observed */          \
-            /* opponent move. */                                                          \
+            /* Notify the CSA engine driver so it can ship Game_Summary to the */         \
+            /* connected engine (or arm for the next AGREE). Csa_GameInfo reads */        \
+            /* MatchConfig + GameStateStore.Set*PlayerInfo to fill the block. */          \
+            CsaEngineOnMatchStart(lp);                                                    \
+            /* Keep the legacy USI driver and meta sidecar fed too — both are */         \
+            /* no-ops via Csa_Stubs.m during the CSA migration, but the call */            \
+            /* sites stay so a future revert path is mechanical. */                       \
             UsiEngineOnMatchStart(lp);                                                \
-            /* Emit the match_start meta line so the bridge can begin assembling */       \
-            /* its KIF header (player names, mode, time control). MatchConfig is */       \
-            /* already cached from the InitializeAsync hook above, and lp is what */      \
-            /* we've just read — same call site keeps the two notifications in */         \
-            /* lockstep. */                                                                \
             MetaEmitMatchStart(lp);                                                    \
             /* Prevent the screen from dimming while a match is active.             */    \
             /* Already on the main queue here.                                      */    \
@@ -563,15 +563,15 @@ static void scheduleAutoRematch(const char *modeTag) {
         /* Reset time cache so the next match doesn't inherit stale values.  */   \
         g_latestBlackTimeSec = 0.0f;                                               \
         g_latestWhiteTimeSec = 0.0f;                                               \
-        /* Roll the USI engine state machine back to READY (after shipping */      \
-        /* `gameover` to the bridge) so a new game's usinewgame is sent */         \
-        /* before the next position+go. */                                         \
-        UsiEngineOnMatchEnd(result);                                           \
-        /* Emit the match_end meta line so the bridge can finalize its KIF */      \
-        /* assembly. After this point we drop the MatchConfig cache so the */      \
-        /* next match's meta_match_start reads fresh. */                           \
-        MetaEmitMatchEnd(result, finalSfen, usiText);                           \
-        MetaSetMatchConfig(NULL);                                               \
+        /* Surface the result to the CSA engine driver so it can emit */          \
+        /* #REASON + #WIN/#LOSE/#DRAW before the next match resets state. */      \
+        CsaEngineOnMatchEnd(result);                                              \
+        /* Keep the legacy USI / meta paths fed too — both no-op via */           \
+        /* Csa_Stubs.m during the CSA migration. */                               \
+        UsiEngineOnMatchEnd(result);                                              \
+        MetaEmitMatchEnd(result, finalSfen, usiText);                             \
+        MetaSetMatchConfig(NULL);                                                 \
+        CsaSetMatchConfig(NULL);                                                  \
         /* Schedule the auto-rematch sequence. REMATCH_TAG = NULL opts out. */     \
         scheduleAutoRematch(REMATCH_TAG);                                          \
         /* Re-enable the idle timer now that the match has ended. The start  */   \
