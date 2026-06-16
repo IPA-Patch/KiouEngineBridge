@@ -68,19 +68,20 @@ position before agreeing. KEB has no equivalent pre-match block because
 match conditions are not known until `OnMatchStart` fires inside KIOU.
 Instead, the same information is delivered in two ways:
 
-- **`meta match_start`** (JB build only) — JSON sidecar with player
-  names, time control settings, mode, and initial position type. Arrives
-  before the first `position sfen`.
-- **First `go` line** — carries the live `btime`/`wtime`/`byoyomi`
-  values for the opening position.
+- **`meta` lines** (JB build only) — flat sequence of extended USI
+  lines with player names, time control settings, mode, and initial
+  position type. Arrive before `usinewgame`, which signals the end of
+  the metadata.
+- **`go` line** — carries the live `btime`/`wtime`/`byoyomi` values
+  each turn.
 
 | CSA field | CSA line | KEB equivalent | Status |
 |---|---|---|---|
-| Protocol version | `Protocol_Version:1.2` | — | ⛔ omitted |
-| Game ID | `Game_ID:...` | — | ⛔ omitted |
-| Black player name | `Name+:YaneuraOu` | `meta match_start: black.name` | ✅ JB build |
-| White player name | `Name-:Kristallweizen` | `meta match_start: white.name` | ✅ JB build |
-| Your seat | `Your_Turn:+` | `meta match_start: local_player` | ✅ JB build |
+| Protocol version | `Protocol_Version:1.2` | `meta protocol_version 1.0` | ✅ JB build |
+| Game ID | `Game_ID:...` | `meta game_id ...` | ✅ JB build |
+| Black player name | `Name+:YaneuraOu` | `meta name+ ...` | ✅ JB build |
+| White player name | `Name-:Kristallweizen` | `meta name- ...` | ✅ JB build |
+| Your seat | `Your_Turn:+` | `meta your_turn b\|w\|-` | ✅ JB build |
 | First to move | `To_Move:+` | SFEN side-to-move in first `position` | ✅ |
 | Max moves | `Max_Moves:256` | — | ⛔ KIOU limit not exposed |
 | Rematch on draw | `Rematch_On_Draw:NO` | — | ⛔ omitted |
@@ -112,6 +113,7 @@ opponent's move, engine replies with its own move.
 | CSA concept | CSA direction / line | KEB equivalent | Status |
 |---|---|---|---|
 | Position after opponent's move | `+7776FU,T10` (incremental) | `position sfen ...` (full snapshot) | ✅ different encoding |
+| Move notification to peer | `+7776FU,T10` | `move +7g7f T10` | ✅ JB build |
 | Remaining / consumed time per turn | `,T10` suffix on move line | `btime` / `wtime` in `go` | ✅ remaining (not consumed) |
 | Engine submits move | `+7776FU` | `bestmove 7g7f` | ✅ |
 | Engine resigns | `%TORYO` | `bestmove resign` | ✅ |
@@ -156,7 +158,7 @@ sequenceDiagram
 
     Note over K,B: Match start
     K-->>B: OnMatchStart → local_player latched
-    B-->>P: meta BEGIN_GAME / ... / meta END_GAME
+    B-->>P: meta protocol_version / meta name+ / meta byoyomi / ...
     B->>P: usinewgame
 
     loop When it becomes our turn
@@ -167,7 +169,7 @@ sequenceDiagram
         P-->>B: bestmove 7g7f
         Note over B,K: inject_apply → KIOU's move pipeline
         B->>K: replay move
-        B-->>P: meta move +7g7f T10
+        B-->>P: move +7g7f T10
     end
 
     K-->>B: OnMatchEndAsync
