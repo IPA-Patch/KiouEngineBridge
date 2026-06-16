@@ -248,42 +248,26 @@ engine options, it should send them to the engine directly rather than
 over the WebSocket connection to KEB. Unrecognised first tokens
 (including `setoption`) are logged and dropped.
 
-## meta channel — extended USI line stream
+## Extended USI lines (JB build only)
 
-`meta` lines carry match metadata as an extended USI protocol.
-**They are not delivered on the binpatch build** — the binpatch flavour
-links no-op stubs in `Meta_Emitter.m` lines 3-18, so a host running
-against a sideloaded KIOU sees only the USI channel. On the jailbroken
-build the host can rely on the events below.
+KEB emits two kinds of extended USI lines that are not part of the
+standard USI spec. **They are not delivered on the binpatch build** —
+the binpatch flavour links no-op stubs in `Meta_Emitter.m` lines 3-18.
 
-### Syntax
+Both use the same line-oriented format as standard USI (one command per
+line, space-separated tokens). A parser that does not recognise the
+first token MUST skip the line silently — this keeps the extended lines
+transparent to standard USI engine parsers.
 
-Every `meta` line follows the same line-oriented format as standard USI:
+### `meta` lines — match metadata
 
-```
-meta <subcommand> [<value>]\n
-```
-
-- First token is always `meta`.
-- Second token is the subcommand name.
-- Remaining tokens (to end of line) are the value. Values may contain
-  spaces (e.g. player names); the parser MUST take everything after the
-  subcommand token as the value, not just the first word.
-- Lines are grouped into **blocks** delimited by `meta BEGIN_<block>`
-  and `meta END_<block>`. All lines of a block arrive consecutively
-  with no interleaved USI lines.
-- A parser that does not recognise a subcommand MUST skip the line
-  silently.
-
-### `BEGIN_GAME` / `END_GAME` block
-
-Emitted once per match, before `usinewgame`. On Online matches a 1.5 s
-grace period waits for `GameStateStore.SetBlackPlayerInfo` /
-`SetWhitePlayerInfo` to land the matchmaking-resolved opponent; on CPU /
-LocalPvP matches it fires from a fallback timer.
+`meta` lines carry per-match information that has no equivalent in
+standard USI. They are emitted as a flat sequence before `usinewgame`;
+`usinewgame` itself signals the end of the metadata block. Values may
+contain spaces (e.g. player names); the parser MUST treat everything
+after the subcommand token as the value.
 
 ```
-meta BEGIN_GAME
 meta protocol_version 1.0
 meta game_id 20260615T204311-VsAI
 meta mode VsAI
@@ -295,14 +279,13 @@ meta name- KIOU CPU (Normal)
 meta time_unit 1sec
 meta total_time 600
 meta byoyomi 30
-meta increment 0
-meta END_GAME
+usinewgame
 ```
 
 | Subcommand | Value | Notes |
 |---|---|---|
 | `protocol_version` | `1.0` | KEB extended USI protocol version. |
-| `game_id` | `<started_at_iso>-<mode>` | Unique per match; derived from `started_at` and mode. |
+| `game_id` | `<started_at_iso>-<mode>` | Unique per match. |
 | `mode` | `VsAI` \| `LocalPvP` \| `OnlinePvP` \| `RecordReplay` \| `Spectate` | KIOU match mode. |
 | `started_at` | ISO 8601 UTC | |
 | `start_position` | `Standard` \| `HandicapLance` \| … \| `TsumeShogi` | Initial position type. |
@@ -320,31 +303,27 @@ meta END_GAME
 | `byoyomi` | integer (seconds) | Byoyomi per move. Omitted if zero. |
 | `increment` | integer (seconds) | Increment per move. Omitted if zero. |
 
-### `meta move` line
+### `move` lines — per-move notification
 
-Emitted once per applied move, from `ShogiGameAdapter.TryMakeMove(Move,
-out)`. Modelled directly on the CSA per-move notification (`+7776FU,T10`).
+`move` lines notify the peer of each committed move. Modelled directly
+on the CSA per-move notification (`+7776FU,T10`).
 
 ```
-meta move +7g7f T10
+move +7g7f T10
 ```
 
 | Token | Value | Notes |
 |---|---|---|
 | `+` \| `-` | side | `+` = black just moved, `-` = white just moved. |
 | USI move | e.g. `7g7f`, `8h2b+`, `P*5e` | The move that was applied. |
-| `T<n>` | integer (seconds) | Time spent on this move, derived from the difference between consecutive authoritative snapshots (`g_latestBlackTimeSec` / `g_latestWhiteTimeSec`). Omitted in AI / Local modes where KIOU does not issue snapshots. |
+| `T<n>` | integer (seconds) | Time spent on this move, derived from the difference between consecutive authoritative snapshots. Omitted in AI / Local modes where KIOU does not issue snapshots. |
 
 The receiver can compute remaining time as `total_time - Σ T` (summing
-only the moves belonging to that side), exactly as in the CSA protocol.
-The `go btime/wtime` line KEB sends on the next turn carries the same
-remaining time directly for engines that prefer not to track it
-themselves.
+only the moves for that side), exactly as in the CSA protocol. The
+`go btime/wtime` line KEB sends on the next turn carries the same
+remaining time directly for engines that prefer not to track it.
 
-Match end is signalled by `gameover` on the USI channel. No `meta`
-block is emitted at match end in the current version. A `BEGIN_RESULT`
-block may be added in a future version if the host needs structured
-end-of-game data (final SFEN, full USI text, etc.).
+Match end is signalled by `gameover` on the USI channel.
 
 ## Build-flavour matrix
 
@@ -394,7 +373,6 @@ literally.
 < isready
 > readyok
 (state = READY; no usinewgame yet — KEB waits for match start)
-< meta BEGIN_GAME
 < meta protocol_version 1.0
 < meta game_id 20260615T204311-VsAI
 < meta mode VsAI
@@ -406,13 +384,12 @@ literally.
 < meta time_unit 1sec
 < meta total_time 600
 < meta byoyomi 30
-< meta END_GAME
 < usinewgame
 < position sfen lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1
 < go movetime 30000
 > info depth 12 score cp 32 pv 7g7f
 > bestmove 7g7f
-< meta move +7g7f T10
+< move +7g7f T10
 ...
 < gameover win
 ```
@@ -427,7 +404,6 @@ For an Online match the `go` line and move block carry live clock values:
 ...
 > readyok
 (state = READY)
-< meta BEGIN_GAME
 < meta protocol_version 1.0
 < meta game_id 20260615T204311-OnlinePvP
 < meta mode OnlinePvP
@@ -437,20 +413,18 @@ For an Online match the `go` line and move block carry live clock values:
 < meta time_unit 1sec
 < meta total_time 600
 < meta byoyomi 30
-< meta END_GAME
 < usinewgame
 < position sfen lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1
 < go btime 600000 wtime 600000 byoyomi 30000
 > bestmove 7g7f
-< meta move +7g7f T10
+< move +7g7f T10
 ...
 < gameover win
 ```
 
-Note that the `BEGIN_GAME` block always arrives before `usinewgame` and
-the first `position sfen`. The engine can use that ordering as a cue
-that a new game is starting; it does not need to infer it from move
-numbers.
+Note that `meta` lines always arrive before `usinewgame` and the first
+`position sfen`. The engine can use `usinewgame` as the cue that a new
+game is starting and that the metadata block is complete.
 
 ## Compatibility notes
 
