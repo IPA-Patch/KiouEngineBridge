@@ -70,7 +70,8 @@ static void installUnityHooks(void) {
     // patched `B <cave>` instruction.
     InstallMatchModeObserveHook(unityBase);
     InstallInjectHook(unityBase);
-    UsiEngineInstall();
+    // CSA migration Task 2: USI engine driver removed. Task 4 will plug in
+    // CsaEngineInstall() here once Csa_Engine.m lands.
 #else
     InstallOnlineObserveHook(unityBase);
     InstallLowLevelObserveHook(unityBase);
@@ -90,9 +91,10 @@ static void installUnityHooks(void) {
     // match_start with the matchmaking-resolved opponent identity on
     // Online matches (MatchConfig alone holds placeholders there).
     InstallGameStateStoreObserveHook(unityBase);
-    // Phase 2: USI engine driver. Must come AFTER InstallInjectHook so
-    // inject_apply is fully wired before the WS handler can call into it.
-    UsiEngineInstall();
+    // CSA migration Task 2: USI engine driver removed. Task 4 will plug in
+    // CsaEngineInstall() here once Csa_Engine.m lands. Must come AFTER
+    // InstallInjectHook so inject_apply is fully wired before the TCP
+    // handler can call into it.
 #endif
 
     g_unityHooked = YES;
@@ -128,10 +130,13 @@ __attribute__((constructor)) static void init(void) {
               KIOU_ENGINE_BRIDGE_COMMIT, kBuildFlavor,
               __DATE__, __TIME__]);
 
-    // Bring the WebSocket sink up as early as possible. It binds 0.0.0.0:9527
-    // and just sits there until a host connects — no host attached means
-    // every KEBWsServerPush() call below is a no-op.
-    KEBWsServerStart(9527);
+    // CSA migration Task 3: bind the CSA TCP server on 0.0.0.0:4081 as
+    // early as possible. Without a client attached, every KEBCsaServerPush
+    // call below is a silent no-op. The Csa_Engine state machine (Task 4)
+    // installs its line handler against KEBCsaServerSetLineHandler so
+    // inbound LOGIN / AGREE / move / %TORYO lines route through to the
+    // driver as soon as the engine connects.
+    KEBCsaServerStart(4081);
 
     // UnityFramework is almost certainly not mapped yet at constructor time.
     installUnityHooks();
