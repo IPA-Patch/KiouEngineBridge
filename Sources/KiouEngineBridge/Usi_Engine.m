@@ -94,7 +94,7 @@ void UsiEngineSendLine(NSString *line) {
     file_log([NSString stringWithFormat:@"[USI>] %@",
               [line stringByReplacingOccurrencesOfString:@"\n"
                                               withString:@"\\n"]]);
-    KebWsServerPush(withNewline);
+    KEBWsServerPush(withNewline);
 }
 
 // ---------------------------------------------------------------------------
@@ -457,6 +457,6 @@ void UsiEngineOnWsClientDisconnected(void) {
 // observation hooks are in place.
 // ---------------------------------------------------------------------------
 void UsiEngineInstall(void) {
-    KebWsServerSetTextHandler(usi_engine_text_handler);
+    KEBWsServerSetTextHandler(usi_engine_text_handler);
     file_log(@"[USI] engine installed (text handler registered)");
 }
