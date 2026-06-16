@@ -579,24 +579,25 @@ static const char *inject_routeName(kiou_route_t r) {
 // a match-end hook (Phase 2) to clear these caches, the worst case is that
 // we try to dispatch on a stale pointer. That's why we still prefer the
 // freshest observed timestamp when multiple mode caches are populated —
-// it's an ordering hint, not a gate. Adapter / GameCtrl fallbacks remain
-// for the rare case where injection is requested before any OPM has fired
-// (the UI won't redraw but at least the engine state advances).
+// it's an ordering hint, not a gate. Branch F reconstructs per-site bypass
+// trampolines from the fixed cave geometry, so binpatch injection can call
+// OPM / Adapter without re-entering the dispatcher cave.
 static kiou_route_t inject_pickRoute(void) {
     // Pick the mode whose OPM observation timestamp is the newest, treating
     // "never observed" (ts == 0) as infinitely old. The actual route call
-    // still requires (cache != NULL && orig != NULL).
-    struct { void *cache; OnPlayerMoveAsync_t orig; uint64_t ts;
+    // only requires a live cached receiver; on binpatch the callable can be
+    // the reconstructed cave-bypass entry even when orig_* is NULL.
+    struct { void *cache; bool callable; uint64_t ts;
              kiou_route_t route; bool gated; } modes[] = {
-        { g_aiMatchModeCache,      orig_AIMatchMode_OnPlayerMoveAsync,
+        { g_aiMatchModeCache,      KIOU_BR_BINPATCH_AI_OPM_CALLABLE() != NULL,
           g_lastAiMatchEvtUs,       KIOU_ROUTE_AI_OPM,        false },
-        { g_localPvPModeCache,     orig_LocalPvPMode_OnPlayerMoveAsync,
+        { g_localPvPModeCache,     KIOU_BR_BINPATCH_LOCAL_OPM_CALLABLE() != NULL,
           g_lastLocalPvPEvtUs,      KIOU_ROUTE_LOCAL_OPM,     false },
-        { g_cpuStreamModeCache,    orig_CPUStreamMode_OnPlayerMoveAsync,
+        { g_cpuStreamModeCache,    KIOU_BR_BINPATCH_CPUSTREAM_OPM_CALLABLE() != NULL,
           g_lastCpuStreamEvtUs,     KIOU_ROUTE_CPUSTREAM_OPM, false },
-        { g_recordReplayModeCache, orig_RecordReplayMode_OnPlayerMoveAsync,
+        { g_recordReplayModeCache, KIOU_BR_BINPATCH_REPLAY_OPM_CALLABLE() != NULL,
           g_lastRecordReplayEvtUs,  KIOU_ROUTE_REPLAY_OPM,    false },
-        { g_onlineModeCache,       orig_OnlinePvPMode_OnPlayerMoveAsync,
+        { g_onlineModeCache,       KIOU_BR_BINPATCH_ONLINE_OPM_CALLABLE() != NULL,
           g_lastOnlineEvtUs,        KIOU_ROUTE_ONLINE_OPM,
           !g_onlineServerSendAllowed },
     };
@@ -604,7 +605,7 @@ static kiou_route_t inject_pickRoute(void) {
     kiou_route_t best = KIOU_ROUTE_NONE;
     uint64_t bestTs = 0;
     for (size_t i = 0; i < sizeof(modes) / sizeof(modes[0]); i++) {
-        if (!modes[i].cache || !modes[i].orig) continue;
+        if (!modes[i].cache || !modes[i].callable) continue;
         if (modes[i].gated) continue;
         if (modes[i].ts < bestTs) continue;  // older than current best
         bestTs = modes[i].ts;
@@ -613,9 +614,12 @@ static kiou_route_t inject_pickRoute(void) {
     if (best != KIOU_ROUTE_NONE) return best;
 
     // No OPM cache live — fall back to headless engine writes so the
-    // bridge can at least drive the SFEN forward.
-    if (g_adapterCache && orig_AdapterTryMakeMoveOut) return KIOU_ROUTE_ADAPTER;
-    if (g_gameCtrlCache && orig_GameCtrlTryMakeMove)  return KIOU_ROUTE_GAMECTRL;
+    // bridge can at least drive the SFEN forward. GameCtrl stays JB-only:
+    // binpatch does not publish a bypass entry for it.
+    if (g_adapterCache && KIOU_BR_BINPATCH_ADAPTER_CALLABLE()) {
+        return KIOU_ROUTE_ADAPTER;
+    }
+    if (g_gameCtrlCache && orig_GameCtrlTryMakeMove) return KIOU_ROUTE_GAMECTRL;
     return KIOU_ROUTE_NONE;
 }
 
@@ -766,21 +770,45 @@ static void inject_runOnMain(const char *usi, uint32_t move,
             void *self = (SELF);                                          \
             OnPlayerMoveAsync_t fn = (ORIG);                              \
             if (!self || !fn) { err = "no_session"; break; }              \
+            file_log([NSString stringWithFormat:                          \
+                      @"[INJECT-DBG] route=%s callable=%p orig=%p "       \
+                      @"bypass=%p",                                      \
+                      inject_routeName(route), (void *)fn,                \
+                      (void *)(ORIG),                                     \
+                      (void *)((ORIG) ? NULL : fn)]);                     \
+            \
             (void)fn(self, move, NULL);                                   \
             ok = true;                                                    \
             executed = move;                                              \
             /* Locally apply the same move so the headless engine and */  \
             /* GameStateStore advance — disasm confirms OPM alone won't */\
-            /* do it. Failures here are benign (the move might already */ \
-            /* have been applied by an earlier HandleMoveResult) — we */  \
-            /* keep ok=true because the OPM call already succeeded. */    \
-            if (g_adapterCache && orig_AdapterTryMakeMoveOut) {           \
-                uint32_t outMv = 0;                                       \
-                bool tryOk = orig_AdapterTryMakeMoveOut(                  \
-                    (void *)g_adapterCache, move, &outMv);                \
-                file_log([NSString stringWithFormat:                      \
-                          @"[INJECT-DBG] local TryMakeMove tryOk=%d "     \
-                          @"outMv=0x%x", (int)tryOk, (unsigned)outMv]);   \
+            /* do it (it forwards to the server stream and waits for */   \
+            /* HandleMoveResult). On binpatch orig_AdapterTryMakeMoveOut */\
+            /* stays NULL by design (see Hook_MatchModeObserve.m's */     \
+            /* binpatch installer) and the cave-bypass entry has to be */ \
+            /* used instead. KIOU_BR_BINPATCH_ADAPTER_CALLABLE() returns */ \
+            /* orig_* on JB and g_inject_entry[ADAPTER] on binpatch. */   \
+            /* Failures here are benign (the move might already have */   \
+            /* been applied by an earlier HandleMoveResult) — we keep */  \
+            /* ok=true because the OPM call already succeeded. */         \
+            {                                                             \
+                Adapter_TryMakeMove_Out_t adapterFn =                     \
+                    KIOU_BR_BINPATCH_ADAPTER_CALLABLE();                  \
+                if (g_adapterCache && adapterFn) {                        \
+                    uint32_t outMv = 0;                                   \
+                    bool tryOk = adapterFn(                               \
+                        (void *)g_adapterCache, move, &outMv);            \
+                    file_log([NSString stringWithFormat:                  \
+                              @"[INJECT-DBG] local TryMakeMove tryOk=%d " \
+                              @"outMv=0x%x adapter=%p",                   \
+                              (int)tryOk, (unsigned)outMv,                \
+                              (void *)adapterFn]);                        \
+                } else {                                                  \
+                    file_log([NSString stringWithFormat:                  \
+                              @"[INJECT-DBG] local TryMakeMove skipped: " \
+                              @"adapterCache=%p adapterFn=%p",            \
+                              g_adapterCache, (void *)adapterFn]);        \
+                }                                                         \
             }                                                             \
             /* Flip the side-to-move ReactiveProperty so the "whose */    \
             /* turn" UI advances. Skipped for open-seat modes */          \
@@ -849,37 +877,43 @@ static void inject_runOnMain(const char *usi, uint32_t move,
 
     switch (route) {
         case KIOU_ROUTE_AI_OPM:
-            CALL_OPM(g_aiMatchModeCache, orig_AIMatchMode_OnPlayerMoveAsync,
+            CALL_OPM(g_aiMatchModeCache, KIOU_BR_BINPATCH_AI_OPM_CALLABLE(),
                      OFF_AI_STATESTORE, g_aiLocalPlayer);
             break;
         case KIOU_ROUTE_CPUSTREAM_OPM:
-            CALL_OPM(g_cpuStreamModeCache, orig_CPUStreamMode_OnPlayerMoveAsync,
+            CALL_OPM(g_cpuStreamModeCache, KIOU_BR_BINPATCH_CPUSTREAM_OPM_CALLABLE(),
                      OFF_CPUSTREAM_STATESTORE, g_cpuStreamLocalPlayer);
             break;
         case KIOU_ROUTE_LOCAL_OPM:
             // LocalPvP has no fixed seat — pass -1 to suppress the
             // NotifyPieceMoved call (we can't tell which side this
             // injection represents).
-            CALL_OPM(g_localPvPModeCache, orig_LocalPvPMode_OnPlayerMoveAsync,
+            CALL_OPM(g_localPvPModeCache, KIOU_BR_BINPATCH_LOCAL_OPM_CALLABLE(),
                      OFF_LOCAL_STATESTORE, -1);
             break;
         case KIOU_ROUTE_ONLINE_OPM:
-            CALL_OPM(g_onlineModeCache, orig_OnlinePvPMode_OnPlayerMoveAsync,
+            CALL_OPM(g_onlineModeCache, KIOU_BR_BINPATCH_ONLINE_OPM_CALLABLE(),
                      OFF_ONLINE_STATESTORE, g_onlineLocalPlayer);
             break;
         case KIOU_ROUTE_REPLAY_OPM:
             // RecordReplay also has no fixed seat — same treatment.
-            CALL_OPM(g_recordReplayModeCache, orig_RecordReplayMode_OnPlayerMoveAsync,
+            CALL_OPM(g_recordReplayModeCache, KIOU_BR_BINPATCH_REPLAY_OPM_CALLABLE(),
                      OFF_REPLAY_STATESTORE, -1);
             break;
         case KIOU_ROUTE_ADAPTER: {
             void *self = g_adapterCache;
+            Adapter_TryMakeMove_Out_t fn = KIOU_BR_BINPATCH_ADAPTER_CALLABLE();
             uint32_t outMv = 0;
-            if (!self || !orig_AdapterTryMakeMoveOut) {
+            if (!self || !fn) {
                 err = "no_session";
                 break;
             }
-            ok = orig_AdapterTryMakeMoveOut(self, move, &outMv);
+            file_log([NSString stringWithFormat:
+                      @"[INJECT-DBG] route=adapter callable=%p orig=%p bypass=%p",
+                      (void *)fn,
+                      (void *)orig_AdapterTryMakeMoveOut,
+                      (void *)(orig_AdapterTryMakeMoveOut ? NULL : fn)]);
+            ok = fn(self, move, &outMv);
             executed = outMv;
             if (!ok) err = "no_legal";
             break;

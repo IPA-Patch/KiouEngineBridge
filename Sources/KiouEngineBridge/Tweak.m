@@ -61,6 +61,14 @@ static void installUnityHooks(void) {
     // inject_apply is wired before the WS handler can reach it.
     kiou_bridge_binpatch_publish();
     install_LowLevelObserve_hook(unityBase);  // symbol pointer resolves only
+    // No-op on binpatch (see Hook_MatchModeObserve.m's binpatch installer).
+    // orig_*OnPlayerMoveAsync is intentionally left NULL so the route picker
+    // falls through to KIOU_BR_BINPATCH_ORIG_OR_BYPASS, which returns the
+    // per-site cave-bypass entry (cave + KIOU_BR_CAVE_BYPASS_OFFSET). The
+    // inject path then calls that bypass entry — calling orig_* directly
+    // would re-enter the dispatcher cave because unityBase+RVA is the
+    // patched `B <cave>` instruction.
+    install_MatchModeObserve_hook(unityBase);
     install_Inject_hook(unityBase);
     usi_engine_install();
 #else
@@ -105,7 +113,20 @@ static void retryInstallHooks(void) {
 __attribute__((constructor)) static void init(void) {
     logging_init("com.neconome.shogi.kiouenginebridge");
     file_log(@"=== KiouEngineBridge loaded ===");
-    file_log([NSString stringWithFormat:@"build commit=%s", KIOU_ENGINE_BRIDGE_COMMIT]);
+    // Build identity so a stray log file can be matched back to the exact
+    // dylib that wrote it. Flavor distinguishes JB (libsubstrate) / jailed
+    // (Dobby-static) / binpatch (static cave + SLOT dispatcher).
+#if KIOU_BINPATCH
+    static const char *const kBuildFlavor = "binpatch";
+#elif IPA_JAILED
+    static const char *const kBuildFlavor = "jailed";
+#else
+    static const char *const kBuildFlavor = "jb";
+#endif
+    file_log([NSString stringWithFormat:
+              @"build commit=%s flavor=%s built=%s %s",
+              KIOU_ENGINE_BRIDGE_COMMIT, kBuildFlavor,
+              __DATE__, __TIME__]);
 
     // Bring the WebSocket sink up as early as possible. It binds 0.0.0.0:9527
     // and just sits there until a host connects — no host attached means

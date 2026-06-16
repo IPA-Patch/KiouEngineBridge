@@ -31,6 +31,8 @@
 //      CODESIGNING / Invalid Page at match start.
 // ===========================================================================
 
+void * volatile g_inject_entry[KIOU_BR_HOOK__COUNT] = {0};
+
 // Dispatcher body. Receives the original X0..X5/X7 arguments verbatim, plus
 // the per-site hook id in W6. Each case forwards to the matching hook body
 // in the Hook_*.m files, casting the registers to the body's declared
@@ -145,12 +147,22 @@ void kiou_bridge_binpatch_publish(void) {
     void * volatile *slot =
         (void * volatile *)(g_unityBase + KIOU_BR_HOOK_SLOT_RVA);
     *slot = (void *)&dispatch_one;
+    for (uint32_t i = 0; i < KIOU_BR_HOOK__COUNT; i++) {
+        g_inject_entry[i] = kiou_bridge_bypass_entry_for_hook(i);
+    }
     file_log([NSString stringWithFormat:
               @"[BINPATCH] slot=%p (unityBase+0x%lx) published "
-              @"dispatcher=%p",
+              @"dispatcher=%p inject_entry[ai_opm]=%p inject_entry[adapter]=%p "
+              @"cave_start=0x%lx cave_size=%u bypass_off=0x%x count=%u",
               (void *)slot,
               (unsigned long)KIOU_BR_HOOK_SLOT_RVA,
-              (void *)&dispatch_one]);
+              (void *)&dispatch_one,
+              (void *)g_inject_entry[KIOU_BR_HOOK_AI_OPM],
+              (void *)g_inject_entry[KIOU_BR_HOOK_ADAPTER_TRY_MAKE_MOVE_OUT],
+              (unsigned long)KIOU_BR_CAVE_REGION_START,
+              (unsigned)KIOU_BR_CAVE_SIZE,
+              (unsigned)KIOU_BR_CAVE_BYPASS_OFFSET,
+              (unsigned)KIOU_BR_HOOK__COUNT]);
 }
 
 #endif  // KIOU_BINPATCH

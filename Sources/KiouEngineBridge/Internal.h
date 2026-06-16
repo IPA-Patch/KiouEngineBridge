@@ -400,6 +400,30 @@ void install_GameStateStoreObserve_hook(uintptr_t unityBase);
 // time, this header pins where the dylib publishes its dispatcher).
 #define KIOU_BR_HOOK_SLOT_RVA 0x8F90CC0
 
+// Reserved sibling RVA for a future in-framework inject-entry table.
+// Branch F currently reconstructs bypass entries dylib-locally from cave
+// geometry, but we still mirror the recipe's reserved address here so the
+// reservation stays visible on both sides.
+#define KIOU_BR_INJECT_ENTRY_TABLE_RVA 0x8F90C00
+
+// Binpatch cave geometry. MUST mirror recipes/kiouenginebridge.py.
+// Every cave is a fixed 84-byte payload allocated contiguously from the
+// CAVE_REGION start in declaration order. The cave layout ends with:
+//   cave+0x48: LDP X29, X30, [SP], #0x90   (epilogue's stack restore)
+//   cave+0x4C: <displaced prologue insn>   (the site's original first 4 bytes)
+//   cave+0x50: B   <orig + 4>              (PC-relative branch back into the
+//                                          original method just past its
+//                                          replaced first insn)
+// Branch F's injection path calls into `cave + 0x4C`, i.e. straight into the
+// displaced prologue followed by the branch back to `orig + 4`, so it
+// bypasses the dispatcher AND avoids running the epilogue's LDP (which would
+// trash the inject path's own frame). Calling cave+0x48 would pop the wrong
+// X29/X30 pair off the caller's stack and corrupt the frame pointer.
+#define KIOU_BR_CAVE_REGION_START  0x826A000
+#define KIOU_BR_CAVE_SIZE          84
+#define KIOU_BR_CAVE_BYPASS_OFFSET 0x4C
+
+
 enum kiou_bridge_hook_id {
     KIOU_BR_HOOK_AI_INIT = 0,
     KIOU_BR_HOOK_CPUSTREAM_INIT,
@@ -433,6 +457,83 @@ enum kiou_bridge_hook_id {
 
     KIOU_BR_HOOK__COUNT,
 };
+
+// g_inject_entry is binpatch-only — it's populated by
+// kiou_bridge_binpatch_publish() with per-site cave-bypass entry pointers,
+// so injection on binpatch can call the original OPM body without
+// re-entering the dispatcher cave. On JB the trampolines installed by
+// MSHookFunction already provide that bypass via `orig_*`, so the array
+// is not defined and the helper macros short-circuit to `(ORIG)`.
+#if KIOU_BINPATCH
+extern void * volatile g_inject_entry[KIOU_BR_HOOK__COUNT];
+
+// Return the fixed-allocation-order cave-bypass entry for one hook id.
+// This assumes cave i lives at `CAVE_REGION_START + i * CAVE_SIZE`; if the
+// recipe ever switches to a non-uniform allocator, update both sides.
+static inline void *kiou_bridge_bypass_entry_for_hook(uint32_t hook_id) {
+    if (hook_id >= KIOU_BR_HOOK__COUNT) return NULL;
+    return (void *)(g_unityBase + KIOU_BR_CAVE_REGION_START +
+                    (uintptr_t)hook_id * KIOU_BR_CAVE_SIZE +
+                    KIOU_BR_CAVE_BYPASS_OFFSET);
+}
+
+#define KIOU_BR_BINPATCH_ORIG_OR_BYPASS(ORIG, HOOK_ID, TYPE) \
+    ((ORIG) ? (ORIG) : (TYPE)g_inject_entry[(HOOK_ID)])
+
+#define KIOU_BR_BINPATCH_INJECT_CALLABLES_READY() \
+    (g_inject_entry[KIOU_BR_HOOK_AI_OPM] && \
+     g_inject_entry[KIOU_BR_HOOK_CPUSTREAM_OPM] && \
+     g_inject_entry[KIOU_BR_HOOK_LOCAL_OPM] && \
+     g_inject_entry[KIOU_BR_HOOK_ONLINE_OPM] && \
+     g_inject_entry[KIOU_BR_HOOK_REPLAY_OPM] && \
+     g_inject_entry[KIOU_BR_HOOK_ADAPTER_TRY_MAKE_MOVE_OUT])
+#else
+// On JB the only callable is the trampoline that MSHookFunction wrote into
+// `orig_*`. The bypass-entry path is binpatch-only, so the helper macros
+// collapse to `(ORIG)`.
+#define KIOU_BR_BINPATCH_ORIG_OR_BYPASS(ORIG, HOOK_ID, TYPE) (ORIG)
+#define KIOU_BR_BINPATCH_INJECT_CALLABLES_READY()  1
+#endif
+
+#define KIOU_BR_BINPATCH_ADAPTER_CALLABLE() \
+    KIOU_BR_BINPATCH_ORIG_OR_BYPASS(orig_AdapterTryMakeMoveOut, \
+                                    KIOU_BR_HOOK_ADAPTER_TRY_MAKE_MOVE_OUT, \
+                                    Adapter_TryMakeMove_Out_t)
+
+#define KIOU_BR_BINPATCH_AI_OPM_CALLABLE() \
+    KIOU_BR_BINPATCH_ORIG_OR_BYPASS(orig_AIMatchMode_OnPlayerMoveAsync, \
+                                    KIOU_BR_HOOK_AI_OPM, \
+                                    OnPlayerMoveAsync_t)
+
+#define KIOU_BR_BINPATCH_CPUSTREAM_OPM_CALLABLE() \
+    KIOU_BR_BINPATCH_ORIG_OR_BYPASS(orig_CPUStreamMode_OnPlayerMoveAsync, \
+                                    KIOU_BR_HOOK_CPUSTREAM_OPM, \
+                                    OnPlayerMoveAsync_t)
+
+#define KIOU_BR_BINPATCH_LOCAL_OPM_CALLABLE() \
+    KIOU_BR_BINPATCH_ORIG_OR_BYPASS(orig_LocalPvPMode_OnPlayerMoveAsync, \
+                                    KIOU_BR_HOOK_LOCAL_OPM, \
+                                    OnPlayerMoveAsync_t)
+
+#define KIOU_BR_BINPATCH_ONLINE_OPM_CALLABLE() \
+    KIOU_BR_BINPATCH_ORIG_OR_BYPASS(orig_OnlinePvPMode_OnPlayerMoveAsync, \
+                                    KIOU_BR_HOOK_ONLINE_OPM, \
+                                    OnPlayerMoveAsync_t)
+
+#define KIOU_BR_BINPATCH_REPLAY_OPM_CALLABLE() \
+    KIOU_BR_BINPATCH_ORIG_OR_BYPASS(orig_RecordReplayMode_OnPlayerMoveAsync, \
+                                    KIOU_BR_HOOK_REPLAY_OPM, \
+                                    OnPlayerMoveAsync_t)
+
+#define KIOU_BR_EXPECTED_CAVE_COUNT KIOU_BR_HOOK__COUNT
+
+#if KIOU_BINPATCH
+_Static_assert(KIOU_BR_CAVE_SIZE == 84, "Branch F assumes 84-byte caves");
+_Static_assert(KIOU_BR_CAVE_BYPASS_OFFSET == 0x4C,
+               "Branch F assumes bypass entry at cave+0x4C "
+               "(displaced prologue followed by B orig+4)");
+#endif
+
 
 // Dispatcher signature. Called from the cave with whatever was in X0-X5/X7
 // at the original call site, plus a hook id loaded by the cave's

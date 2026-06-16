@@ -97,8 +97,15 @@ CAVE_REGION = (0x826A000, 0x826C000)  # (start, end exclusive)
 # constant.
 # ---------------------------------------------------------------------------
 
+INJECT_ENTRY_TABLE_RVA = 0x8F90C00
 HOOK_SLOT_RVA = 0x8F90CC0
 PROBED_HOOK_SLOT_RVA = 0x8F90CD0
+
+# Must stay inside __DATA,__bss and leave room for at least 32 8-byte entries.
+# Runtime code reconstructs the actual bypass entry VAs from the cave geometry,
+# but we still pin and validate the sibling table RVA here so future recipe /
+# dylib changes have a reviewed address reservation to target.
+PROBED_INJECT_ENTRY_TABLE_RVA = INJECT_ENTRY_TABLE_RVA
 
 
 # ---------------------------------------------------------------------------
@@ -326,6 +333,25 @@ PATCHES: list = [
 # That ordering MUST stay stable so re-runs land cave bytes at the exact
 # same addresses (the "already patched" SKIP path matches the site AND
 # the cave content byte-for-byte).
+#
+# Branch F relies on that stability for injection bypass trampolines. The
+# dylib reconstructs per-site "skip the dispatcher" entries as:
+#
+#     cave_va + 0x4C = unityBase + CAVE_REGION_START + i * 84 + 0x4C
+#
+# where i is the allocation index in this table. The cave tail's last three
+# instructions are:
+#
+#     +0x48  LDP X29, X30, [SP], #0x90    ; epilogue's stack restore
+#     +0x4C  <displaced prologue insn>    ; the original method's first 4 B
+#     +0x50  B   <orig + 4>               ; branch back into the original
+#
+# So calling +0x4C runs only the displaced prologue and the branch back to
+# orig+4, bypassing both the dispatcher and the epilogue's LDP (which would
+# pop the WRONG X29/X30 pair off the inject path's stack and corrupt the
+# frame pointer). If this recipe ever moves away from a uniform 84-byte
+# allocator or reorders `_BRIDGE_SITES`, the dylib-side recomputation in
+# BinpatchDispatcher.m / Inject_Move.m must be updated in lockstep.
 # ---------------------------------------------------------------------------
 
 _BRIDGE_SITES: list[tuple[int, str, str, str]] = [

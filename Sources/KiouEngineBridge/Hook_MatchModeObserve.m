@@ -113,20 +113,23 @@ OnPlayerMoveAsync_t orig_RecordReplayMode_OnPlayerMoveAsync = NULL;
 // convention doesn't matter.
 typedef UniTaskRet (*InitializeAsync_t)(void *self, void *cfg, void *stateStore,
                                        void *gameAdapter, void *ct);
-static InitializeAsync_t orig_AI_Init        = NULL;
-static InitializeAsync_t orig_CPUStream_Init = NULL;
-static InitializeAsync_t orig_Local_Init     = NULL;
-static InitializeAsync_t orig_Online_Init    = NULL;
-static InitializeAsync_t orig_Replay_Init    = NULL;
+// `__attribute__((unused))` suppresses -Wunused-variable on the binpatch
+// build where KIOU_CALL_ORIG_RET expands to ((UniTaskRet){0}) and never
+// evaluates the pointer argument.
+static InitializeAsync_t orig_AI_Init        __attribute__((unused)) = NULL;
+static InitializeAsync_t orig_CPUStream_Init __attribute__((unused)) = NULL;
+static InitializeAsync_t orig_Local_Init     __attribute__((unused)) = NULL;
+static InitializeAsync_t orig_Online_Init    __attribute__((unused)) = NULL;
+static InitializeAsync_t orig_Replay_Init    __attribute__((unused)) = NULL;
 
 // OnMatchEndAsync(CT) -> UniTask. Same shape as OnPlayerMoveAsync but
 // without the Move argument.
 typedef UniTaskRet (*OnMatchEndAsync_t)(void *self, void *ct);
-static OnMatchEndAsync_t orig_AI_End        = NULL;
-static OnMatchEndAsync_t orig_CPUStream_End = NULL;
-static OnMatchEndAsync_t orig_Local_End     = NULL;
-static OnMatchEndAsync_t orig_Online_End    = NULL;
-static OnMatchEndAsync_t orig_Replay_End    = NULL;
+static OnMatchEndAsync_t orig_AI_End        __attribute__((unused)) = NULL;
+static OnMatchEndAsync_t orig_CPUStream_End __attribute__((unused)) = NULL;
+static OnMatchEndAsync_t orig_Local_End     __attribute__((unused)) = NULL;
+static OnMatchEndAsync_t orig_Online_End    __attribute__((unused)) = NULL;
+static OnMatchEndAsync_t orig_Replay_End    __attribute__((unused)) = NULL;
 
 // OnMatchStart() -> void. Truly synchronous; no UniTask gymnastics.
 //
@@ -175,8 +178,12 @@ static inline BOOL shouldLog(uint32_t n) {
                       @"[MMODE] " MODE_TAG " OPM call#%u self=%p move=0x%x",       \
                       n, self, (unsigned)mv]);                                      \
         }                                                                           \
-        if (ORIG_VAR) return (ORIG_VAR)(self, mv, ct);                              \
-        return (UniTaskRet){ NULL, NULL };                                          \
+        /* On binpatch KIOU_CALL_ORIG_RET is a no-op: the cave runs orig via  */   \
+        /* the displaced prologue + `B orig+4` after the dispatcher returns.  */   \
+        /* On JB the trampoline installed by MSHookFunction is in ORIG_VAR.   */   \
+        /* Never call ORIG_VAR directly on binpatch: it points at the patched */   \
+        /* instruction (now `B <cave>`), which would recurse infinitely.      */   \
+        return KIOU_CALL_ORIG_RET(UniTaskRet, ORIG_VAR, self, mv, ct);             \
     }
 
 DEFINE_OPM_HOOK(ai,       "AIMatchMode",      g_aiMatchModeCache,
@@ -232,8 +239,9 @@ DEFINE_OPM_HOOK(replay,   "RecordReplayMode", g_recordReplayModeCache,
         /* and IMatchMode keeps a strong ref through _matchConfig (Online) */          \
         /* or via the captured arg itself (the simpler modes). */                      \
         meta_set_match_config(cfg);                                                     \
-        UniTaskRet ret = { NULL, NULL };                                                \
-        if (ORIG_VAR) ret = (ORIG_VAR)(self, cfg, store, adapter, ct);                  \
+        /* On binpatch KIOU_CALL_ORIG_RET is a no-op (cave handles orig). */ \
+        UniTaskRet ret =                                                                \
+            KIOU_CALL_ORIG_RET(UniTaskRet, ORIG_VAR, self, cfg, store, adapter, ct);   \
         file_log([NSString stringWithFormat:                                            \
                   @"[MMODE] " MODE_TAG " Init self=%p store=%p adapter=%p cfg=%p",      \
                   self, store, adapter, cfg]);                                          \
@@ -559,8 +567,8 @@ static void scheduleAutoRematch(const char *modeTag) {
         meta_set_match_config(NULL);                                               \
         /* Schedule the auto-rematch sequence. REMATCH_TAG = NULL opts out. */     \
         scheduleAutoRematch(REMATCH_TAG);                                          \
-        if (ORIG_VAR) return (ORIG_VAR)(self, ct);                                 \
-        return (UniTaskRet){ NULL, NULL };                                         \
+        /* On binpatch KIOU_CALL_ORIG_RET is a no-op (cave handles orig). */ \
+        return KIOU_CALL_ORIG_RET(UniTaskRet, ORIG_VAR, self, ct);                \
     }
 
 DEFINE_END_HOOK(ai,        "AIMatchMode",      g_aiMatchModeCache,
@@ -646,5 +654,27 @@ void install_MatchModeObserve_hook(uintptr_t unityBase) {
                   entries[i].tag, entries[i].what,
                   (unsigned long)addr, (unsigned long)entries[i].rva]);
     }
+}
+#else   // KIOU_BINPATCH
+// On the binpatch build the static cave + SLOT dispatcher drives every hook
+// body, so MSHookFunction is never called.
+//
+// Importantly we MUST NOT write `unityBase + RVA_*` into `orig_*` here: that
+// address is the patched first instruction (`B <cave>`), so calling it from
+// the inject path would re-enter the dispatcher and loop. The bypass entry
+// for binpatch injection is the cave tail (cave + KIOU_BR_CAVE_BYPASS_OFFSET),
+// computed by `kiou_bridge_bypass_entry_for_hook()` and exposed via
+// `KIOU_BR_BINPATCH_ORIG_OR_BYPASS(orig_*, hook_id, type)` -- the macro
+// returns `g_inject_entry[hook_id]` when `orig_*` is NULL, which is the
+// right call target on this build.
+//
+// Leaving `orig_*` at NULL is therefore the correct (and required) state on
+// binpatch. The installer is kept as a no-op so Tweak.m can dispatch it
+// unconditionally and the log explicitly records that we're on the
+// bypass-entry path.
+void install_MatchModeObserve_hook(uintptr_t unityBase) {
+    (void)unityBase;
+    file_log(@"[MMODE] binpatch: install is a no-op — orig_* OPM slots stay "
+             @"NULL so the bypass-entry path in inject_pickRoute() is taken.");
 }
 #endif  // !KIOU_BINPATCH
