@@ -21,7 +21,7 @@
 //      `recipes/kiouenginebridge.py`'s ``HOOK_SLOT_RVA`` /
 //      ``_build_bridge_cave_payload``).
 //
-//   2. ``KiouBridgeBinpatchPublish`` below stores `&dispatch_one`
+//   2. ``KebBridgeBinpatchPublish`` below stores `&dispatch_one`
 //      into that same address. The slot lives in UnityFramework's
 //      __DATA,__bss — NOT in this dylib — so the publish path needs the
 //      live UnityFramework base captured in ``g_unityBase``. A previous
@@ -130,7 +130,7 @@ static void dispatch_one(void *x0, void *x1, void *x2, void *x3, void *x4,
     }
 }
 
-void KiouBridgeBinpatchPublish(void) {
+void KebBridgeBinpatchPublish(void) {
     if (g_unityBase == 0) {
         // Tweak.m always sets g_unityBase before reaching us. Guarding
         // anyway so a mis-ordered installer call surfaces in the log
