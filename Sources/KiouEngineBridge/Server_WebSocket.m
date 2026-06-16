@@ -29,7 +29,7 @@
 //     extended payload-length forms are both supported.
 //   - Inbound Ping (0x9) → Pong (0xA), inbound Close (0x8) → tear down. Any
 //     other inbound opcode is logged and dropped.
-//   - A serial GCD queue funnels every KebWsServerPush() through one
+//   - A serial GCD queue funnels every KEBWsServerPush() through one
 //     producer-consumer slot. If the queue length crosses a soft cap we
 //     drop the oldest pending frame and log a [WS] warning. This keeps
 //     a stalled host from back-pressuring the Unity main thread.
@@ -55,7 +55,7 @@
 
 // ---------------------------------------------------------------------------
 // Singleton-ish state. The whole module assumes at most one server per
-// process, which matches the way Tweak.m calls KebWsServerStart() once.
+// process, which matches the way Tweak.m calls KEBWsServerStart() once.
 // ---------------------------------------------------------------------------
 static dispatch_queue_t g_acceptQueue = NULL;   // serial, handshake + writes
 static dispatch_queue_t g_recvQueue   = NULL;   // serial, blocking client reads
@@ -66,7 +66,7 @@ static BOOL g_clientHandshakeDone = NO;
 static NSUInteger g_pendingSends = 0;           // best-effort backlog gauge
 
 // Inbound text-frame callback. Inject_Move.m self-registers via
-// KebWsServerSetTextHandler() at constructor time. Reads happen on
+// KEBWsServerSetTextHandler() at constructor time. Reads happen on
 // g_recvQueue; the setter just stores the function pointer (8-byte aligned
 // pointer writes are atomic on arm64 so we don't bother with a barrier).
 static kiou_ws_text_handler_t g_textHandler = NULL;
@@ -353,7 +353,7 @@ static void ws_client_recv_loop(int fd) {
             // Marshal the pong onto the accept queue — same queue that
             // ws_send_text uses — so we don't interleave a pong frame
             // halfway through an outbound text frame. Without this both
-            // ws_send_text (from KebWsServerPush -> accept queue) and
+            // ws_send_text (from KEBWsServerPush -> accept queue) and
             // ws_send_pong (from this recv queue) could be writing the same
             // fd concurrently, fragmenting frames and tripping client-side
             // protocol parsers (= Python websockets sees a corrupt frame
@@ -468,7 +468,7 @@ static void ws_handle_accept(void) {
 // ---------------------------------------------------------------------------
 // Public API.
 // ---------------------------------------------------------------------------
-void KebWsServerStart(uint16_t port) {
+void KEBWsServerStart(uint16_t port) {
     if (g_listenFd >= 0) {
         file_log(@"[WS] server already running");
         return;
@@ -517,7 +517,7 @@ void KebWsServerStart(uint16_t port) {
               (unsigned)port]);
 }
 
-void KebWsServerSetTextHandler(kiou_ws_text_handler_t fn) {
+void KEBWsServerSetTextHandler(kiou_ws_text_handler_t fn) {
     // Pointer write — atomic on arm64. No barrier needed; the worst-case
     // race is a single recv-loop iteration reading the previous handler,
     // which is fine because handlers are always installed before the bridge
@@ -525,7 +525,7 @@ void KebWsServerSetTextHandler(kiou_ws_text_handler_t fn) {
     g_textHandler = fn;
 }
 
-void KebWsServerPush(NSString *json) {
+void KEBWsServerPush(NSString *json) {
     if (!json) return;
     if (!g_acceptQueue) return;  // server never started
 
