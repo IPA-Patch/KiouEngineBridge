@@ -1,0 +1,71 @@
+#!/usr/bin/env sh
+# IPA-Patch / KiouEngineBridge pre-commit hook.
+#
+# Runs the recipe<->dump cross-check before any commit that touches a
+# recipe (recipes/<name>.py) or the recipe-driving tools (shared/tools/).
+# The dump index is NOT in the repository (see analysis-artifact-layers:
+# raw binaries / machine-generated dumps / curated specs -- only the last
+# one is git-tracked), so this check can only run on a workstation that
+# has the operator's local copy of assets/dump.cs.index.json.
+#
+# Without the dump index this hook is a no-op (prints a heads-up and
+# exits 0): a committer who never edits recipes shouldn't be required
+# to keep a large il2cpp dump around. CI does not run this check for the
+# same reason; the build job is the server-side gate that catches recipes
+# whose CAVE_REGION / prologue is wrong (it fails the patch_macho step).
+#
+# When several recipes coexist in this repo (e.g. recipes/kiouenginebridge.py
+# alongside a future recipes/kioukifexporter.py), each staged recipe is
+# verified against the dump separately, so editing the "wrong" recipe
+# cannot give a false-positive pass via a hard-coded recipe name. Touching
+# only shared/tools/ (no recipes/*.py in the diff) falls back to the
+# DEFAULT_RECIPE so the tooling change is still smoke-tested.
+#
+# Install with:
+#     make hooks
+# which is a one-liner around `git config core.hooksPath scripts`.
+
+set -e
+
+# Recipes / tooling files staged in this commit.
+STAGED=$(git diff --cached --name-only)
+RECIPE_FILES=$(printf '%s\n' "$STAGED" | grep -E '^recipes/[^/]+\.py$' || true)
+TOOLING_HIT=$(printf '%s\n' "$STAGED" | grep -E '^shared/tools/' || true)
+
+if [ -z "$RECIPE_FILES" ] && [ -z "$TOOLING_HIT" ]; then
+    # No recipe / tooling churn in this commit; nothing to verify.
+    exit 0
+fi
+
+INDEX=assets/dump.cs.index.json
+if [ ! -f "$INDEX" ]; then
+    echo "pre-commit: $INDEX not present, skipping recipe<->dump verify."
+    echo "  (drop assets/dump.cs.index.json in place to enable this gate)"
+    exit 0
+fi
+
+# Default recipe used when only shared/tools/ changed (no recipes/*.py in
+# the diff). Override via VERIFY_SITES_RECIPE for special-case workflows.
+DEFAULT_RECIPE="${VERIFY_SITES_RECIPE:-recipes.kiouenginebridge}"
+
+# Map every staged recipes/<name>.py to the module path recipes.<name>;
+# if only tooling changed, fall back to DEFAULT_RECIPE so the change is
+# still smoke-tested against at least one recipe.
+if [ -n "$RECIPE_FILES" ]; then
+    RECIPE_MODULES=$(printf '%s\n' "$RECIPE_FILES" \
+        | sed -E 's|^recipes/([^/]+)\.py$|recipes.\1|')
+else
+    RECIPE_MODULES="$DEFAULT_RECIPE"
+fi
+
+FAIL=0
+for RECIPE in $RECIPE_MODULES; do
+    echo "pre-commit: cross-checking $RECIPE against $INDEX ..."
+    if ! PYTHONPATH=shared:. python3 -m tools.verify_sites \
+            --recipe "$RECIPE" \
+            --index  "$INDEX" ; then
+        FAIL=1
+    fi
+done
+
+exit $FAIL

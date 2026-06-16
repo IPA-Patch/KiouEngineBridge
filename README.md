@@ -12,9 +12,10 @@
 </p>
 
 <p align="center">
+  <img alt="version" src="https://img.shields.io/badge/version-v0.1.0-2f80ed?style=flat-square" />
+  <img alt="targets KIOU" src="https://img.shields.io/badge/targets-KIOU%201.0.1%20(11)-ff66a3?style=flat-square" />
   <img alt="platform" src="https://img.shields.io/badge/platform-iOS%2015.0%E2%80%9318.x-blue?style=flat-square" />
   <img alt="arch" src="https://img.shields.io/badge/arch-arm64%20rootless-555?style=flat-square" />
-  <img alt="target" src="https://img.shields.io/badge/target-com.neconome.shogi-ff66a3?style=flat-square" />
   <img alt="engine" src="https://img.shields.io/badge/engine-Unity%206%20%2B%20il2cpp-black?style=flat-square" />
   <img alt="protocol" src="https://img.shields.io/badge/wire-WebSocket%20%2B%20USI-1f9d55?style=flat-square" />
   <img alt="side" src="https://img.shields.io/badge/runs-LAN%20only-1f9d55?style=flat-square" />
@@ -225,6 +226,28 @@ tweak will silently no-op (or crash on a method whose signature
 changed). **Don't install this dylib against a KIOU version other
 than the one above without re-deriving every RVA first.**
 
+## Versioning
+
+Kiou Engine Bridge uses **its own [SemVer](https://semver.org/)** numbering,
+independent of the KIOU app's version. The two never share a digit.
+
+| Field | What it means |
+|---|---|
+| `MAJOR` | Bumped on a breaking change to the wire protocol, distribution shape, or hook interface (e.g. dropping a build flavor). |
+| `MINOR` | New observation hook, new injection path, new wire-protocol feature. |
+| `PATCH` | Bug / crash / wiring fix with no user-visible behaviour change. |
+
+The **target KIOU app version** is pinned separately in the
+[Compatibility](#compatibility) table above and in `recipes/kiouenginebridge.py`'s
+RVA table. When KIOU itself updates, every hook site is re-derived against
+the new `UnityFramework`, and that re-port lands as a PATCH or MINOR —
+never a MAJOR just because the host bumped.
+
+Releases are tagged `vMAJOR.MINOR.PATCH` on the repo. The dylib also
+embeds the short git commit hash (read at build time into
+`KIOU_ENGINE_BRIDGE_COMMIT`) so the exact build behind a sideloaded copy
+is always recoverable.
+
 ## Requirements
 
 - [Theos](https://theos.dev/) with the standard iOS toolchain installed
@@ -256,7 +279,22 @@ Sources/KiouEngineBridge/
 
 Sources/Common/                 # IPA-Patch/Common submodule (logging, il2cpp, hookengine)
 shared/                         # IPA-Patch/Shared submodule (binpatch tooling)
+recipes/kiouenginebridge.py     # static-patch site table + cave payload builder
+scripts/pre-commit              # recipe<->dump cross-check hook (install with `make hooks`)
 ```
+
+### Developer hooks
+
+```sh
+make hooks
+```
+
+Registers `scripts/` as the git hooks path so `scripts/pre-commit` fires
+before every commit. When a commit touches `recipes/*.py` or
+`shared/tools/`, the hook runs `tools.verify_sites` to cross-check every
+`_SITES` row against `assets/dump.cs.index.json`. If the dump index is
+absent (not committed to the repo) the hook exits 0 and prints a heads-up —
+it is a local-only gate, not a CI requirement.
 
 ## Where the logs go
 
