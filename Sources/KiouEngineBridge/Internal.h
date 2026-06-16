@@ -360,13 +360,64 @@ void UsiEngineOnWsClientDisconnected(void);
 // ---------------------------------------------------------------------------
 // Csa_Engine.m — the CSA-protocol server-side state machine that drives
 // the connected engine through Game_Summary / AGREE / per-move exchange /
-// gameover. Symbols are declared here and stubbed in Csa_Stubs.m during
-// the CSA migration; the real implementation lands in Task 4.
+// gameover. The state-machine + integration surface lives in Csa_Engine.h;
+// the symbols below are the bare lifecycle callbacks Server_CSA.m needs.
 // ---------------------------------------------------------------------------
 
 // Lifecycle callbacks invoked by Server_CSA.m from the accept queue.
 void CsaEngineOnTcpClientConnected(void);
 void CsaEngineOnTcpClientDisconnected(void);
+
+// Constructor-time installer — registers the inbound-line handler with
+// Server_CSA.m. Call once from Tweak.m after KEBCsaServerStart binds.
+void CsaEngineInstall(void);
+
+// Match-lifecycle callbacks. Hook_MatchModeObserve.m forwards from its
+// existing dispatch_async(main_queue) block.
+void CsaEngineOnMatchStart(int32_t local_player);
+void CsaEngineOnMatchEnd(usi_match_result_t result);
+
+// Per-move notification, fired from Hook_GameStateStoreObserve.m. `move`
+// is the KIOU Move bits, `playerSide` is the side that just moved
+// (0=Black, 1=White), and `sfenAfter` is the post-move SFEN snapshot.
+void CsaEngineOnMoveObserved(uint32_t move,
+                             int32_t playerSide,
+                             NSString *sfenAfter);
+
+// ---------------------------------------------------------------------------
+// Csa_GameInfo.m — MatchConfig / PlayerInfo readers + CSA Game_Summary /
+// result block builders.
+// ---------------------------------------------------------------------------
+
+// Stash the MatchConfig pointer that Hook_MatchModeObserve.m's Init hook
+// already cached for the legacy meta path. Called from the same Init macro
+// alongside MetaSetMatchConfig.
+void CsaSetMatchConfig(void *cfg);
+
+// Latest Online player-info pointer, captured from
+// GameStateStore.Set{Black,White}PlayerInfo. side: 0=Black, 1=White.
+void CsaOnPlayerInfoSet(int32_t side, void *playerInfo);
+
+// Build the multi-line `BEGIN Game_Summary ... END Game_Summary` payload.
+// `local_player` is the seat the user holds (0=Black, 1=White, -1 for
+// open-seat modes). On success the derived Game_ID is written into
+// `*outGameId` (may be NULL). Returns nil when MatchConfig has not been
+// captured yet — the caller (Csa_Engine.m) defers Game_Summary delivery
+// in that case.
+NSString *CsaBuildGameSummary(int32_t local_player, NSString **outGameId);
+
+// Build the CSA `#REASON` + `#OUTCOME` pair (e.g. `"#RESIGN\n#WIN"`).
+// Returns nil for unknown results so the engine driver can suppress the
+// result block when the outcome cannot be inferred.
+NSString *CsaBuildMatchResult(usi_match_result_t result);
+
+// ---------------------------------------------------------------------------
+// Inject_Resign.m — invoke KIOU's resign / nyugyoku-declaration APIs when
+// the CSA engine submits `%TORYO` / `%KACHI`. Stubbed in Csa_Stubs.m until
+// Task 6 of the CSA migration plan lands.
+// ---------------------------------------------------------------------------
+void InjectResign(int32_t playerSide);
+void InjectNyugyokuDeclaration(int32_t playerSide);
 
 // ---------------------------------------------------------------------------
 // Meta_Emitter.m — 1-line JSON metadata stream that runs alongside the USI

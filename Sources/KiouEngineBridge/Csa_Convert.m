@@ -360,3 +360,80 @@ NSString *CsaPositionFromSfen(NSString *sfen) {
     }
     return out;
 }
+
+// ---------------------------------------------------------------------------
+// SFEN-square lookup helper.
+//
+// Walk the SFEN board until we land on the requested square and return the
+// PSC PieceType of whatever sits there. Promoted variants come back as
+// 9..14. Empty cells / malformed input return -1.
+// ---------------------------------------------------------------------------
+
+int32_t PscPieceTypeAtSquare(NSString *sfen, uint32_t square) {
+    if (square > 80) return -1;
+    if (sfen.length == 0) return -1;
+    NSArray<NSString *> *parts = [sfen componentsSeparatedByString:@" "];
+    if (parts.count < 1) return -1;
+    NSArray<NSString *> *ranks = [parts[0] componentsSeparatedByString:@"/"];
+    if (ranks.count != 9) return -1;
+
+    // Target rank is square % 9 (0..8 → SFEN rank a..i → board row 0..8).
+    uint32_t rank = square % 9;
+    uint32_t file = square / 9 + 1;  // 1..9
+
+    NSString *rankStr = ranks[rank];
+    // SFEN ranks list files from 9 down to 1 left-to-right.
+    uint32_t cursorFile = 9;
+    BOOL pendingPromote = NO;
+    for (NSUInteger i = 0; i < rankStr.length; i++) {
+        unichar ch = [rankStr characterAtIndex:i];
+        if (ch == '+') {
+            pendingPromote = YES;
+            continue;
+        }
+        if (ch >= '1' && ch <= '9') {
+            uint32_t skip = (uint32_t)(ch - '0');
+            if (cursorFile > file && file >= cursorFile - skip + 1 &&
+                file <= cursorFile) {
+                // The target file lies inside an empty run.
+                return -1;
+            }
+            cursorFile -= skip;
+            pendingPromote = NO;
+            continue;
+        }
+        if (cursorFile == file) {
+            int32_t base = -1;
+            switch (ch) {
+                case 'P': case 'p': base = 1; break;
+                case 'L': case 'l': base = 2; break;
+                case 'N': case 'n': base = 3; break;
+                case 'S': case 's': base = 4; break;
+                case 'B': case 'b': base = 5; break;
+                case 'R': case 'r': base = 6; break;
+                case 'G': case 'g': base = 7; break;
+                case 'K': case 'k': base = 8; break;
+                default: return -1;
+            }
+            if (pendingPromote) {
+                int32_t promoted = kPromotedPieceType[base];
+                if (promoted == 0) return -1;
+                base = promoted;
+            }
+            return base;
+        }
+        cursorFile--;
+        pendingPromote = NO;
+        if (cursorFile < 1) break;
+    }
+    return -1;
+}
+
+NSString *CsaTextAppendingTime(NSString *csaMove, int32_t seconds) {
+    if (seconds < 0 || csaMove.length == 0) return csaMove;
+    if ([csaMove rangeOfString:@",T"].location != NSNotFound) {
+        // Already has a time suffix; leave it alone.
+        return csaMove;
+    }
+    return [NSString stringWithFormat:@"%@,T%d", csaMove, seconds];
+}
