@@ -59,8 +59,8 @@ static void installUnityHooks(void) {
     // Inject_Move is still a symbol-only resolver (no MSHookFunction) so it
     // runs in both flavours. USI engine init must come after Inject_Move so
     // inject_apply is wired before the WS handler can reach it.
-    kiou_bridge_binpatch_publish();
-    install_LowLevelObserve_hook(unityBase);  // symbol pointer resolves only
+    KiouBridgeBinpatchPublish();
+    InstallLowLevelObserveHook(unityBase);  // symbol pointer resolves only
     // No-op on binpatch (see Hook_MatchModeObserve.m's binpatch installer).
     // orig_*OnPlayerMoveAsync is intentionally left NULL so the route picker
     // falls through to KIOU_BR_BINPATCH_ORIG_OR_BYPASS, which returns the
@@ -68,31 +68,31 @@ static void installUnityHooks(void) {
     // inject path then calls that bypass entry — calling orig_* directly
     // would re-enter the dispatcher cave because unityBase+RVA is the
     // patched `B <cave>` instruction.
-    install_MatchModeObserve_hook(unityBase);
-    install_Inject_hook(unityBase);
-    usi_engine_install();
+    InstallMatchModeObserveHook(unityBase);
+    InstallInjectHook(unityBase);
+    UsiEngineInstall();
 #else
-    install_OnlineObserve_hook(unityBase);
-    install_LowLevelObserve_hook(unityBase);
-    install_MatchModeObserve_hook(unityBase);
+    InstallOnlineObserveHook(unityBase);
+    InstallLowLevelObserveHook(unityBase);
+    InstallMatchModeObserveHook(unityBase);
     // Inject_Move needs the observation hooks above already in place so it
     // can lean on their `orig_*` pointers and self caches.
-    install_Inject_hook(unityBase);
+    InstallInjectHook(unityBase);
     // Pin GameOrchestrator.IsAfkEnabled to false so the "tap within 15s"
     // popup never spawns during long engine thinking. Independent of all
     // other hooks; install order doesn't matter for it.
-    install_AfkSuppress_hook(unityBase);
+    InstallAfkSuppressHook(unityBase);
     // Capture the GameOrchestrator instance the moment GameScene calls
     // ActivateAsync. The match-end auto-rematch path needs this `self` to
     // invoke OnEndSequenceCompleted on it.
-    install_GameOrchestratorObserve_hook(unityBase);
+    InstallGameOrchestratorObserveHook(unityBase);
     // Capture GameStateStore.Set*PlayerInfo so Meta_Emitter can emit
     // match_start with the matchmaking-resolved opponent identity on
     // Online matches (MatchConfig alone holds placeholders there).
-    install_GameStateStoreObserve_hook(unityBase);
-    // Phase 2: USI engine driver. Must come AFTER install_Inject_hook so
+    InstallGameStateStoreObserveHook(unityBase);
+    // Phase 2: USI engine driver. Must come AFTER InstallInjectHook so
     // inject_apply is fully wired before the WS handler can call into it.
-    usi_engine_install();
+    UsiEngineInstall();
 #endif
 
     g_unityHooked = YES;
@@ -130,8 +130,8 @@ __attribute__((constructor)) static void init(void) {
 
     // Bring the WebSocket sink up as early as possible. It binds 0.0.0.0:9527
     // and just sits there until a host connects — no host attached means
-    // every kiou_ws_server_push() call below is a no-op.
-    kiou_ws_server_start(9527);
+    // every KiouWsServerPush() call below is a no-op.
+    KiouWsServerStart(9527);
 
     // UnityFramework is almost certainly not mapped yet at constructor time.
     installUnityHooks();

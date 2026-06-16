@@ -24,10 +24,10 @@
 // Flow (one half-move):
 //
 //   KIOU's opponent makes a move
-//      ↓ Hook_LowLevelObserve::hook_AdapterTryMakeMoveOut fires
-//      ↓ usi_engine_on_move_observed(usi, sfen_after, side_to_move)
+//      ↓ Hook_LowLevelObserve::HookAdapterTryMakeMoveOut fires
+//      ↓ UsiEngineOnMoveObserved(usi, sfen_after, side_to_move)
 //      ↓ side_to_move == g_<mode>LocalPlayer  ?
-//      yes →  usi_engine_send_line("position sfen <sfen_after>")
+//      yes →  UsiEngineSendLine("position sfen <sfen_after>")
 //             state = THINKING
 //             (bridge sees the position line and triggers the engine to
 //              think with its own `go` cadence)
@@ -37,7 +37,7 @@
 //      ↓ usi_engine_handle_inbound_line("bestmove 7g7f")
 //      ↓ state = INJECTING
 //      ↓ inject_apply("7g7f") — uses the Phase 1 OPM + Adapter pipeline
-//      ↓ state = READY (the inject itself fires hook_AdapterTryMakeMoveOut
+//      ↓ state = READY (the inject itself fires HookAdapterTryMakeMoveOut
 //                       again, which sees side_to_move != localPlayer and
 //                       skips, so we don't loop on our own injection)
 //
@@ -78,7 +78,7 @@ static _Atomic int g_localPlayerSide = -1;
 
 // "We expect an inject to fire this exact usi" — set when we send
 // `position`+`go`, used to suppress the post-inject reentry into the
-// hook callback (the inject itself causes hook_AdapterTryMakeMoveOut to
+// hook callback (the inject itself causes HookAdapterTryMakeMoveOut to
 // run again, but we don't want THAT to trigger another `position`+`go`).
 static NSString *g_expectedNextUsi = nil;
 
@@ -86,7 +86,7 @@ static NSString *g_expectedNextUsi = nil;
 // Outbound — funnel all USI lines through one helper so the log shows
 // exactly what the engine sees.
 // ---------------------------------------------------------------------------
-void usi_engine_send_line(NSString *line) {
+void UsiEngineSendLine(NSString *line) {
     if (line.length == 0) return;
     NSString *withNewline = [line hasSuffix:@"\n"]
         ? line
@@ -94,7 +94,7 @@ void usi_engine_send_line(NSString *line) {
     file_log([NSString stringWithFormat:@"[USI>] %@",
               [line stringByReplacingOccurrencesOfString:@"\n"
                                               withString:@"\\n"]]);
-    kiou_ws_server_push(withNewline);
+    KiouWsServerPush(withNewline);
 }
 
 // ---------------------------------------------------------------------------
@@ -126,7 +126,7 @@ static void usi_engine_try_kick_on_main(NSString *tag);
 // ---------------------------------------------------------------------------
 // Match lifecycle. Called from Hook_MatchModeObserve.m.
 // ---------------------------------------------------------------------------
-void usi_engine_on_match_start(int32_t local_player) {
+void UsiEngineOnMatchStart(int32_t local_player) {
     atomic_store(&g_localPlayerSide, local_player);
     file_log([NSString stringWithFormat:
               @"[USI] match_start local_player=%d state=%s",
@@ -156,7 +156,7 @@ void usi_engine_on_match_start(int32_t local_player) {
     }
 }
 
-void usi_engine_on_match_end(usi_match_result_t result) {
+void UsiEngineOnMatchEnd(usi_match_result_t result) {
     // Tell the bridge the match is over BEFORE we touch our own state.
     // The USI spec says the user (us) sends `gameover {win|lose|draw}` to
     // the engine when the match ends; the bridge in turn forwards it to
@@ -175,7 +175,7 @@ void usi_engine_on_match_end(usi_match_result_t result) {
             break;
     }
     if (resultWord) {
-        usi_engine_send_line([NSString stringWithFormat:@"gameover %@",
+        UsiEngineSendLine([NSString stringWithFormat:@"gameover %@",
                               resultWord]);
     } else {
         file_log(@"[USI] match_end: result unknown, suppressing gameover");
@@ -208,7 +208,7 @@ static void usi_engine_request_thinking(NSString *sfen) {
         file_log(@"[USI] request_thinking skipped: empty sfen");
         return;
     }
-    usi_engine_send_line([NSString stringWithFormat:@"position sfen %@",
+    UsiEngineSendLine([NSString stringWithFormat:@"position sfen %@",
                           sfen]);
     usi_set_state(USI_STATE_THINKING);
 }
@@ -264,7 +264,7 @@ static void usi_engine_try_kick_on_main(NSString *tag) {
 // Observation callback: every time the game's adapter applies a move, we
 // look at whose turn is next. If it's ours, ask the engine to think.
 // ---------------------------------------------------------------------------
-void usi_engine_on_move_observed(NSString *usi,
+void UsiEngineOnMoveObserved(NSString *usi,
                                  NSString *sfen_after,
                                  int32_t side_to_move) {
     int s = atomic_load(&g_usiState);
@@ -331,7 +331,7 @@ static NSString *usi_rest_after(NSString *line, NSString *token) {
 }
 
 // Per-line dispatcher. Returns nothing — replies are sent via
-// usi_engine_send_line.
+// UsiEngineSendLine.
 static void usi_engine_handle_line(NSString *line) {
     NSString *trimmed = [line stringByTrimmingCharactersInSet:
                          [NSCharacterSet whitespaceAndNewlineCharacterSet]];
@@ -350,11 +350,11 @@ static void usi_engine_handle_line(NSString *line) {
     }
     if ([cmd isEqualToString:@"usiok"]) {
         // engine done announcing itself — request readiness
-        usi_engine_send_line(@"isready");
+        UsiEngineSendLine(@"isready");
         return;
     }
     if ([cmd isEqualToString:@"readyok"]) {
-        usi_engine_send_line(@"usinewgame");
+        UsiEngineSendLine(@"usinewgame");
         usi_set_state(USI_STATE_READY);
         // If the bridge connected mid-game (user already in a CPU match
         // before launching us), no observation will fire until the next
@@ -401,7 +401,7 @@ static void usi_engine_handle_line(NSString *line) {
         // tick state back to READY, but the inject path calls
         // orig_AdapterTryMakeMoveOut directly (= no hook re-entry), so the
         // echo never fires. Instead we leave state at INJECTING and let
-        // usi_engine_on_move_observed flip it to READY the moment KIOU's
+        // UsiEngineOnMoveObserved flip it to READY the moment KIOU's
         // opponent moves and it becomes our turn again. That observation is
         // the natural cue that this turn is over.
         // On a failed inject there's no waiting to do, so reset directly.
@@ -439,14 +439,14 @@ static void usi_engine_text_handler(const char *data, size_t len) {
 // the moment a peer finishes the WebSocket upgrade (connected) or the
 // recv loop exits for any reason (disconnected).
 // ---------------------------------------------------------------------------
-void usi_engine_on_ws_client_connected(void) {
+void UsiEngineOnWsClientConnected(void) {
     file_log(@"[USI] ws client connected; starting USI handshake");
     usi_set_state(USI_STATE_HANDSHAKE);
     g_expectedNextUsi = nil;
-    usi_engine_send_line(@"usi");
+    UsiEngineSendLine(@"usi");
 }
 
-void usi_engine_on_ws_client_disconnected(void) {
+void UsiEngineOnWsClientDisconnected(void) {
     file_log(@"[USI] ws client disconnected");
     usi_set_state(USI_STATE_BOOT);
     g_expectedNextUsi = nil;
@@ -456,7 +456,7 @@ void usi_engine_on_ws_client_disconnected(void) {
 // Installer. Called once from Tweak.m's installUnityHooks() after the
 // observation hooks are in place.
 // ---------------------------------------------------------------------------
-void usi_engine_install(void) {
-    kiou_ws_server_set_text_handler(usi_engine_text_handler);
+void UsiEngineInstall(void) {
+    KiouWsServerSetTextHandler(usi_engine_text_handler);
     file_log(@"[USI] engine installed (text handler registered)");
 }

@@ -21,7 +21,7 @@
 //      `recipes/kiouenginebridge.py`'s ``HOOK_SLOT_RVA`` /
 //      ``_build_bridge_cave_payload``).
 //
-//   2. ``kiou_bridge_binpatch_publish`` below stores `&dispatch_one`
+//   2. ``KiouBridgeBinpatchPublish`` below stores `&dispatch_one`
 //      into that same address. The slot lives in UnityFramework's
 //      __DATA,__bss — NOT in this dylib — so the publish path needs the
 //      live UnityFramework base captured in ``g_unityBase``. A previous
@@ -48,48 +48,48 @@ static void dispatch_one(void *x0, void *x1, void *x2, void *x3, void *x4,
     //   self=x0, cfg=x1, store=x2, adapter=x3, ct=x4 — we only need the
     //   first four; ct is dropped (passed as NULL).
     case KIOU_BR_HOOK_AI_INIT:
-        (void)hook_ai_Init(x0, x1, x2, x3, x4); break;
+        (void)HookAiInit(x0, x1, x2, x3, x4); break;
     case KIOU_BR_HOOK_CPUSTREAM_INIT:
-        (void)hook_cpustream_Init(x0, x1, x2, x3, x4); break;
+        (void)HookCpuStreamInit(x0, x1, x2, x3, x4); break;
     case KIOU_BR_HOOK_LOCAL_INIT:
-        (void)hook_local_Init(x0, x1, x2, x3, x4); break;
+        (void)HookLocalInit(x0, x1, x2, x3, x4); break;
     case KIOU_BR_HOOK_ONLINE_INIT:
-        (void)hook_online_Init(x0, x1, x2, x3, x4); break;
+        (void)HookOnlineInit(x0, x1, x2, x3, x4); break;
     case KIOU_BR_HOOK_REPLAY_INIT:
-        (void)hook_replay_Init(x0, x1, x2, x3, x4); break;
+        (void)HookReplayInit(x0, x1, x2, x3, x4); break;
 
     // OnMatchStart(self)
-    case KIOU_BR_HOOK_AI_START:        hook_ai_Start(x0); break;
-    case KIOU_BR_HOOK_CPUSTREAM_START: hook_cpustream_Start(x0); break;
-    case KIOU_BR_HOOK_LOCAL_START:     hook_local_Start(x0); break;
-    case KIOU_BR_HOOK_ONLINE_START:    hook_online_Start(x0); break;
-    case KIOU_BR_HOOK_REPLAY_START:    hook_replay_Start(x0); break;
+    case KIOU_BR_HOOK_AI_START:        HookAiStart(x0); break;
+    case KIOU_BR_HOOK_CPUSTREAM_START: HookCpuStreamStart(x0); break;
+    case KIOU_BR_HOOK_LOCAL_START:     HookLocalStart(x0); break;
+    case KIOU_BR_HOOK_ONLINE_START:    HookOnlineStart(x0); break;
+    case KIOU_BR_HOOK_REPLAY_START:    HookReplayStart(x0); break;
 
     // OnPlayerMoveAsync(self, mv, ct)
     //   self=x0, mv=w1 (packed uint32), ct=x2.
     case KIOU_BR_HOOK_AI_OPM:
-        (void)hook_ai_OPM(x0, (uint32_t)(uintptr_t)x1, x2); break;
+        (void)HookAiOpm(x0, (uint32_t)(uintptr_t)x1, x2); break;
     case KIOU_BR_HOOK_CPUSTREAM_OPM:
-        (void)hook_cpustream_OPM(x0, (uint32_t)(uintptr_t)x1, x2); break;
+        (void)HookCpuStreamOpm(x0, (uint32_t)(uintptr_t)x1, x2); break;
     case KIOU_BR_HOOK_LOCAL_OPM:
-        (void)hook_local_OPM(x0, (uint32_t)(uintptr_t)x1, x2); break;
+        (void)HookLocalOpm(x0, (uint32_t)(uintptr_t)x1, x2); break;
     case KIOU_BR_HOOK_ONLINE_OPM:
-        (void)hook_online_OPM(x0, (uint32_t)(uintptr_t)x1, x2); break;
+        (void)HookOnlineOpm(x0, (uint32_t)(uintptr_t)x1, x2); break;
     case KIOU_BR_HOOK_REPLAY_OPM:
-        (void)hook_replay_OPM(x0, (uint32_t)(uintptr_t)x1, x2); break;
+        (void)HookReplayOpm(x0, (uint32_t)(uintptr_t)x1, x2); break;
 
     // OnMatchEndAsync(self, ct)
-    case KIOU_BR_HOOK_AI_END:        (void)hook_ai_End(x0, x1); break;
-    case KIOU_BR_HOOK_CPUSTREAM_END: (void)hook_cpustream_End(x0, x1); break;
-    case KIOU_BR_HOOK_LOCAL_END:     (void)hook_local_End(x0, x1); break;
-    case KIOU_BR_HOOK_ONLINE_END:    (void)hook_online_End(x0, x1); break;
-    case KIOU_BR_HOOK_REPLAY_END:    (void)hook_replay_End(x0, x1); break;
+    case KIOU_BR_HOOK_AI_END:        (void)HookAiEnd(x0, x1); break;
+    case KIOU_BR_HOOK_CPUSTREAM_END: (void)HookCpuStreamEnd(x0, x1); break;
+    case KIOU_BR_HOOK_LOCAL_END:     (void)HookLocalEnd(x0, x1); break;
+    case KIOU_BR_HOOK_ONLINE_END:    (void)HookOnlineEnd(x0, x1); break;
+    case KIOU_BR_HOOK_REPLAY_END:    (void)HookReplayEnd(x0, x1); break;
 
     // ShogiGameAdapter.TryMakeMove(Move, out Move)
     //   self=x0, move=w1, outMove=x2. Return value is ignored — the cave
     //   resumes the original method which produces the real return.
     case KIOU_BR_HOOK_ADAPTER_TRY_MAKE_MOVE_OUT:
-        (void)hook_AdapterTryMakeMoveOut(x0, (uint32_t)(uintptr_t)x1, x2);
+        (void)HookAdapterTryMakeMoveOut(x0, (uint32_t)(uintptr_t)x1, x2);
         break;
 
     // UpdateAuthoritativeSnapshot(self, sfen, turn, blackTime, whiteTime,
@@ -100,23 +100,23 @@ static void dispatch_one(void *x0, void *x1, void *x2, void *x3, void *x4,
     //   floats are log-only in the hook body, so the observable cost is
     //   a less precise "[SNAPSHOT]" timing line.
     case KIOU_BR_HOOK_ONLINE_UPDATE_SNAPSHOT:
-        hook_UpdateAuthoritativeSnapshot(x0, x1, (int32_t)(intptr_t)x2,
+        HookUpdateAuthoritativeSnapshot(x0, x1, (int32_t)(intptr_t)x2,
                                          0.0f, 0.0f,
                                          (int32_t)(intptr_t)x3);
         break;
     case KIOU_BR_HOOK_CPUSTREAM_UPDATE_SNAPSHOT:
-        hook_CpuStream_UpdateSnapshot(x0, x1, (int32_t)(intptr_t)x2,
+        HookCpuStreamUpdateSnapshot(x0, x1, (int32_t)(intptr_t)x2,
                                       0.0f, 0.0f,
                                       (int32_t)(intptr_t)x3);
         break;
 
     // HandleMoveResult(self, reply)
     case KIOU_BR_HOOK_ONLINE_HANDLE_RESULT:
-        hook_HandleMoveResult(x0, x1); break;
+        HookHandleMoveResult(x0, x1); break;
 
     // GameOrchestrator.ActivateAsync(self, setup, assetLoader, ct)
     case KIOU_BR_HOOK_GAMEORCH_ACTIVATE:
-        (void)hook_GameOrch_ActivateAsync(x0, x1, x2, x3); break;
+        (void)HookGameOrchActivateAsync(x0, x1, x2, x3); break;
 
     default:
         // Cave fired with an id outside the recipe table. Almost certainly
@@ -130,7 +130,7 @@ static void dispatch_one(void *x0, void *x1, void *x2, void *x3, void *x4,
     }
 }
 
-void kiou_bridge_binpatch_publish(void) {
+void KiouBridgeBinpatchPublish(void) {
     if (g_unityBase == 0) {
         // Tweak.m always sets g_unityBase before reaching us. Guarding
         // anyway so a mis-ordered installer call surfaces in the log
