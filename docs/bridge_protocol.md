@@ -267,41 +267,44 @@ standard USI. They are emitted as a flat sequence before `usinewgame`;
 contain spaces (e.g. player names); the parser MUST treat everything
 after the subcommand token as the value.
 
+Subcommand names follow the same PascalCase convention as YaneuraOu
+extension option names (`USI_Hash`, `BookFile`, etc.).
+
 ```
-meta protocol_version 1.0
-meta game_id 20260615T204311-VsAI
-meta mode VsAI
-meta started_at 2026-06-15T20:43:11Z
-meta start_position Standard
-meta your_turn b
-meta name+ プレイヤー
-meta name- KIOU CPU (Normal)
-meta time_unit 1sec
-meta total_time 600
-meta byoyomi 30
+meta ProtocolVersion 1.0
+meta GameId 20260615T204311-VsAI
+meta Mode VsAI
+meta StartedAt 2026-06-15T20:43:11Z
+meta StartPosition Standard
+meta YourTurn b
+meta Name+ プレイヤー
+meta Name- KIOU CPU (Normal)
+meta TimeUnit 1sec
+meta TotalTime 600
+meta Byoyomi 30
 usinewgame
 ```
 
 | Subcommand | Value | Notes |
 |---|---|---|
-| `protocol_version` | `1.0` | KEB extended USI protocol version. |
-| `game_id` | `<started_at_iso>-<mode>` | Unique per match. |
-| `mode` | `VsAI` \| `LocalPvP` \| `OnlinePvP` \| `RecordReplay` \| `Spectate` | KIOU match mode. |
-| `started_at` | ISO 8601 UTC | |
-| `start_position` | `Standard` \| `HandicapLance` \| … \| `TsumeShogi` | Initial position type. |
-| `your_turn` | `b` \| `w` \| `-` | Local player's seat. `-` for open-seat modes. |
-| `name+` | string (rest of line) | Black player name. Omitted if unknown. |
-| `name-` | string (rest of line) | White player name. Omitted if unknown. |
-| `rank+` | string | Black player rank. Omitted if unknown. |
-| `rank-` | string | White player rank. Omitted if unknown. |
-| `rate+` | integer | Black player rate. Omitted if unknown. |
-| `rate-` | integer | White player rate. Omitted if unknown. |
-| `user_id+` | string | Black player user ID. Omitted if unknown. |
-| `user_id-` | string | White player user ID. Omitted if unknown. |
-| `time_unit` | `1sec` | Always seconds; `go` uses milliseconds. |
-| `total_time` | integer (seconds) | Initial main time per player. Omitted if unlimited or unreadable. |
-| `byoyomi` | integer (seconds) | Byoyomi per move. Omitted if zero. |
-| `increment` | integer (seconds) | Increment per move. Omitted if zero. |
+| `ProtocolVersion` | `1.0` | KEB extended USI protocol version. |
+| `GameId` | `<started_at_iso>-<mode>` | Unique per match. |
+| `Mode` | `VsAI` \| `LocalPvP` \| `OnlinePvP` \| `RecordReplay` \| `Spectate` | KIOU match mode. |
+| `StartedAt` | ISO 8601 UTC | |
+| `StartPosition` | `Standard` \| `HandicapLance` \| … \| `TsumeShogi` | Initial position type. |
+| `YourTurn` | `b` \| `w` \| `-` | Local player's seat. `-` for open-seat modes. |
+| `Name+` | string (rest of line) | Black player name. Omitted if unknown. |
+| `Name-` | string (rest of line) | White player name. Omitted if unknown. |
+| `Rank+` | string | Black player rank. Omitted if unknown. |
+| `Rank-` | string | White player rank. Omitted if unknown. |
+| `Rate+` | integer | Black player rate. Omitted if unknown. |
+| `Rate-` | integer | White player rate. Omitted if unknown. |
+| `UserId+` | string | Black player user ID. Omitted if unknown. |
+| `UserId-` | string | White player user ID. Omitted if unknown. |
+| `TimeUnit` | `1sec` | Always seconds; `go` uses milliseconds. |
+| `TotalTime` | integer (seconds) | Initial main time per player. Omitted if unlimited or unreadable. |
+| `Byoyomi` | integer (seconds) | Byoyomi per move. Omitted if zero. |
+| `Increment` | integer (seconds) | Increment per move. Omitted if zero. |
 
 ### `move` lines — per-move notification
 
@@ -373,17 +376,17 @@ literally.
 < isready
 > readyok
 (state = READY; no usinewgame yet — KEB waits for match start)
-< meta protocol_version 1.0
-< meta game_id 20260615T204311-VsAI
-< meta mode VsAI
-< meta started_at 2026-06-15T20:43:11Z
-< meta start_position Standard
-< meta your_turn b
-< meta name+ プレイヤー
-< meta name- KIOU CPU (Normal)
-< meta time_unit 1sec
-< meta total_time 600
-< meta byoyomi 30
+< meta ProtocolVersion 1.0
+< meta GameId 20260615T204311-VsAI
+< meta Mode VsAI
+< meta StartedAt 2026-06-15T20:43:11Z
+< meta StartPosition Standard
+< meta YourTurn b
+< meta Name+ プレイヤー
+< meta Name- KIOU CPU (Normal)
+< meta TimeUnit 1sec
+< meta TotalTime 600
+< meta Byoyomi 30
 < usinewgame
 < position sfen lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1
 < go movetime 30000
@@ -404,15 +407,15 @@ For an Online match the `go` line and move block carry live clock values:
 ...
 > readyok
 (state = READY)
-< meta protocol_version 1.0
-< meta game_id 20260615T204311-OnlinePvP
-< meta mode OnlinePvP
-< meta your_turn b
-< meta name+ プレイヤー
-< meta name- 対戦相手
-< meta time_unit 1sec
-< meta total_time 600
-< meta byoyomi 30
+< meta ProtocolVersion 1.0
+< meta GameId 20260615T204311-OnlinePvP
+< meta Mode OnlinePvP
+< meta YourTurn b
+< meta Name+ プレイヤー
+< meta Name- 対戦相手
+< meta TimeUnit 1sec
+< meta TotalTime 600
+< meta Byoyomi 30
 < usinewgame
 < position sfen lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1
 < go btime 600000 wtime 600000 byoyomi 30000
