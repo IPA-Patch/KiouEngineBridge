@@ -5,10 +5,11 @@
 </p>
 
 <p align="center">
-  <em>Bridge <strong>KIOU</strong> to a desktop USI shogi engine (YaneuraOu
-  and friends) — observe the live board, ship the SFEN to the engine,
-  replay the engine's <code>bestmove</code> back into the running match.<br/>
-  Runs entirely client-side; the engine sits on a LAN box you already trust.</em>
+  <em>Turn <strong>KIOU</strong> into a CSA match server. The tweak speaks
+  the standard CSA server protocol on TCP <code>:4081</code>, so any CSA
+  engine (Apery / 技巧 / YaneuraOu in CSA mode / shogi-server clients)
+  can connect over LAN and play against KIOU's live board — no extra
+  proxy, no host-side wrapper.</em>
 </p>
 
 <p align="center">
@@ -17,7 +18,7 @@
   <img alt="platform" src="https://img.shields.io/badge/platform-iOS%2015.0%E2%80%9318.x-blue?style=flat-square" />
   <img alt="arch" src="https://img.shields.io/badge/arch-arm64%20rootless-555?style=flat-square" />
   <img alt="engine" src="https://img.shields.io/badge/engine-Unity%206%20%2B%20il2cpp-black?style=flat-square" />
-  <img alt="protocol" src="https://img.shields.io/badge/wire-WebSocket%20%2B%20USI-1f9d55?style=flat-square" />
+  <img alt="protocol" src="https://img.shields.io/badge/wire-TCP%20%2B%20CSA%20v1.2-1f9d55?style=flat-square" />
   <img alt="side" src="https://img.shields.io/badge/runs-LAN%20only-1f9d55?style=flat-square" />
   <img alt="license" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" />
   <img alt="status" src="https://img.shields.io/badge/scope-authorized%20testing%20only-c69214?style=flat-square" />
@@ -26,17 +27,25 @@
 ---
 
 Kiou Engine Bridge is the in-app half of a two-piece system: the tweak
-runs inside KIOU and exposes a tiny WebSocket sink on `0.0.0.0:9527`;
-a host-side bridge (your machine running YaneuraOu or any other USI
-engine) connects in, speaks the standard USI protocol, and receives
-`position sfen ...` / `go ...` lines built from the live KIOU board.
-When the engine replies with `bestmove <usi>`, the tweak feeds that
-move back into KIOU's own `TryMakeMove` / `OnPlayerMoveAsync` paths so
-the on-device match advances exactly as if you had played it yourself.
+runs inside KIOU and exposes a CSA TCP server on `0.0.0.0:4081`;
+a CSA engine on your LAN connects in, plays through the standard
+`LOGIN` / `Game_Summary` / `AGREE` / `START` handshake, then
+participates in the live KIOU match by submitting CSA-format moves
+(`+7776FU`) and receiving the same notifications the in-game side does.
+When the engine plays its move, the tweak parses it and feeds it back
+into KIOU's own `TryMakeMove` / `OnPlayerMoveAsync` paths so the
+on-device match advances exactly as if you had played it yourself.
 
-No proxy server, no cloud, no third-party service — one ~120 KB dylib
-on the phone, one TCP socket to a LAN box, and the engine of your choice
-on the other end.
+No proxy server, no cloud, no third-party service — one ~140 KB dylib
+on the phone, one TCP socket to a LAN box, and the CSA engine of your
+choice on the other end. See `docs/csa_protocol.md` for the full wire
+contract.
+
+> **Historical note.** Earlier revisions of KEB spoke a custom USI
+> extension over WebSocket on port `9527`. The USI implementation lives
+> in `Sources/KiouEngineBridge/{Server_WebSocket,Usi_Engine}.m` behind
+> `#if 0` blocks and is excluded from every build flavour; the surviving
+> wire description is in `docs/archive/usi_bridge_protocol.md`.
 
 ### Observation + scoped injection
 
@@ -66,131 +75,106 @@ What the injection layer is **not** allowed to do:
   deliberately **not** included here. Any future "tweak a board field"
   regression must opt in explicitly — they don't sneak in via the
   shared header.
-- Replay anything that didn't come from the engine. Only frames the
-  attached WebSocket client sends as `bestmove <usi>` (after a
-  matching `go`) make it into the move pipeline.
+- Replay anything that didn't come from the engine. Only CSA move
+  lines (`+7776FU` / `-3334FU` / `+0055FU`) submitted by the connected
+  engine make it into the move pipeline. `%TORYO` / `%KACHI` /
+  `%CHUDAN` are accepted but routed to dedicated end-of-match handlers
+  rather than the inject path.
 
 Uninstalling the dylib returns KIOU to a fully vanilla state.
 
 ## What you get
 
-Four actors, three wires. KIOU is the game itself; Bridge is this
-tweak loaded into KIOU's process; Wrapper is the host-side process
-that translates between WebSocket and a vanilla USI engine's stdio;
-YaneuraOu (or any other USI engine) is the thinking part.
+Three actors, two wires. KIOU is the game itself; Bridge is this tweak
+loaded into KIOU's process; the CSA engine is the thinking part on the
+other end of the LAN socket.
 
 - **KIOU <-> Bridge** — in-process: il2cpp hook callbacks for the
   read side, function-pointer calls into `Move.Create` /
-  `OnPlayerMoveAsync` / `TryMakeMove` for the inject side.
-- **Bridge <-> Wrapper** — WebSocket text frames on
-  `ws://<device>:9527`, USI lines + sidecar `meta{...}` lines.
-- **Wrapper <-> YaneuraOu** — stdio pipes (the way YaneuraOu
-  already expects to be driven).
+  `OnPlayerMoveAsync` / `TryMakeMove` / `GameOrchestrator.RequestSurrender`
+  for the inject side.
+- **Bridge <-> CSA engine** — plain TCP on `tcp://<device>:4081`,
+  CSA server protocol v1.2.
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant K as KIOU
     participant B as Bridge (this tweak)
-    participant W as Wrapper (host)
-    participant E as YaneuraOu
+    participant E as CSA engine
 
     Note over K,B: in-process hooks
-    Note over B,W: ws://device:9527 (USI + meta)
-    Note over W,E: stdio pipes
+    Note over B,E: tcp://device:4081 (CSA v1.2)
 
-    Note over B,W: USI handshake
-    W->>B: usi
-    B-->>W: id name ... / id author ... / usiok
-    W->>B: isready
-    B-->>W: readyok
-    W->>B: usinewgame
+    Note over B,E: Session handshake
+    E->>B: LOGIN test pass
+    B-->>E: LOGIN:test OK
 
-    Note over K,W: Match start — Bridge emits sidecar meta
-    K-->>B: IMatchMode.InitializeAsync (latch self / local_player)
-    B-->>W: meta{"type":"match_start","mode":"OnlinePvPMode","local_player":0,...}
+    Note over K,E: Match start
+    K-->>B: IMatchMode.InitializeAsync (latch MatchConfig / local_player)
+    B-->>E: BEGIN Game_Summary ... END Game_Summary
+    E->>B: AGREE
+    B-->>E: START:<Game_ID>
 
-    loop Per move while it's our turn
-        K-->>B: TryMakeMove observation -> SFEN / side_to_move
-        B->>W: position sfen <SFEN>
-        B->>W: go btime ... wtime ...
-        W->>E: position sfen <SFEN> / go ...
-        E-->>W: bestmove 7g7f
-        W->>B: bestmove 7g7f
+    loop Per move
+        K-->>B: NotifyPieceMoved (move bits, side)
+        B-->>E: +7776FU,T10  (or -3334FU,T8 for white)
+        E->>B: +2726FU
         Note over B,K: inject_apply -> Move.Create -> OnPlayerMoveAsync -> TryMakeMove
         B->>K: replay move through KIOU's move pipeline
-        B-->>W: meta{"type":"move","usi":"7g7f","sfen_after":"...",...}
     end
 
-    K-->>B: IMatchMode.OnMatchEndAsync (result + final SFEN + GetUSIText)
-    B-->>W: meta{"type":"match_end","result":"win","final_sfen":"...","usi_text":"..."}
+    K-->>B: IMatchMode.OnMatchEndAsync (result)
+    B-->>E: #RESIGN
+    B-->>E: #WIN
 ```
-
-Each `meta` frame is a single line prefixed with the literal
-`meta` followed by a single JSON object, so the Wrapper can demux
-it from real USI traffic without parsing JSON for every line.
 
 ## How it works
 
 ```mermaid
 flowchart TD
-    obs["Hook_LowLevelObserve<br/>Hook_MatchModeObserve<br/>Hook_OnlineObserve"]
-    state(["g_gameCtrlCache &middot; g_adapterCache<br/>g_*ModeCache &middot; g_localPlayer*"])
-    sfen["sfenFromGameController()<br/>moveToUsi()"]
+    obs["Hook_LowLevelObserve<br/>Hook_MatchModeObserve<br/>Hook_OnlineObserve<br/>Hook_GameStateStoreObserve"]
+    state(["g_gameCtrlCache &middot; g_adapterCache<br/>g_*ModeCache &middot; g_localPlayer*<br/>g_csaMatchConfig"])
+    convert["Csa_Convert<br/>(square / piece / SFEN -> CSA)"]
 
-    obs -- "latch self / extract SFEN+USI" --> state
-    state --> sfen
-    sfen --> wsout
+    obs -- "latch state / surface SFEN+move" --> state
+    state --> convert
+    convert --> csaout
 
-    ws[("WebSocket :9527<br/>opcode 0x1 text frames")]
-    wsout["Usi_Engine state machine<br/>BOOT / HANDSHAKE / READY /<br/>THINKING / INJECTING"]
-    wsout --> ws
-    ws -- "bestmove &lt;usi&gt;" --> wsin
-    wsin["inject_apply(usi)"]
+    tcp[("TCP :4081<br/>line-oriented UTF-8")]
+    csaout["Csa_Engine state machine<br/>BOOT / LOGIN / AGREE_WAIT /<br/>PLAYING / GAME_OVER"]
+    csaout --> tcp
+    tcp -- "+7776FU / %TORYO" --> csain
+    csain["Csa_Engine inbound dispatch"]
 
-    wsin --> commit["Move.Create / CreateDrop<br/>OnPlayerMoveAsync<br/>Adapter.TryMakeMove"]
+    csain --> commit["inject_apply<br/>(Move.Create / OnPlayerMoveAsync / TryMakeMove)"]
+    csain --> resign["Inject_Resign<br/>(GameOrchestrator.RequestSurrender)"]
     commit --> kiou(["KIOU board state advances"])
+    resign --> kiou
 
-    state --> meta["Meta_Emitter (sidecar)"]
-    meta --> ws
+    state --> gameinfo["Csa_GameInfo<br/>(Game_Summary + KIOU_* lines)"]
+    gameinfo --> tcp
 ```
 
-Two protocol streams share one TCP port:
+KEB exposes the standard CSA v1.2 surface on the TCP link:
 
-| Stream | Direction | Wire | Purpose |
-|---|---|---|---|
-| **USI** | bidirectional | one USI command per text frame | carry the tweak-owned handshake, `position sfen ...`, `bestmove ...`, and end-of-game notifications |
-| **meta** | tweak -> host | `meta{...json}\n` per frame | match lifecycle + per-move record for KIF assembly |
+| Direction | Lines | Notes |
+|---|---|---|
+| tweak → engine | `LOGIN:<name> OK`, `LOGOUT:completed` | session control |
+| tweak → engine | `BEGIN Game_Summary ... END Game_Summary` | full match preamble, includes `KIOU_*` extension lines |
+| tweak → engine | `START:<Game_ID>` | after `AGREE` |
+| tweak → engine | `<sign><from><to><PIECE>,T<n>` | per-move notification, both colours |
+| tweak → engine | `#RESIGN` / `#SENNICHITE` / `#JISHOGI` / `#CHUDAN` + `#WIN` / `#LOSE` / `#DRAW` | match end |
+| engine → tweak | `LOGIN <name> <pass>` | accepted unconditionally |
+| engine → tweak | `LOGOUT` | tears the session down |
+| engine → tweak | `AGREE [<id>]` / `REJECT [<id>]` | advance / decline pre-match |
+| engine → tweak | `<sign><from><to><PIECE>` | engine's move; injected via `inject_apply` |
+| engine → tweak | `%TORYO` | drives `GameOrchestrator.RequestSurrender` |
+| engine → tweak | `%KACHI` / `%CHUDAN` | engine learns; KIOU is not signalled |
 
-The USI state machine in `Sources/KiouEngineBridge/Usi_Engine.m`
-currently owns this surface on the WebSocket link:
-
-| Command | Direction | Status | Notes |
-|---|---|---|---|
-| `usi` | tweak -> peer | supported | sent on WS connect |
-| `id name ...` / `id author ...` | peer -> tweak | observed | logged, not interpreted |
-| `option ...` | peer -> tweak | observed | logged, not interpreted |
-| `usiok` | peer -> tweak | supported | advances handshake to `isready` |
-| `isready` | tweak -> peer | supported | sent after `usiok` |
-| `readyok` | peer -> tweak | supported | advances to READY and triggers `usinewgame` |
-| `usinewgame` | tweak -> peer | supported | sent once the peer reports ready |
-| `position sfen <sfen>` | tweak -> peer | supported | emitted when observation says it is our turn |
-| `info ...` | peer -> tweak | partially supported | `info string ...` is cached; other forms are logged and ignored |
-| `bestmove <usi>` | peer -> tweak | supported | injected through KIOU's normal move pipeline |
-| `gameover win|lose|draw` | tweak -> peer | supported | sent on match end when the result is known |
-| `setoption ...` | either | not handled by the tweak | expected to live on the host peer / wrapper side |
-| `go ...` | either | not handled by the tweak | current design leaves think-limit policy to the host peer / wrapper side |
-| `stop` | peer -> tweak | not supported yet | currently ignored |
-| `ponderhit` | peer -> tweak | not supported yet | current flow does not expose ponder mode |
-| `quit` | peer -> tweak | not supported yet | current flow treats WS disconnect as session end |
-| `position startpos moves ...` | either | not emitted | outbound path uses `position sfen ...` from KIOU's live board snapshot |
-| `bestmove <move> ponder <move2>` | peer -> tweak | partial | only the primary bestmove token is consumed |
-
-YaneuraOu-specific extensions such as `go depth`, `go nodes`,
-`go movetime`, `go rtime`, `getoption`, `bench`, `moves`, `side`, and
-other debug / benchmark commands are intentionally **out of scope** for
-this tweak-level protocol surface. If you need them, implement them in
-your host-side peer or wrapper and translate them there.
+The full mapping (every CSA field, what KIOU exposes, what we drop)
+lives in `docs/csa_compatibility.md`. The wire-level state machine and
+example session are in `docs/csa_protocol.md`.
 
 ## Install
 
@@ -204,7 +188,7 @@ make package install THEOS_DEVICE_IP=<device-ip>
 
 The dylib lands at `/var/jb/Library/MobileSubstrate/DynamicLibraries/KiouEngineBridge.dylib`
 and is loaded by MobileSubstrate / ElleKit on next launch. Respring or
-relaunch KIOU, then point your host bridge at `ws://<device-ip>:9527`.
+relaunch KIOU, then point your CSA engine at `tcp://<device-ip>:4081`.
 
 ### Non-JB (Sideloadly / TrollStore / AltStore / Apple Developer Program)
 
@@ -227,11 +211,9 @@ frida-gum), the static binary patch never writes to `__TEXT` at
 runtime and therefore survives the iOS 18 Code Signing Monitor (CSM) —
 the binpatch flavour covers iOS 15.0 – 18.x.
 
-**Note:** the binpatch build omits the `meta` sidecar lines. KIF
-assembly on the host bridge depends on `meta {…}` lines emitted by the
-JB build's `GameStateStore` observation hooks. Non-JB users get USI
-handshake + position/go/bestmove and can still play through YaneuraOu,
-but no KIF record is assembled. See
+All three build flavours (`make`, `make JAILED=1`, `make BINPATCH=1`)
+ship the full CSA protocol surface — Game_Summary, per-move
+notifications, resign / draw handling. See
 `docs/plans/kiou_engine_bridge_binpatch.md` § 2 for the full build
 matrix.
 
@@ -242,7 +224,7 @@ matrix.
 | **KIOU app version** | `1.0.1` (`CFBundleVersion` 11) |
 | **iOS (JB rootless build)** | 15.0 – 16.5, arm64, rootless |
 | **iOS (non-JB binpatch build)** | 15.0 – 18.x, arm64 |
-| **Engine wire** | standard USI protocol over WebSocket text frames |
+| **Engine wire** | CSA server protocol v1.2 over plain TCP (`:4081`) |
 
 All hooks are pinned to RVAs from this exact KIOU build's
 `UnityFramework`. After a KIOU update the RVAs will drift and the
@@ -279,9 +261,9 @@ is always recoverable.
   no Swift runtime.
 - iOS 15.0–16.5, arm64, rootless layout.
 - For the jailed (sideload) path: a decrypted copy of the KIOU `.ipa`.
-- A host-side bridge that speaks USI over WebSocket against
-  `ws://<device-ip>:9527`. YaneuraOu wrapped in a tiny WS adapter is
-  the reference setup.
+- A CSA engine reachable on the LAN. Apery, 技巧, and YaneuraOu in CSA
+  mode are reference setups. shogi-server's bundled `csa.rb` test
+  client is enough to sanity-check the wire.
 
 ## Layout
 
@@ -295,11 +277,17 @@ Sources/KiouEngineBridge/
   Hook_GameOrchestratorObserve.m# match-end auto-rematch helper
   Hook_GameStateStoreObserve.m  # Set*PlayerInfo capture for meta_emit
   Hook_AfkSuppress.m            # pin GameOrchestrator.IsAfkEnabled = false
-  Inject_Move.m                 # bestmove -> Move.Create / TryMakeMove path
-  Usi_Engine.m                  # USI state machine (Phase 2)
-  Server_WebSocket.m            # 0.0.0.0:9527 listener + recv loop
-  Meta_Emitter.m                # sidecar JSON stream for KIF assembly
+  Inject_Move.m                 # CSA move -> Move.Create / TryMakeMove path
+  Inject_Resign.m               # %TORYO -> GameOrchestrator.RequestSurrender
+  Csa_Convert.{h,m}             # square / piece / move / SFEN <-> CSA conversion
+  Csa_Engine.{h,m}              # CSA protocol state machine (BOOT/LOGIN/.../GAME_OVER)
+  Csa_GameInfo.m                # Game_Summary + KIOU_* extension builder
+  Server_CSA.m                  # 0.0.0.0:4081 listener + line-oriented recv loop
   BinpatchDispatcher.m          # binpatch-only: publishes hook dispatcher into __bss SLOT
+  Usi_Engine.m                  # DEPRECATED (#if 0) — pre-CSA USI driver
+  Server_WebSocket.m            # DEPRECATED (#if 0) — pre-CSA WS sink
+  Meta_Emitter.m                # legacy JSON sidecar (no longer wired on the wire)
+  Csa_Stubs.m                   # transitional no-op shims for USI symbols
 
 Sources/Common/                 # IPA-Patch/Common submodule (logging, il2cpp, hookengine)
 shared/                         # IPA-Patch/Shared submodule (binpatch tooling)
