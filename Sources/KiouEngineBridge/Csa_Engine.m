@@ -491,6 +491,16 @@ static void csa_handle_move_from_engine(NSString *line) {
     file_log([NSString stringWithFormat:
               @"[CSA-ENG] inject_apply usi=%@ ok=%d raw=0x%x err=%@ sfen=%@",
               usi, (int)ok, (unsigned)outRaw, outErr ?: @"", outSfen ?: @""]);
+    if (!ok) {
+        // inject_apply already filtered out the obvious bit-level
+        // parse failures (empty_from, dropfmt, etc) — KEB's own
+        // validators caught the rest before we got here. Anything
+        // that still slipped through and was rejected at the
+        // injection layer is, by definition, illegal: tell the
+        // engine so it can submit a different move instead of
+        // assuming the previous one stuck.
+        CsaEngineSendLine(@"#ILLEGAL_MOVE");
+    }
 }
 
 // ---------------------------------------------------------------------------
