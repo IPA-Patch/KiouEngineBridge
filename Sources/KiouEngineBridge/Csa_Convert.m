@@ -546,6 +546,182 @@ int32_t DropPieceTypeFromHandDelta(NSString *sfenBefore,
 // piece-type letter cache for the helpers below.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Per-piece reachability check.
+//
+// Square encoding: sq = (file-1)*9 + (rank-1), file 1-9 (right-to-left),
+// rank 1-9 (top-to-bottom in standard board view).
+//   dFile step = ±9   (one file left/right)
+//   dRank step = ±1   (one rank forward/backward)
+// Black moves "forward" toward rank 1, so Black's advance is dRank = -1.
+//
+// The movement tables below encode every (dFile, dRank) step a given piece
+// can make from the playerSide perspective. Black and White tables are kept
+// separate because asymmetric pieces (FU, KY, KE, and the gold-generals
+// TO/NY/NK/NG) have direction relative to side.
+//
+// Piece types (PSC):
+//   1 FU  2 KY  3 KE  4 GI  5 KA  6 HI  7 KI  8 OU
+//   9 TO 10 NY 11 NK 12 NG 13 UM 14 RY
+// ---------------------------------------------------------------------------
+
+// A single move direction: (dFile, dRank) delta and whether it slides
+// (can repeat until blocked).
+typedef struct { int dFile; int dRank; BOOL slides; } MoveDir;
+
+// Maximum directions per piece (8 dirs × 2 for slider flag headroom).
+#define MAX_DIRS 8
+
+// Returns the set of move directions for `pscPieceType` from `playerSide`
+// (0=Black, 1=White). Writes into `dirs` and returns the count.
+// Caller provides dirs[MAX_DIRS].
+static int moveDirsForPiece(int32_t pscPieceType, int32_t playerSide,
+                             MoveDir dirs[MAX_DIRS]) {
+    // Black advances toward rank 1 (dRank=-1); White toward rank 9 (dRank=+1).
+    int fwd = (playerSide == 0) ? -1 : +1;
+    int n = 0;
+
+    switch (pscPieceType) {
+        case 1: // FU — one step forward
+            dirs[n++] = (MoveDir){0, fwd, NO};
+            break;
+        case 2: // KY — slides forward only
+            dirs[n++] = (MoveDir){0, fwd, YES};
+            break;
+        case 3: // KE — L-shape forward: 2 ranks forward, 1 file either side
+            dirs[n++] = (MoveDir){-9, 2*fwd, NO};
+            dirs[n++] = (MoveDir){+9, 2*fwd, NO};
+            break;
+        case 4: // GI — Silver: 5 diagonal + forward
+            dirs[n++] = (MoveDir){  0,  fwd, NO};
+            dirs[n++] = (MoveDir){ -9,  fwd, NO};
+            dirs[n++] = (MoveDir){ +9,  fwd, NO};
+            dirs[n++] = (MoveDir){ -9, -fwd, NO};
+            dirs[n++] = (MoveDir){ +9, -fwd, NO};
+            break;
+        case 5: // KA — Bishop: 4 diagonal slides
+            dirs[n++] = (MoveDir){ -9, -1, YES};
+            dirs[n++] = (MoveDir){ -9, +1, YES};
+            dirs[n++] = (MoveDir){ +9, -1, YES};
+            dirs[n++] = (MoveDir){ +9, +1, YES};
+            break;
+        case 6: // HI — Rook: 4 orthogonal slides
+            dirs[n++] = (MoveDir){  0, -1, YES};
+            dirs[n++] = (MoveDir){  0, +1, YES};
+            dirs[n++] = (MoveDir){ -9,  0, YES};
+            dirs[n++] = (MoveDir){ +9,  0, YES};
+            break;
+        case 7:  // KI — Gold: forward, side, backward-orthogonal
+        case 9:  // TO  — same as gold
+        case 10: // NY  — same as gold
+        case 11: // NK  — same as gold
+        case 12: // NG  — same as gold
+            dirs[n++] = (MoveDir){  0,  fwd, NO};
+            dirs[n++] = (MoveDir){ -9,  fwd, NO};
+            dirs[n++] = (MoveDir){ +9,  fwd, NO};
+            dirs[n++] = (MoveDir){ -9,    0, NO};
+            dirs[n++] = (MoveDir){ +9,    0, NO};
+            dirs[n++] = (MoveDir){  0, -fwd, NO};
+            break;
+        case 8: // OU — King: all 8 adjacent
+            dirs[n++] = (MoveDir){  0, -1, NO};
+            dirs[n++] = (MoveDir){  0, +1, NO};
+            dirs[n++] = (MoveDir){ -9,  0, NO};
+            dirs[n++] = (MoveDir){ +9,  0, NO};
+            dirs[n++] = (MoveDir){ -9, -1, NO};
+            dirs[n++] = (MoveDir){ -9, +1, NO};
+            dirs[n++] = (MoveDir){ +9, -1, NO};
+            dirs[n++] = (MoveDir){ +9, +1, NO};
+            break;
+        case 13: // UM — Horse: bishop slides + 4 adjacent orthogonal
+            dirs[n++] = (MoveDir){ -9, -1, YES};
+            dirs[n++] = (MoveDir){ -9, +1, YES};
+            dirs[n++] = (MoveDir){ +9, -1, YES};
+            dirs[n++] = (MoveDir){ +9, +1, YES};
+            dirs[n++] = (MoveDir){  0, -1, NO};
+            dirs[n++] = (MoveDir){  0, +1, NO};
+            dirs[n++] = (MoveDir){ -9,  0, NO};
+            dirs[n++] = (MoveDir){ +9,  0, NO};
+            break;
+        case 14: // RY — Dragon: rook slides + 4 adjacent diagonal
+            dirs[n++] = (MoveDir){  0, -1, YES};
+            dirs[n++] = (MoveDir){  0, +1, YES};
+            dirs[n++] = (MoveDir){ -9,  0, YES};
+            dirs[n++] = (MoveDir){ +9,  0, YES};
+            dirs[n++] = (MoveDir){ -9, -1, NO};
+            dirs[n++] = (MoveDir){ -9, +1, NO};
+            dirs[n++] = (MoveDir){ +9, -1, NO};
+            dirs[n++] = (MoveDir){ +9, +1, NO};
+            break;
+        default:
+            break;
+    }
+    return n;
+}
+
+// Board occupancy helper: given a SFEN board string (part before first ' '),
+// returns YES when `square` is occupied by any piece. Returns NO if empty.
+// Caller must pass only the board part of SFEN (no spaces).
+static BOOL squareOccupied(NSString *boardPart, uint32_t square) {
+    uint32_t file = (square / 9) + 1;  // 1..9
+    uint32_t rank = (square % 9) + 1;  // 1..9
+    NSArray<NSString *> *ranks = [boardPart componentsSeparatedByString:@"/"];
+    if (ranks.count != 9) return NO;
+    NSString *rankStr = ranks[rank - 1];
+    uint32_t cursorFile = 9;
+    for (NSUInteger i = 0; i < rankStr.length; i++) {
+        unichar ch = [rankStr characterAtIndex:i];
+        if (ch == '+') continue;
+        if (ch >= '1' && ch <= '9') {
+            uint32_t empties = (uint32_t)(ch - '0');
+            if (cursorFile - empties < file) return NO;
+            cursorFile -= empties;
+            continue;
+        }
+        // piece letter
+        if (cursorFile == file) return YES;
+        cursorFile--;
+        if (cursorFile < 1) break;
+    }
+    return NO;
+}
+
+// Returns YES when `pscPieceType` can legally reach `toSquare` from
+// `fromSquare` in one move, given the board occupancy in `boardPart`
+// (the part of SFEN before the first space). Slider pieces are blocked
+// by any intervening piece (own or opponent — only the destination
+// occupation check in ValidateCsaMove distinguishes capture vs. blocked).
+static BOOL pieceCanReach(int32_t pscPieceType, int32_t playerSide,
+                           uint32_t fromSquare, uint32_t toSquare,
+                           NSString *boardPart) {
+    if (fromSquare == toSquare) return NO;
+
+    MoveDir dirs[MAX_DIRS];
+    int nDirs = moveDirsForPiece(pscPieceType, playerSide, dirs);
+    if (nDirs == 0) return NO;
+
+    int fromFile = (int)(fromSquare / 9) + 1;  // 1..9
+    int fromRank = (int)(fromSquare % 9) + 1;  // 1..9
+
+    for (int d = 0; d < nDirs; d++) {
+        int cf = fromFile;
+        int cr = fromRank;
+        // Walk along this direction.
+        for (;;) {
+            cf += dirs[d].dFile / 9;  // dFile is ±9 → ±1 file step
+            cr += dirs[d].dRank;
+            // Check board bounds.
+            if (cf < 1 || cf > 9 || cr < 1 || cr > 9) break;
+            uint32_t sq = (uint32_t)((cf - 1) * 9 + (cr - 1));
+            if (sq == toSquare) return YES;  // reached destination
+            if (!dirs[d].slides) break;      // non-slider: only one step
+            // Slider: stop if something is in the way.
+            if (squareOccupied(boardPart, sq)) break;
+        }
+    }
+    return NO;
+}
+
 const char *ValidateCsaDrop(NSString *sfenBefore,
                             uint32_t toSquare,
                             int32_t pscPieceType,
@@ -671,6 +847,24 @@ const char *ValidateCsaMove(NSString *sfenBefore,
             inEnemyCamp = (fromRank >= 7) || (toRank >= 7);
         }
         if (!inEnemyCamp) return "promote_outside_enemy_camp";
+    }
+
+    // Per-piece reachability: does this piece type actually reach toSquare
+    // from fromSquare given board occupancy? Uses the unpromoted base type
+    // for pieces that just landed in the from-square still unpromoted
+    // (pscPieceType 1..8), or the promoted type for already-promoted pieces
+    // (9..14). The moveDirsForPiece table covers all 14 types.
+    {
+        NSArray<NSString *> *sfenParts = [sfenBefore componentsSeparatedByString:@" "];
+        NSString *boardPart = sfenParts.count >= 1 ? sfenParts[0] : @"";
+        if (boardPart.length > 0) {
+            // Use the piece type that is actually on fromSquare (fromPiece),
+            // not the wire piece type, so sliding piece paths are computed
+            // correctly for both pre- and post-promotion pieces.
+            if (!pieceCanReach(fromPiece, playerSide, fromSquare, toSquare, boardPart)) {
+                return "unreachable";
+            }
+        }
     }
 
     // Can't capture your own piece.
