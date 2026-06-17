@@ -11,53 +11,31 @@
 // ===========================================================================
 // Internal.h — KiouEngineBridge-private declarations.
 //
-// This tweak primarily observes KIOU state and pushes SFEN / USI strings out
-// over a WebSocket sink. As of the move-injection phase it also accepts
-// inbound text frames from the host (typically "bestmove <usi>" lines from a
-// USI engine bridge) and replays them into the game's TryMakeMove path so the
-// local board advances exactly as if the user had played the move.
+// KiouEngineBridge embeds a CSA server (TCP :4081) inside the KIOU process.
+// Observation hooks latch live GameController / ShogiGameAdapter /
+// OnlinePvPMode pointers and convert Sunfish.Move to CSA notation;
+// the injection layer feeds CSA moves back into KIOU's own TryMakeMove /
+// OnPlayerMoveAsync paths so the on-device match advances exactly as if the
+// user had played the move.
 //
 // What the injection layer is allowed to do:
 //   - Call il2cpp-generated methods as function pointers (TryMakeMove,
-//     Sunfish.Move.Drop, Position.ToSFEN, OnlinePvPMode.OnPlayerMoveAsync).
-//   - Cache the `self` pointer observed flowing through TryMakeMove /
-//     UpdateAuthoritativeSnapshot hooks so it can be reused as receiver.
+//     Sunfish.Move.Create, Position.ToSFEN, OnlinePvPMode.OnPlayerMoveAsync).
+//   - Cache the `self` pointer observed via hooks for later injection calls.
 //
 // What the injection layer is NOT allowed to do:
-//   - Touch il2cpp object fields directly. The shared header
-//     `il2cpp.h` is intentionally read-only, and the write-side helpers
-//     (writeU8 / writeI32) that KiouEditor declares in its own Internal.h
-//     are still NOT included here. Any future "let's tweak a board field"
-//     regression must opt in explicitly by adding those helpers — they
-//     don't sneak in via the shared header.
+//   - Touch il2cpp object fields directly. il2cpp.h is read-only; write-side
+//     helpers (writeU8 / writeI32) are deliberately excluded.
 //
-// Online ratings games: by default an injected move goes through the local
-// GameController only (route = "gamectrl") and is reverted by the next
-// server-authoritative snapshot. Forwarding the move to the server via
-// OnlinePvPMode.OnPlayerMoveAsync is gated behind BOTH an environment
-// variable AND a flag file on disk so a host that only knows how to send
-// `bestmove <usi>` cannot trip the ratings-impacting path by accident.
-// See Inject_Move.m for the exact gate.
+// Hook installers — one per feature module, wired by Tweak.m:
 //
-// Hook installers are added per feature module:
-//
-//   InstallOnlineObserveHook    (Hook_OnlineObserve.m)
-//   InstallLowLevelObserveHook  (Hook_LowLevelObserve.m)
-//   InstallMatchModeObserveHook (Hook_MatchModeObserve.m)
-//   InstallInjectHook           (Inject_Move.m)
-//   UsiEngineInstall            (Usi_Engine.m, Phase 2 — USI client)
-//
-// Tweak.m wires them up the same way KiouEditor/Tweak.m does — scan dyld
-// for UnityFramework, dispatch each installer once with the base address.
-//
-// Phase 2 architecture (USI mode):
-//   The tweak acts as a USI CLIENT (= USI User in the USI spec). YaneuraOu
-//   is the USI ENGINE — it connects to us as a WebSocket client and we
-//   drive it with `usi` / `isready` / `usinewgame` / `position sfen ...` /
-//   `go ...`. When the observation hooks see that it's our turn, we ship
-//   the current SFEN to YaneuraOu, wait for its `bestmove <usi>`, and feed
-//   that move back into KIOU via the Phase 1 injection path. The match
-//   continues until [MMODE] OnMatchEndAsync clears the cache.
+//   InstallOnlineObserveHook         (Hook_OnlineObserve.m)
+//   InstallLowLevelObserveHook       (Hook_LowLevelObserve.m)
+//   InstallMatchModeObserveHook      (Hook_MatchModeObserve.m)
+//   InstallGameStateStoreObserveHook (Hook_GameStateStoreObserve.m)
+//   InstallGameOrchestratorObserveHook (Hook_GameOrchestratorObserve.m)
+//   InstallAfkSuppressHook           (Hook_AfkSuppress.m)
+//   InstallInjectHook                (Inject_Move.m)
 // ===========================================================================
 
 #ifndef KIOU_ENGINE_BRIDGE_COMMIT
@@ -109,7 +87,6 @@ void InstallMatchModeObserveHook(uintptr_t unityBase);
 void InstallInjectHook(uintptr_t unityBase);
 void InstallAfkSuppressHook(uintptr_t unityBase);
 void InstallGameOrchestratorObserveHook(uintptr_t unityBase);
-void UsiEngineInstall(void);
 
 // UnityFramework base address captured at install time. Exposed so the
 // match-end auto-rematch path can resolve static il2cpp methods
@@ -143,21 +120,6 @@ void KEBCsaServerClose(void);
 // caller may retain it freely. Replace by passing NULL.
 typedef void (*kiou_csa_line_handler_t)(NSString *line);
 void KEBCsaServerSetLineHandler(kiou_csa_line_handler_t fn);
-
-// ---------------------------------------------------------------------------
-// DEPRECATED — WebSocket server API.
-//
-// The USI-era WebSocket sink (Server_WebSocket.m) is excluded from the
-// build by Makefile filter as part of the CSA migration. The declarations
-// below stay so half-migrated translation units still compile; the
-// implementations live in Csa_Stubs.m as no-ops. Once Tasks 4-5 retarget
-// every hook call site to the CSA APIs above, these declarations and the
-// stub file are deleted.
-// ---------------------------------------------------------------------------
-void KEBWsServerStart(uint16_t port);
-void KEBWsServerPush(NSString *json);
-typedef void (*kiou_ws_text_handler_t)(const char *data, size_t len);
-void KEBWsServerSetTextHandler(kiou_ws_text_handler_t fn);
 
 // ---------------------------------------------------------------------------
 // Observation-side instance cache, populated by Hook_LowLevelObserve.m and
@@ -294,8 +256,8 @@ typedef struct {
 void KEBInjectDumpRecent(void);
 
 // ---------------------------------------------------------------------------
-// Injection bridge — called by Usi_Engine.m when YaneuraOu sends us a
-// `bestmove <usi>`. Returns true if the move was injected successfully
+// Injection bridge — called by Csa_Engine.m when the connected engine sends
+// a move. Returns true if the move was injected successfully
 // (= OPM + Adapter.TryMakeMove path succeeded). The returned `outSfenAfter`
 // and `outRaw` are populated with the post-injection SFEN and Move uint32
 // for logging convenience; both may be nil/0 on failure. Internally
@@ -311,51 +273,14 @@ bool inject_apply(NSString *usi,
 // because it touches il2cpp accessors.
 NSString *inject_currentSfen(void);
 
-// ---------------------------------------------------------------------------
-// Usi_Engine.m — the USI-client state machine that drives YaneuraOu and
-// feeds its bestmove back into KIOU.
-// ---------------------------------------------------------------------------
-
-typedef enum {
-    USI_STATE_BOOT       = 0,  // tweak loaded, no ws client yet
-    USI_STATE_HANDSHAKE  = 1,  // ws client connected, awaiting usiok
-    USI_STATE_READY      = 2,  // readyok received, ready for new game
-    USI_STATE_THINKING   = 3,  // go sent, awaiting bestmove
-    USI_STATE_INJECTING  = 4,  // bestmove received, applying to KIOU
-} usi_state_t;
-
-// Notified by Hook_LowLevelObserve.m::HookAdapterTryMakeMoveOut every time
-// a move lands on the board. `usi` is the move that was just applied,
-// `sfen_after` is the resulting position, `side_to_move` is the side that
-// will move next (0=Black, 1=White). The engine compares side_to_move
-// against the cached local-player side to decide whether to send a new
-// `position` + `go` to YaneuraOu.
-void UsiEngineOnMoveObserved(NSString *usi,
-                                 NSString *sfen_after,
-                                 int32_t side_to_move);
-
-// Match lifecycle hooks. `local_player` is 0 (Black) or 1 (White), or -1
-// when the seat isn't fixed (LocalPvP / RecordReplay).
-void UsiEngineOnMatchStart(int32_t local_player);
-
-// `result` is 0 (we won), 1 (we lost), 2 (draw), or -1 (unknown — no
-// gameover is sent to the bridge in that case). The seat-fixed modes
-// (AI / CPUStream / Online) pass 0/1/2 based on the final SFEN's
-// side-to-move vs the cached local-player seat; the open-seat modes
-// (LocalPvP / RecordReplay) pass -1 to suppress the notification.
+// Match result type — used by Hook_MatchModeObserve.m, Csa_Engine.m,
+// Csa_GameInfo.m, and Meta_Emitter.m.
 typedef enum {
     USI_RESULT_UNKNOWN = -1,
     USI_RESULT_WIN     = 0,
     USI_RESULT_LOSE    = 1,
     USI_RESULT_DRAW    = 2,
 } usi_match_result_t;
-
-void UsiEngineOnMatchEnd(usi_match_result_t result);
-
-// WS client connection lifecycle. Server_WebSocket.m calls these from the
-// accept queue so the engine can drive the handshake.
-void UsiEngineOnWsClientConnected(void);
-void UsiEngineOnWsClientDisconnected(void);
 
 // ---------------------------------------------------------------------------
 // Csa_Engine.m — the CSA-protocol server-side state machine that drives
@@ -450,10 +375,8 @@ void MetaSetMatchConfig(void *cfg);
 // latches the local-player seat (so we can carry it in the payload).
 void MetaEmitMatchStart(int32_t local_player);
 
-// Emit "meta {type:move, ...}". Called from Hook_LowLevelObserve's adapter
-// observation, right alongside UsiEngineOnMoveObserved. side_to_move is
-// the side whose turn it is NEXT — we flip to "who just moved" in the
-// payload.
+// Emit "meta {type:move, ...}". Called from Hook_GameStateStoreObserve.
+// side_to_move is the side whose turn it is NEXT.
 void MetaEmitMove(NSString *usi, NSString *sfen_after, int32_t side_to_move);
 
 // Emit "meta {type:match_end, ...}". Called from Hook_MatchModeObserve's
@@ -557,6 +480,10 @@ enum kiou_bridge_hook_id {
     KIOU_BR_HOOK_ONLINE_HANDLE_RESULT,
     KIOU_BR_HOOK_CPUSTREAM_UPDATE_SNAPSHOT,
     KIOU_BR_HOOK_GAMEORCH_ACTIVATE,
+
+    KIOU_BR_HOOK_GSTATE_SET_BLACK_PLAYER_INFO,
+    KIOU_BR_HOOK_GSTATE_SET_WHITE_PLAYER_INFO,
+    KIOU_BR_HOOK_GSTATE_NOTIFY_PIECE_MOVED,
 
     KIOU_BR_HOOK__COUNT,
 };
@@ -701,6 +628,10 @@ void HookCpuStreamUpdateSnapshot(void *self, void *sfenStr, int32_t turn,
 UniTaskRet HookGameOrchActivateAsync(void *self, void *setup,
                                        void *assetLoader, void *ct);
 
+void HookGStateSetBlackPlayerInfo(void *self, void *playerInfo);
+void HookGStateSetWhitePlayerInfo(void *self, void *playerInfo);
+void HookGStateNotifyPieceMoved(void *self, uint32_t move, int32_t playerSide);
+
 // ---------------------------------------------------------------------------
 // SfMove + low-level helpers, exported so observation hooks living in other
 // files (Hook_GameStateStoreObserve.m's NotifyPieceMoved) can reuse the same
@@ -724,7 +655,3 @@ NSString *SfenFromGameController(void *gameCtrl);
 // Hook_LowLevelObserve.m.
 NSString *UsiTextFromGameController(void *gameCtrl);
 
-// Send a literal USI line out to the engine (without trailing newline —
-// the helper adds one). Safe to call from any thread; serializes onto the
-// WS accept queue via KEBWsServerPush.
-void UsiEngineSendLine(NSString *line);

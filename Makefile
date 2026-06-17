@@ -36,13 +36,8 @@ THEOS_DEVICE_IP          := 192.168.0.49
 
 include $(THEOS)/makefiles/common.mk
 
-# CSA migration: Server_WebSocket.m and Usi_Engine.m are kept in tree as
-# `#if 0` blocks for historical reference; exclude them from the build so
-# we link only the active CSA implementation.
 $(TWEAK_NAME)_FILES      := $(shell find $(TWEAK_SOURCES_DIR) \
-    \( -name '*.m' -o -name '*.c' -o -name '*.mm' -o -name '*.cpp' \) \
-    ! -name 'Server_WebSocket.m' \
-    ! -name 'Usi_Engine.m')
+    \( -name '*.m' -o -name '*.c' -o -name '*.mm' -o -name '*.cpp' \))
 $(TWEAK_NAME)_FILES      += Sources/Common/logging.m
 
 BUILD_COMMIT             ?= $(shell git rev-parse --short=7 HEAD 2>/dev/null || echo unknown)

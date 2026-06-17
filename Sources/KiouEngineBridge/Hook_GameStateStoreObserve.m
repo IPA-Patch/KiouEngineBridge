@@ -1,133 +1,89 @@
 #import "Internal.h"
 
-#if KIOU_BINPATCH
-// This entire module is meta-sidecar-only. The binpatch flavour drops the
-// meta sidecar (see docs/plans/kiou_engine_bridge_binpatch.md § 2), so the
-// file compiles to nothing. InstallGameStateStoreObserveHook is a no-op
-// shim defined at the bottom of this #if block so Tweak.m doesn't need its
-// own #if to skip the call — keeping the constructor wiring uniform.
-void InstallGameStateStoreObserveHook(uintptr_t unityBase) { (void)unityBase; }
-void MetaOnPlayerInfoSet(int32_t side, void *playerInfo) {
-    (void)side; (void)playerInfo;
-}
-#else
-
-// ===========================================================================
-// Hook_GameStateStoreObserve — capture Set*PlayerInfo calls on the store.
-//
-// Why this exists:
-//   On Online matches, OnlinePvPMode.InitializeAsync runs BEFORE matchmaking
-//   resolves the opponent identity. The MatchConfig the Init hook stashes
-//   at that point holds the local-side placeholder name "プレイヤー" for
-//   both sides — there's no useful player info there yet.
-//
-//   The real identity arrives later via two calls on the GameStateStore:
-//
-//     GameStateStore.SetBlackPlayerInfo(PlayerInfo)  RVA 0x5A2CB64
-//     GameStateStore.SetWhitePlayerInfo(PlayerInfo)  RVA 0x5A2CBA0
-//
-//   Each writes the matchmaking-resolved PlayerInfo into the corresponding
-//   ReactiveProperty. We hook both, stash the PlayerInfo pointer that
-//   passes through, and tell Meta_Emitter that side N is now ready.
-//
-//   Meta_Emitter implements the actual "wait for both, then emit match_start"
-//   policy. This file's only job is to surface the pointer.
-//
-// What this file deliberately doesn't do:
-//   - Read PlayerInfo fields here. Meta_Emitter walks them when it builds
-//     the JSON; we just hand over the pointer.
-//   - Touch the inject path. SetPlayerInfo has nothing to do with moves.
-//   - Hook the corresponding setters on other stores (MatchConfig has its
-//     own set_BlackPlayer / set_WhitePlayer at dump.cs:1418157 — those
-//     are early-bind for CPU matches and don't fire on Online).
-// ===========================================================================
-
+// ---------------------------------------------------------------------------
+// RVAs — shared by both JB and binpatch paths.
+// ---------------------------------------------------------------------------
 #define RVA_GAMESTATESTORE_SET_BLACK_PLAYER_INFO 0x5A2CB64
 #define RVA_GAMESTATESTORE_SET_WHITE_PLAYER_INFO 0x5A2CBA0
-// NotifyPieceMoved は自分手・相手手どちらの apply 時も通る GameStateStore
-// 上のチョークポイント。ADAPTER2 (Hook_LowLevelObserve.m) は自分手しか
-// 通らないので、MetaEmitMove の発火点はこちらに集約する。
 #define RVA_GAMESTATESTORE_NOTIFY_PIECE_MOVED    0x5A2CD24
 
 // ---------------------------------------------------------------------------
-// Original (untrampolined) function pointers — chain through after stashing.
-// SetPlayerInfo signatures are simple instance methods returning void with
-// one PlayerInfo* argument, so no UniTask gymnastics needed.
+// Trampoline pointer types — declared here so they can be used in the shared
+// hook bodies below. The definitions (and their initialisers) live in the
+// JB-only #else block; on binpatch the cave handles orig-chaining, so
+// these pointers are never needed and not defined.
 // ---------------------------------------------------------------------------
 typedef void (*SetPlayerInfo_t)(void *self, void *playerInfo);
-static SetPlayerInfo_t orig_SetBlackPlayerInfo = NULL;
-static SetPlayerInfo_t orig_SetWhitePlayerInfo = NULL;
+typedef void (*GState_NotifyPieceMoved_t)(void *self, uint32_t move,
+                                          int32_t playerSide);
 
-// ---------------------------------------------------------------------------
-// Hook bodies. Both share the same shape; the side argument to
-// MetaOnPlayerInfoSet tells Meta_Emitter which slot was just written.
-// ---------------------------------------------------------------------------
-static void HookSetBlackPlayerInfo(void *self, void *playerInfo) {
+#if !KIOU_BINPATCH
+// Defined (zero-initialised) in the JB installer section below.
+extern SetPlayerInfo_t orig_SetBlackPlayerInfo;
+extern SetPlayerInfo_t orig_SetWhitePlayerInfo;
+extern GState_NotifyPieceMoved_t orig_NotifyPieceMoved;
+#endif
+
+// ===========================================================================
+// Hook bodies — compiled for BOTH JB and binpatch.
+//
+// On JB:      MSHookFunction wires these as the replacement function and
+//             populates orig_* so the body can chain through.
+// On binpatch: the cave dispatcher calls HookGState* (declared in Internal.h)
+//              directly; orig-chaining is handled by the cave's displaced
+//              prologue + `B orig+4`, so we never call orig_* here.
+// ===========================================================================
+
+void HookGStateSetBlackPlayerInfo(void *self, void *playerInfo) {
     MetaOnPlayerInfoSet(/*side=*/0, playerInfo);
     CsaOnPlayerInfoSet(/*side=*/0, playerInfo);
+#if !KIOU_BINPATCH
     if (orig_SetBlackPlayerInfo) orig_SetBlackPlayerInfo(self, playerInfo);
+#else
+    (void)self;
+#endif
 }
 
-static void HookSetWhitePlayerInfo(void *self, void *playerInfo) {
+void HookGStateSetWhitePlayerInfo(void *self, void *playerInfo) {
     MetaOnPlayerInfoSet(/*side=*/1, playerInfo);
     CsaOnPlayerInfoSet(/*side=*/1, playerInfo);
+#if !KIOU_BINPATCH
     if (orig_SetWhitePlayerInfo) orig_SetWhitePlayerInfo(self, playerInfo);
+#else
+    (void)self;
+#endif
 }
 
-// ---------------------------------------------------------------------------
-// GameStateStore.NotifyPieceMoved(Sunfish.Move move, PlayerSide playerSide)
+// GameStateStore.NotifyPieceMoved(Move move, PlayerSide playerSide)
 //
 // arm64 ABI:
 //   x0 = self (GameStateStore)
 //   w1 = move (uint32, Sunfish.Move packed bits)
 //   w2 = playerSide (int32, the side that just moved: 0=Black, 1=White)
 //
-// 自分のクライアントが指したとき (ADAPTER2 経由) も、サーバから相手手の
-// state 更新が降ってきたときも、最終的にこの NotifyPieceMoved を通る。
-// したがってここで MetaEmitMove を 1 度だけ発火すれば、片肺 KIF
-// 問題は解消する。MetaEmitMove は引数として「次の手番」を受け取る
-// 設計なので、API は崩さずに `playerSide == 0 ? 1 : 0` で flip して渡す。
-// ---------------------------------------------------------------------------
-typedef void (*GameStateStore_NotifyPieceMoved_t)(void *self,
-                                                  uint32_t move,
-                                                  int32_t playerSide);
-static GameStateStore_NotifyPieceMoved_t orig_NotifyPieceMoved = NULL;
-
-static void HookNotifyPieceMoved(void *self,
-                                  uint32_t move,
-                                  int32_t playerSide) {
-    // Call original FIRST so the GameController applies the move and the
-    // live SFEN is in its post-move state when we read it back. Inject_Move
-    // also relies on this same ordering (NotifyPieceMoved → ApplyImpl), so
-    // we keep the original side-effect chain intact.
+// Both the local client's own moves (ADAPTER2 path) and incoming opponent
+// moves (server state update path) pass through this chokepoint, making it
+// the single authoritative site for move observation — both for the CSA
+// engine driver (CsaEngineOnMoveObserved) and for the legacy meta sidecar
+// (MetaEmitMove, a no-op on binpatch).
+//
+// On JB: orig is called first so the GameController has already applied the
+// move and the live SFEN is post-move by the time we read it back.
+// On binpatch: the cave runs the displaced prologue (which is the orig
+// instruction) before calling the dispatcher, so the same ordering holds.
+void HookGStateNotifyPieceMoved(void *self, uint32_t move, int32_t playerSide) {
+#if !KIOU_BINPATCH
     if (orig_NotifyPieceMoved) orig_NotifyPieceMoved(self, move, playerSide);
+#endif
 
-    // sfen は g_gameCtrlCache 経由で読む。ADAPTER2 が live セッションで
-    // 1 度でも走っていれば NULL ではない。相手手側 (ADAPTER2 を通らない)
-    // でも、初手以降は同じ GameController インスタンスが使い回されるので
-    // キャッシュは有効。
     NSString *sfen = SfenFromGameController(g_gameCtrlCache);
     NSString *usi  = moveToUsi((SfMove)move);
 
-    // playerSide はこの NotifyPieceMoved 呼び出しの「指した側」。
-    // MetaEmitMove は「次の手番」を引数に取るので flip して渡す。
-    int32_t nextSide = (playerSide == 0) ? 1
-                     : (playerSide == 1) ? 0
-                     : -1;
-    file_log([NSString stringWithFormat:
-              @"[GSTATE-MOVE] NotifyPieceMoved self=%p moved_side=%d "
-              @"usi=\"%@\" sfen=\"%@\"",
-              self, (int)playerSide, usi ?: @"", sfen ?: @""]);
-
-    // GameStateStore (dump.cs:1422268) keeps two ReactiveProperty<float>
-    // clocks at offset 0x80 / 0x90. The underlying R3 / UniRx box stores
-    // the current value at +0x20 (verified live with a probe sweep, see
-    // commit history). Online matches keep these in sync with the server;
-    // VsAI / Local matches use them for the on-screen clock too.
-    //
-    // Sanity check: VsAI emits 86400.0 (= 24 h) as the CPU side's clock to
-    // mean "no time limit." Treat anything ≥ 86400 - 60 as "no clock" so we
-    // don't ship bogus large T values.
+    // GameStateStore keeps two ReactiveProperty<float> clocks at offsets
+    // 0x80 (black) / 0x90 (white). The R3/UniRx box stores the current
+    // value at +0x20. Online matches keep these in sync with the server;
+    // VsAI / Local use them for the on-screen clock. Treat ≥ 86340 s
+    // (= 24 h − 60 s) as "no limit" and pass -1 so CSA omits the T field.
     float blackRemain = -1.0f;
     float whiteRemain = -1.0f;
     {
@@ -143,22 +99,46 @@ static void HookNotifyPieceMoved(void *self,
         }
     }
 
+    file_log([NSString stringWithFormat:
+              @"[GSTATE-MOVE] NotifyPieceMoved self=%p moved_side=%d "
+              @"usi=\"%@\" sfen=\"%@\"",
+              self, (int)playerSide, usi ?: @"", sfen ?: @""]);
+
+    // MetaEmitMove is a no-op on binpatch (Meta_Emitter is dropped).
+    int32_t nextSide = (playerSide == 0) ? 1 : (playerSide == 1) ? 0 : -1;
     MetaEmitMove(usi, sfen, nextSide);
-    // CSA engine driver wants the raw Move bits + post-move SFEN so it can
-    // reconstruct the piece type at the destination square and ship a
-    // `+7776FU,T10`-style notification.
+
+    // CSA engine driver: raw move bits + post-move SFEN + remaining clocks
+    // → ships a `+7776FU,T10`-style notification to the connected engine.
     CsaEngineOnMoveObserved((uint32_t)move, playerSide, sfen,
                             blackRemain, whiteRemain);
 }
 
-// ---------------------------------------------------------------------------
-// Installer. Called once from Tweak.m::installUnityHooks().
-// ---------------------------------------------------------------------------
+// ===========================================================================
+// Build-flavour-specific: installer + MetaOnPlayerInfoSet stub.
+// ===========================================================================
+
+#if KIOU_BINPATCH
+
+// Cave dispatcher wires HookGState* at patch time; no runtime installation
+// needed. MetaOnPlayerInfoSet is a no-op because Meta_Emitter is dropped on
+// the binpatch build.
+void InstallGameStateStoreObserveHook(uintptr_t unityBase) { (void)unityBase; }
+void MetaOnPlayerInfoSet(int32_t side, void *playerInfo) {
+    (void)side; (void)playerInfo;
+}
+
+#else  // !KIOU_BINPATCH — JB / rootless build
+
+SetPlayerInfo_t orig_SetBlackPlayerInfo = NULL;
+SetPlayerInfo_t orig_SetWhitePlayerInfo = NULL;
+GState_NotifyPieceMoved_t orig_NotifyPieceMoved = NULL;
+
 void InstallGameStateStoreObserveHook(uintptr_t unityBase) {
     {
         uintptr_t addr = unityBase + RVA_GAMESTATESTORE_SET_BLACK_PLAYER_INFO;
         MSHookFunction((void *)addr,
-                       (void *)HookSetBlackPlayerInfo,
+                       (void *)HookGStateSetBlackPlayerInfo,
                        (void **)&orig_SetBlackPlayerInfo);
         file_log([NSString stringWithFormat:
                   @"[GSTATE] hooked GameStateStore.SetBlackPlayerInfo "
@@ -169,7 +149,7 @@ void InstallGameStateStoreObserveHook(uintptr_t unityBase) {
     {
         uintptr_t addr = unityBase + RVA_GAMESTATESTORE_SET_WHITE_PLAYER_INFO;
         MSHookFunction((void *)addr,
-                       (void *)HookSetWhitePlayerInfo,
+                       (void *)HookGStateSetWhitePlayerInfo,
                        (void **)&orig_SetWhitePlayerInfo);
         file_log([NSString stringWithFormat:
                   @"[GSTATE] hooked GameStateStore.SetWhitePlayerInfo "
@@ -180,7 +160,7 @@ void InstallGameStateStoreObserveHook(uintptr_t unityBase) {
     {
         uintptr_t addr = unityBase + RVA_GAMESTATESTORE_NOTIFY_PIECE_MOVED;
         MSHookFunction((void *)addr,
-                       (void *)HookNotifyPieceMoved,
+                       (void *)HookGStateNotifyPieceMoved,
                        (void **)&orig_NotifyPieceMoved);
         file_log([NSString stringWithFormat:
                   @"[GSTATE] hooked GameStateStore.NotifyPieceMoved "

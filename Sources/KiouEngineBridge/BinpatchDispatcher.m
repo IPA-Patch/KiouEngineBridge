@@ -118,6 +118,20 @@ static void dispatch_one(void *x0, void *x1, void *x2, void *x3, void *x4,
     case KIOU_BR_HOOK_GAMEORCH_ACTIVATE:
         (void)HookGameOrchActivateAsync(x0, x1, x2, x3); break;
 
+    // GameStateStore.SetBlackPlayerInfo(self, playerInfo)
+    case KIOU_BR_HOOK_GSTATE_SET_BLACK_PLAYER_INFO:
+        HookGStateSetBlackPlayerInfo(x0, x1); break;
+
+    // GameStateStore.SetWhitePlayerInfo(self, playerInfo)
+    case KIOU_BR_HOOK_GSTATE_SET_WHITE_PLAYER_INFO:
+        HookGStateSetWhitePlayerInfo(x0, x1); break;
+
+    // GameStateStore.NotifyPieceMoved(self, move, playerSide)
+    //   self=x0, move=w1 (uint32), playerSide=w2 (int32)
+    case KIOU_BR_HOOK_GSTATE_NOTIFY_PIECE_MOVED:
+        HookGStateNotifyPieceMoved(x0, (uint32_t)(uintptr_t)x1,
+                                   (int32_t)(intptr_t)x2); break;
+
     default:
         // Cave fired with an id outside the recipe table. Almost certainly
         // a recipe / header skew — log it and return so we at least keep
