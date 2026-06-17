@@ -199,8 +199,22 @@ static void csa_handle_login(NSString *line) {
 
     int32_t lp = atomic_load(&g_csaLocalPlayer);
     if (lp == 0 || lp == 1) {
-        // We already have a KIOU match in progress — push Game_Summary now.
-        csa_send_game_summary(lp);
+        // We already have a KIOU match in progress — push Game_Summary
+        // from the main queue: SfenFromGameController dereferences
+        // il2cpp objects and isn't safe on the CSA recv queue this
+        // handler runs on.
+        int32_t lpCap = lp;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            int now = atomic_load(&g_csaState);
+            if (now == CSA_STATE_LOGIN) {
+                csa_send_game_summary(lpCap);
+            } else {
+                file_log([NSString stringWithFormat:
+                          @"[CSA-ENG] LOGIN renegotiate skipped: state "
+                          @"changed to %s before main-queue dispatch",
+                          csa_state_name(now)]);
+            }
+        });
     } else {
         // No active match yet. Hold in LOGIN; the next OnMatchStart will
         // trigger Game_Summary delivery.
@@ -436,17 +450,27 @@ static void csa_handle_move_from_engine(NSString *line) {
         return;
     }
 
-    // Cheap legality pre-checks against the cached pre-move SFEN. The
-    // primary goal is to keep blatantly illegal moves (drop on occupied,
-    // move from empty, nifu, dead-end drops, etc) from reaching
-    // inject_apply, because KIOU's GameController silently bounces those
-    // back and leaves both the board and the engine's view inconsistent.
-    // Validators return NULL on success or a short reason string on
-    // rejection.
-    if (g_csaPrevSfen.length > 0) {
+    // Cheap legality pre-checks. The primary goal is to keep blatantly
+    // illegal moves (drop on occupied, move from empty, nifu, dead-end
+    // drops, etc) from reaching inject_apply, because KIOU's
+    // GameController silently bounces those back and leaves both the
+    // board and the engine's view inconsistent.
+    //
+    // We prefer the live SFEN over g_csaPrevSfen here: the cached value is
+    // a snapshot captured from NotifyPieceMoved, which fires even on a
+    // move KIOU later rolls back. The live read picks up that rollback,
+    // so a follow-up illegal move that the cache would have approved
+    // (because the cached board still believes the rolled-back piece is
+    // where the original move landed) gets rejected correctly. Falls
+    // back to the cached SFEN when the live read isn't available yet
+    // (the very first move of the session).
+    NSString *validatorSfen = SfenFromGameController(g_gameCtrlCache);
+    if (validatorSfen.length == 0) validatorSfen = g_csaPrevSfen;
+
+    if (validatorSfen.length > 0) {
         const char *reason = drop
-            ? ValidateCsaDrop(g_csaPrevSfen, to, pieceType, playerSide)
-            : ValidateCsaMove(g_csaPrevSfen, from, to, pieceType,
+            ? ValidateCsaDrop(validatorSfen, to, pieceType, playerSide)
+            : ValidateCsaMove(validatorSfen, from, to, pieceType,
                               promote ? YES : NO, playerSide);
         if (reason) {
             file_log([NSString stringWithFormat:
@@ -711,13 +735,36 @@ void CsaEngineOnTcpClientConnected(void) {
     // If a KIOU match is already in progress (reconnect mid-game, or the
     // engine simply attached after the user already started a CPU match),
     // auto-ship Game_Summary so the engine doesn't need to send LOGIN to
-    // discover the current state. Standard CSA engines that DO send LOGIN
-    // still get a normal LOGIN: <name> OK reply; csa_handle_login skips
-    // re-sending Game_Summary when we're already past LOGIN state.
+    // discover the current state.
+    //
+    // CsaEngineOnTcpClientConnected runs on the CSA accept queue (a GCD
+    // serial queue inside Server_CSA.m). csa_send_game_summary eventually
+    // calls SfenFromGameController, which dereferences il2cpp objects and
+    // MUST run on Unity's main thread — touching them off-main crashes the
+    // il2cpp runtime instantly (observed on-device as a KIOU restart 16s
+    // after `mid-match reconnect — auto-renegotiating`).
+    //
+    // Hop the renegotiation to the main queue. The state set above is
+    // safe to leave on LOGIN; csa_handle_login already gates the explicit-
+    // LOGIN path so the engine doesn't get two Game_Summary blocks if it
+    // races us to the wire.
     int32_t lp = atomic_load(&g_csaLocalPlayer);
     if (lp == 0 || lp == 1) {
         file_log(@"[CSA-ENG] mid-match reconnect — auto-renegotiating");
-        csa_send_game_summary(lp);
+        int32_t lpCap = lp;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            int s = atomic_load(&g_csaState);
+            // Guard against a LOGOUT / new match landing in the window
+            // between this dispatch_async being queued and running.
+            if (s == CSA_STATE_LOGIN) {
+                csa_send_game_summary(lpCap);
+            } else {
+                file_log([NSString stringWithFormat:
+                          @"[CSA-ENG] auto-renegotiate skipped: state "
+                          @"changed to %s before main-queue dispatch",
+                          csa_state_name(s)]);
+            }
+        });
     }
 }
 
