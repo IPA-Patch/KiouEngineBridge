@@ -627,7 +627,6 @@ const char *ValidateCsaMove(NSString *sfenBefore,
                             int32_t pscPieceType,
                             BOOL promote,
                             int32_t playerSide) {
-    (void)promote;  // promotion legality (entering enemy camp) deferred
     if (sfenBefore.length == 0) return NULL;
     if (fromSquare > 80) return "from_oob";
     if (toSquare > 80) return "to_oob";
@@ -648,6 +647,30 @@ const char *ValidateCsaMove(NSString *sfenBefore,
         int32_t expectedPromoted = (fromPiece >= 1 && fromPiece <= 6)
             ? fromPiece + 8 : 0;
         if (expectedPromoted != pscPieceType) return "from_piece_mismatch";
+    }
+
+    // Promotion legality. Only six base piece types can promote
+    // (FU/KY/KE/GI/KA/HI = 1..6). King (8) and Gold (7) never can. A
+    // promotion is only legal when the move starts in, ends in, or
+    // crosses through the enemy camp — equivalent to: from-rank or
+    // to-rank is on the opponent's side of the board (Black promotes
+    // when either rank ≤ 3; White when either rank ≥ 7).
+    if (promote) {
+        if (fromPiece > 8) return "promote_already_promoted";
+        if (fromPiece == 7 /*KI*/ || fromPiece == 8 /*OU*/) {
+            return "promote_unpromotable";
+        }
+        uint32_t fromRank = (fromSquare % 9) + 1;  // 1..9
+        uint32_t toRank   = (toSquare   % 9) + 1;
+        BOOL inEnemyCamp;
+        if (playerSide == 0) {
+            // Black's enemy camp is rank 1-3.
+            inEnemyCamp = (fromRank <= 3) || (toRank <= 3);
+        } else {
+            // White's enemy camp is rank 7-9.
+            inEnemyCamp = (fromRank >= 7) || (toRank >= 7);
+        }
+        if (!inEnemyCamp) return "promote_outside_enemy_camp";
     }
 
     // Can't capture your own piece.

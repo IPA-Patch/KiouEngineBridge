@@ -571,6 +571,11 @@ void CsaEngineOnMoveObserved(uint32_t move,
                   @"[CSA-ENG] cannot resolve piece type at to=%u "
                   @"(sfen=%@) — emitting raw bits log only",
                   to, sfenAfter ?: @""]);
+        // Even when we can't emit, advance the SFEN cache so the next
+        // move's validator runs against the freshest board (otherwise the
+        // pre-inject checks fire against a stale snapshot and let bad
+        // moves through).
+        g_csaPrevSfen = [sfenAfter copy];
         return;
     }
 
