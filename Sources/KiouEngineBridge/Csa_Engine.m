@@ -149,12 +149,14 @@ csa_state_t CsaEngineCurrentState(void) {
 // the Csa_Stubs.m no-op variants resolve these symbols.
 // ---------------------------------------------------------------------------
 extern NSString *CsaBuildGameSummary(int32_t local_player,
-                                     NSString **outGameId);
+                                     NSString **outGameId,
+                                     NSString **outStartSfen);
 extern NSString *CsaBuildMatchResult(usi_match_result_t result);
 
 static void csa_send_game_summary(int32_t local_player) {
     NSString *gameId = nil;
-    NSString *summary = CsaBuildGameSummary(local_player, &gameId);
+    NSString *startSfen = nil;
+    NSString *summary = CsaBuildGameSummary(local_player, &gameId, &startSfen);
     if (summary.length == 0) {
         file_log(@"[CSA-ENG] CsaBuildGameSummary returned empty — "
                  @"deferring Game_Summary");
@@ -162,6 +164,15 @@ static void csa_send_game_summary(int32_t local_player) {
     }
     g_csaLastGameSummary = summary;
     g_csaLastGameID = gameId ?: @"GAME";
+    // Cache the starting SFEN so the very first engine move can be validated
+    // against a real board snapshot (g_csaPrevSfen is nil until the first
+    // NotifyPieceMoved fires, which leaves the validator blind for move 1).
+    if (startSfen.length > 0) {
+        g_csaPrevSfen = startSfen;
+        file_log([NSString stringWithFormat:
+                  @"[CSA-ENG] seeded g_csaPrevSfen from Game_Summary sfen=%@",
+                  startSfen]);
+    }
     CsaEngineSendBlock(summary);
     // KIOU does not wait for the engine's AGREE — its CPU starts thinking
     // (and committing moves) the moment OnMatchStart fires. If we sit in
