@@ -233,7 +233,18 @@ NSString *CsaBuildGameSummary(int32_t local_player,
     // up controlling the black side).
     NSString *yourTurn = (local_player == 1) ? @"-" : @"+";
     [out appendFormat:@"Your_Turn:%@\n", yourTurn];
-    [out appendString:@"To_Move:+\n"];
+    // To_Move reflects the actual side-to-move in the current position,
+    // which may be white (-) on reconnect to a mid-game position.
+    // Derive from SFEN (read later); default to + for now and overwrite.
+    NSString *sfenForToMove = SfenFromGameController(g_gameCtrlCache);
+    NSString *toMove = @"+";
+    if (sfenForToMove.length > 0) {
+        NSArray<NSString *> *sfenParts = [sfenForToMove componentsSeparatedByString:@" "];
+        if (sfenParts.count >= 2 && [sfenParts[1] isEqualToString:@"w"]) {
+            toMove = @"-";
+        }
+    }
+    [out appendFormat:@"To_Move:%@\n", toMove];
 
     [out appendString:@"BEGIN Time\n"];
     [out appendString:@"Time_Unit:1sec\n"];
