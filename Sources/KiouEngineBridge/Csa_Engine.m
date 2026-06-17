@@ -198,26 +198,32 @@ static void csa_handle_login(NSString *line) {
     NSString *name = (parts.count >= 2) ? parts[1] : @"engine";
     CsaEngineSendLine([NSString stringWithFormat:@"LOGIN:%@ OK", name]);
 
-    int s = atomic_load(&g_csaState);
-    if (s == CSA_STATE_PLAYING) {
-        // CsaEngineOnTcpClientConnected already shipped Game_Summary for
-        // the in-progress match. A late LOGIN from a verbose client gets
-        // the OK reply above but doesn't re-trigger renegotiation.
-        file_log(@"[CSA-ENG] LOGIN in PLAYING — Game_Summary already sent, "
-                 @"skipping renegotiation");
-        return;
-    }
-
     int32_t lp = atomic_load(&g_csaLocalPlayer);
     if (lp == 0 || lp == 1) {
         // We already have a KIOU match in progress — push Game_Summary
         // from the main queue: SfenFromGameController dereferences
         // il2cpp objects and isn't safe on the CSA recv queue this
         // handler runs on.
+        //
+        // Accept LOGIN in both LOGIN and PLAYING states: the connect-time
+        // auto-renegotiate (CsaEngineOnTcpClientConnected) races this
+        // handler on the main queue, so by the time this dispatch lands
+        // the state may already be PLAYING. Sending Game_Summary again is
+        // harmless — the engine treats it as the authoritative starting
+        // position and discards any prior state.
         int32_t lpCap = lp;
         dispatch_async(dispatch_get_main_queue(), ^{
             int now = atomic_load(&g_csaState);
-            if (now == CSA_STATE_LOGIN) {
+            if (now == CSA_STATE_LOGIN || now == CSA_STATE_PLAYING) {
+                // Send Game_Summary regardless of whether we're in LOGIN or
+                // PLAYING: the match_start handler races this dispatch on the
+                // main queue and may have already advanced state to PLAYING.
+                // Resending Game_Summary + START from PLAYING is harmless —
+                // the engine treats the last received summary as authoritative
+                // and the bridge's parse_game_summary breaks on the first
+                // START it sees.
+                // Do NOT reset state to LOGIN first — that flip causes the
+                // next move observation to be dropped.
                 csa_send_game_summary(lpCap);
             } else {
                 file_log([NSString stringWithFormat:
@@ -620,17 +626,17 @@ void CsaEngineOnMatchStart(int32_t local_player) {
               @"[CSA-ENG] match_start local_player=%d state=%s",
               (int)local_player, csa_state_name(s)]);
 
-    // If a client is already logged in, push Game_Summary right away.
+    // If a client is waiting in LOGIN state, push Game_Summary right away.
+    // GAME_OVER: new match started while client is still connected — send
+    // a fresh Game_Summary so the engine can restart.
+    // BOOT: no client yet — g_csaLocalPlayer is now set; LOGIN handler
+    // will send Game_Summary when the engine connects.
+    // PLAYING: engine is connected and a previous Game_Summary + START have
+    // already been sent. The engine will send LOGIN when it reconnects, and
+    // the LOGIN handler sends a fresh Game_Summary at that point. Don't send
+    // a second Game_Summary here — that would race with the LOGIN dispatch
+    // and cause a PLAYING→LOGIN→PLAYING flip-flop.
     if (s == CSA_STATE_LOGIN || s == CSA_STATE_GAME_OVER) {
-        csa_send_game_summary(local_player);
-    } else if (s == CSA_STATE_BOOT) {
-        // No client connected yet — cache state; the LOGIN handler will
-        // pick this up when the engine eventually connects.
-    } else {
-        file_log([NSString stringWithFormat:
-                  @"[CSA-ENG] match_start in unexpected state %s, "
-                  @"forcing Game_Summary",
-                  csa_state_name(s)]);
         csa_send_game_summary(local_player);
     }
 }
@@ -815,24 +821,13 @@ void CsaEngineOnTcpClientConnected(void) {
     // safe to leave on LOGIN; csa_handle_login already gates the explicit-
     // LOGIN path so the engine doesn't get two Game_Summary blocks if it
     // races us to the wire.
-    int32_t lp = atomic_load(&g_csaLocalPlayer);
-    if (lp == 0 || lp == 1) {
-        file_log(@"[CSA-ENG] mid-match reconnect — auto-renegotiating");
-        int32_t lpCap = lp;
-        dispatch_async(dispatch_get_main_queue(), ^{
-            int s = atomic_load(&g_csaState);
-            // Guard against a LOGOUT / new match landing in the window
-            // between this dispatch_async being queued and running.
-            if (s == CSA_STATE_LOGIN) {
-                csa_send_game_summary(lpCap);
-            } else {
-                file_log([NSString stringWithFormat:
-                          @"[CSA-ENG] auto-renegotiate skipped: state "
-                          @"changed to %s before main-queue dispatch",
-                          csa_state_name(s)]);
-            }
-        });
-    }
+    // Do NOT auto-send Game_Summary here. The CSA protocol requires the
+    // engine to send LOGIN first; we send Game_Summary in response to that
+    // (see csa_handle_login). Dispatching Game_Summary from both here and
+    // csa_handle_login races on the main queue and causes the LOGIN handler's
+    // dispatch to arrive when the state is already PLAYING (set by the
+    // connect-time dispatch), silently dropping the second Game_Summary.
+    // Letting LOGIN be the sole trigger eliminates the race entirely.
 }
 
 void CsaEngineOnTcpClientDisconnected(void) {
