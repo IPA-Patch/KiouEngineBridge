@@ -379,6 +379,11 @@ static NSString *csa_pieceToUsiDropLetter(int32_t pieceType) {
     }
 }
 
+// Forward decl — body below; hosts the actual validator + inject_apply
+// path that the dispatcher hops onto the main queue.
+static void csa_apply_engine_move(NSString *line, uint32_t move,
+                                  int32_t pieceType, int32_t playerSide);
+
 static void csa_handle_move_from_engine(NSString *line) {
     int s = atomic_load(&g_csaState);
     if (s != CSA_STATE_PLAYING) {
@@ -397,6 +402,34 @@ static void csa_handle_move_from_engine(NSString *line) {
                   @"[CSA-ENG] malformed move: %@", line]);
         return;
     }
+    (void)timeSpent;  // engine-reported think time is logged but unused
+
+    // Hop to the Unity main queue: both the legality probe
+    // (inject_currentSfen / SfenFromGameController) and inject_apply touch
+    // il2cpp methods that are only safe from the main thread. The CSA
+    // recv queue this handler runs on isn't.
+    NSString *lineCap = [line copy];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        csa_apply_engine_move(lineCap, move, pieceType, playerSide);
+    });
+}
+
+static void csa_apply_engine_move(NSString *line, uint32_t move,
+                                  int32_t pieceType, int32_t playerSide) {
+    // Re-check the state on the main queue — a LOGOUT / match_end could
+    // have landed between the recv-queue dispatch and us getting picked up.
+    int s = atomic_load(&g_csaState);
+    if (s != CSA_STATE_PLAYING) {
+        file_log([NSString stringWithFormat:
+                  @"[CSA-ENG] move state changed to %s before main "
+                  @"dispatch — dropping: %@",
+                  csa_state_name(s), line]);
+        return;
+    }
+    uint32_t drop    = (move >> 15) & 1;
+    uint32_t promote = (move >> 14) & 1;
+    uint32_t from    = (move >> 7) & 0x7F;
+    uint32_t to      = move & 0x7F;
 
     int32_t lp = atomic_load(&g_csaLocalPlayer);
     // The connected CSA engine stands in for KIOU's local human player —
@@ -411,12 +444,8 @@ static void csa_handle_move_from_engine(NSString *line) {
                   enginePlayer, playerSide]);
     }
 
-    // Build USI for the inject pipeline. The "from" / "to" bits already
-    // match the PSC Square encoding, so they translate directly.
-    uint32_t to       = move & 0x7F;
-    uint32_t from     = (move >> 7) & 0x7F;
-    uint32_t promote  = (move >> 14) & 1;
-    uint32_t drop     = (move >> 15) & 1;
+    // (to/from/promote/drop already extracted above so the validator
+    // hook can inspect them before we build the USI string.)
 
     // MoveBitsFromCsaText flags promote=true whenever the CSA piece
     // mnemonic is a promoted form (TO/NY/NK/NG/UM/RY), but in CSA a
