@@ -175,7 +175,7 @@ static inline BOOL shouldLog(uint32_t n) {
         (TS_VAR) = mach_absolute_time();                                            \
         uint32_t n = ++(SEEN_VAR);                                                  \
         if (shouldLog(n)) {                                                         \
-            file_log([NSString stringWithFormat:                                    \
+            IPALog([NSString stringWithFormat:                                    \
                       @"[MMODE] " MODE_TAG " OPM call#%u self=%p move=0x%x",       \
                       n, self, (unsigned)mv]);                                      \
         }                                                                           \
@@ -245,7 +245,7 @@ DEFINE_OPM_HOOK(Replay,    "RecordReplayMode", g_recordReplayModeCache,
         /* On binpatch KIOU_CALL_ORIG_RET is a no-op (cave handles orig). */ \
         UniTaskRet ret =                                                                \
             KIOU_CALL_ORIG_RET(UniTaskRet, ORIG_VAR, self, cfg, store, adapter, ct);   \
-        file_log([NSString stringWithFormat:                                            \
+        IPALog([NSString stringWithFormat:                                            \
                   @"[MMODE] " MODE_TAG " Init self=%p store=%p adapter=%p cfg=%p",      \
                   self, store, adapter, cfg]);                                          \
         return ret;                                                                     \
@@ -288,7 +288,7 @@ DEFINE_INIT_HOOK(Replay,    "RecordReplayMode", g_recordReplayModeCache,
 // main-runloop spin, so `_localPlayer` is populated when the block reads it.
 //
 // We capture `self` and `lp_offset` by value into the block (both are POD —
-// `self` is a void *, no ARC retain). The LP_CACHE / file_log / usi /
+// `self` is a void *, no ARC retain). The LP_CACHE / IPALog / usi /
 // meta calls all happen inside the deferred block so they observe the
 // post-orig state.
 #define DEFINE_START_HOOK(MODE_PASCAL, MODE_TAG, CACHE_VAR, LP_CACHE, LP_OFFSET, ORIG_VAR) \
@@ -303,17 +303,13 @@ DEFINE_INIT_HOOK(Replay,    "RecordReplayMode", g_recordReplayModeCache,
                 lp = readI32(selfCap, lpOffsetCap);                                       \
                 (LP_CACHE) = lp;                                                          \
             }                                                                             \
-            file_log([NSString stringWithFormat:                                          \
+            IPALog([NSString stringWithFormat:                                          \
                       @"[MMODE] " MODE_TAG " Start self=%p localPlayer=%d",               \
                       selfCap, (int)lp]);                                                 \
             /* Notify the CSA engine driver so it can ship Game_Summary to the */         \
             /* connected engine (or arm for the next AGREE). Csa_GameInfo reads */        \
             /* MatchConfig + GameStateStore.Set*PlayerInfo to fill the block. */          \
             CsaEngineOnMatchStart(lp);                                                    \
-            /* Keep the legacy USI driver and meta sidecar fed too — both are */         \
-            /* no-ops via Csa_Stubs.m during the CSA migration, but the call */            \
-            /* sites stay so a future revert path is mechanical. */                       \
-            UsiEngineOnMatchStart(lp);                                                \
             MetaEmitMatchStart(lp);                                                    \
             /* Prevent the screen from dimming while a match is active.             */    \
             /* Already on the main queue here.                                      */    \
@@ -444,7 +440,7 @@ static int32_t readCpuStrengthFromOrchestrator(void) {
     // int32 value @4.
     uint8_t hasValue = readU8(params, OFF_GAMEPARAMS_CPU_STRENGTH);
     int32_t value    = readI32(params, OFF_GAMEPARAMS_CPU_STRENGTH + 4);
-    file_log([NSString stringWithFormat:
+    IPALog([NSString stringWithFormat:
               @"[REMATCH] readCpuStrength: orch=%p setup=%p params=%p "
               @"hasValue=%u value=%d",
               orch, setup, params, (unsigned)hasValue, (int)value]);
@@ -459,12 +455,12 @@ static int32_t readCpuStrengthFromOrchestrator(void) {
 // RecordReplay). Anything else is logged + a rematch kick is scheduled.
 static void scheduleAutoRematch(const char *modeTag) {
     if (!modeTag) {
-        file_log(@"[REMATCH] skipped: mode opts out");
+        IPALog(@"[REMATCH] skipped: mode opts out");
         return;
     }
     bool isOnline = (strcmp(modeTag, "online") == 0);
 
-    file_log([NSString stringWithFormat:
+    IPALog([NSString stringWithFormat:
               @"[REMATCH] scheduling auto-rematch mode=%s orch=%p",
               modeTag, g_gameOrchestratorCache]);
 
@@ -477,7 +473,7 @@ static void scheduleAutoRematch(const char *modeTag) {
                    dispatch_get_main_queue(), ^{
         void *orch = g_gameOrchestratorCache;
         if (!orch || g_unityBase == 0) {
-            file_log(@"[REMATCH] step1 skipped: no orchestrator/unityBase");
+            IPALog(@"[REMATCH] step1 skipped: no orchestrator/unityBase");
             return;
         }
         GameOrch_OnEndSequenceCompleted_t fn =
@@ -485,11 +481,11 @@ static void scheduleAutoRematch(const char *modeTag) {
             (g_unityBase + RVA_GAMEORCH_ON_END_SEQUENCE_COMPLETED);
         @try {
             fn(orch);
-            file_log([NSString stringWithFormat:
+            IPALog([NSString stringWithFormat:
                       @"[REMATCH] step1: OnEndSequenceCompleted invoked "
                       @"orch=%p", orch]);
         } @catch (NSException *e) {
-            file_log([NSString stringWithFormat:
+            IPALog([NSString stringWithFormat:
                       @"[REMATCH] step1 threw: %@", e]);
         }
     });
@@ -501,7 +497,7 @@ static void scheduleAutoRematch(const char *modeTag) {
                                  (int64_t)(5.5 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
         if (g_unityBase == 0) {
-            file_log(@"[REMATCH] step2 skipped: no unityBase");
+            IPALog(@"[REMATCH] step2 skipped: no unityBase");
             return;
         }
         if (isOnline) {
@@ -509,18 +505,18 @@ static void scheduleAutoRematch(const char *modeTag) {
                 (g_unityBase + RVA_MATCHING_START_RANK);
             @try {
                 (void)fn(RANK_RULE_BULLET3MIN, false, NULL);
-                file_log([NSString stringWithFormat:
+                IPALog([NSString stringWithFormat:
                           @"[REMATCH] step2: StartRankMatchingAsync "
                           @"rule=Bullet3Min(%d)", RANK_RULE_BULLET3MIN]);
             } @catch (NSException *e) {
-                file_log([NSString stringWithFormat:
+                IPALog([NSString stringWithFormat:
                           @"[REMATCH] step2 (online) threw: %@", e]);
             }
         } else {
             int32_t strength = readCpuStrengthFromOrchestrator();
             if (strength < 0) {
                 strength = CPU_STRENGTH_NORMAL;
-                file_log([NSString stringWithFormat:
+                IPALog([NSString stringWithFormat:
                           @"[REMATCH] step2: CPU strength unreadable, "
                           @"falling back to Normal(%d)", strength]);
             }
@@ -528,11 +524,11 @@ static void scheduleAutoRematch(const char *modeTag) {
                 (g_unityBase + RVA_CPU_MATCH_START_FREE);
             @try {
                 (void)fn(strength, false, NULL);
-                file_log([NSString stringWithFormat:
+                IPALog([NSString stringWithFormat:
                           @"[REMATCH] step2: StartCpuFreeMatchAsync "
                           @"strength=%d", (int)strength]);
             } @catch (NSException *e) {
-                file_log([NSString stringWithFormat:
+                IPALog([NSString stringWithFormat:
                           @"[REMATCH] step2 (cpu) threw: %@", e]);
             }
         }
@@ -551,7 +547,7 @@ static void scheduleAutoRematch(const char *modeTag) {
         /* Pull the full game record straight off the GameController while it's */ \
         /* still live. Bridge 側で Match.finish のグランドトゥルースに使う。 */     \
         NSString *usiText = UsiTextFromGameController(g_gameCtrlCache);            \
-        file_log([NSString stringWithFormat:                                       \
+        IPALog([NSString stringWithFormat:                                       \
                   @"[MMODE] " MODE_TAG " End self=%p localPlayer=%d "              \
                   @"result=%d sfen=\"%@\"",                                        \
                   self, (int)lpSnapshot, (int)result, finalSfen ?: @""]);          \
@@ -566,9 +562,6 @@ static void scheduleAutoRematch(const char *modeTag) {
         /* Surface the result to the CSA engine driver so it can emit */          \
         /* #REASON + #WIN/#LOSE/#DRAW before the next match resets state. */      \
         CsaEngineOnMatchEnd(result);                                              \
-        /* Keep the legacy USI / meta paths fed too — both no-op via */           \
-        /* Csa_Stubs.m during the CSA migration. */                               \
-        UsiEngineOnMatchEnd(result);                                              \
         MetaEmitMatchEnd(result, finalSfen, usiText);                             \
         MetaSetMatchConfig(NULL);                                                 \
         CsaSetMatchConfig(NULL);                                                  \
@@ -661,7 +654,7 @@ void InstallMatchModeObserveHook(uintptr_t unityBase) {
     for (size_t i = 0; i < sizeof(entries) / sizeof(entries[0]); i++) {
         uintptr_t addr = unityBase + entries[i].rva;
         MSHookFunction((void *)addr, entries[i].hook, entries[i].origSlot);
-        file_log([NSString stringWithFormat:
+        IPALog([NSString stringWithFormat:
                   @"[MMODE] hooked %s.%s @0x%lx (base+0x%lx)",
                   entries[i].tag, entries[i].what,
                   (unsigned long)addr, (unsigned long)entries[i].rva]);
@@ -686,7 +679,7 @@ void InstallMatchModeObserveHook(uintptr_t unityBase) {
 // bypass-entry path.
 void InstallMatchModeObserveHook(uintptr_t unityBase) {
     (void)unityBase;
-    file_log(@"[MMODE] binpatch: install is a no-op — orig_* OPM slots stay "
+    IPALog(@"[MMODE] binpatch: install is a no-op — orig_* OPM slots stay "
              @"NULL so the bypass-entry path in inject_pickRoute() is taken.");
 }
 #endif  // !KIOU_BINPATCH

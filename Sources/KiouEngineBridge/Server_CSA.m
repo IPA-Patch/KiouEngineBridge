@@ -119,18 +119,18 @@ static void csa_client_recv_loop(int fd) {
         ssize_t n = recv(fd, chunk, sizeof(chunk), 0);
         if (n < 0) {
             if (errno == EINTR) continue;
-            file_log([NSString stringWithFormat:
+            IPALog([NSString stringWithFormat:
                       @"[CSA] recv errno=%d, exiting loop", errno]);
             break;
         }
         if (n == 0) {
-            file_log(@"[CSA] peer closed connection");
+            IPALog(@"[CSA] peer closed connection");
             break;
         }
 
         [acc appendBytes:chunk length:(NSUInteger)n];
         if (acc.length > CSA_LINE_MAX) {
-            file_log([NSString stringWithFormat:
+            IPALog([NSString stringWithFormat:
                       @"[CSA] line buffer overflowed %d bytes, closing",
                       CSA_LINE_MAX]);
             break;
@@ -160,15 +160,15 @@ static void csa_client_recv_loop(int fd) {
                            withBytes:NULL
                               length:0];
             if (line == nil) {
-                file_log(@"[CSA] dropped non-UTF8 line");
+                IPALog(@"[CSA] dropped non-UTF8 line");
                 continue;
             }
-            file_log([NSString stringWithFormat:@"[CSA<] %@", line]);
+            IPALog([NSString stringWithFormat:@"[CSA<] %@", line]);
             if (g_lineHandler) g_lineHandler(line);
         }
     }
 
-    file_log(@"[CSA] client recv loop exited");
+    IPALog(@"[CSA] client recv loop exited");
     dispatch_async(g_acceptQueue, ^{
         csa_close_client();
     });
@@ -183,7 +183,7 @@ static void csa_handle_accept(void) {
     int fd = accept(g_listenFd, (struct sockaddr *)&peer, &peerLen);
     if (fd < 0) {
         if (errno != EAGAIN && errno != EWOULDBLOCK) {
-            file_log([NSString stringWithFormat:
+            IPALog([NSString stringWithFormat:
                       @"[CSA] accept errno=%d", errno]);
         }
         return;
@@ -196,14 +196,14 @@ static void csa_handle_accept(void) {
     // otherwise reject the new peer; CSA engines tend to reconnect after
     // crashes, and we want the most recent connect to be authoritative.
     if (g_clientFd >= 0) {
-        file_log([NSString stringWithFormat:
+        IPALog([NSString stringWithFormat:
                   @"[CSA] preempt: closing prior client fd=%d to make room "
                   @"for %s:%u",
                   g_clientFd, ip, (unsigned)ntohs(peer.sin_port)]);
         csa_close_client();
     }
 
-    file_log([NSString stringWithFormat:@"[CSA] accepted from %s:%u fd=%d",
+    IPALog([NSString stringWithFormat:@"[CSA] accepted from %s:%u fd=%d",
               ip, (unsigned)ntohs(peer.sin_port), fd]);
 
     // Darwin propagates O_NONBLOCK from the listen socket to the accept
@@ -225,7 +225,7 @@ static void csa_handle_accept(void) {
 // ---------------------------------------------------------------------------
 void KEBCsaServerStart(uint16_t port) {
     if (g_listenFd >= 0) {
-        file_log(@"[CSA] server already running");
+        IPALog(@"[CSA] server already running");
         return;
     }
 
@@ -236,7 +236,7 @@ void KEBCsaServerStart(uint16_t port) {
 
     int s = socket(AF_INET, SOCK_STREAM, 0);
     if (s < 0) {
-        file_log([NSString stringWithFormat:@"[CSA] socket errno=%d", errno]);
+        IPALog([NSString stringWithFormat:@"[CSA] socket errno=%d", errno]);
         return;
     }
 
@@ -248,13 +248,13 @@ void KEBCsaServerStart(uint16_t port) {
     addr.sin_port = htons(port);
     addr.sin_addr.s_addr = htonl(INADDR_ANY);
     if (bind(s, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        file_log([NSString stringWithFormat:@"[CSA] bind errno=%d port=%u",
+        IPALog([NSString stringWithFormat:@"[CSA] bind errno=%d port=%u",
                   errno, (unsigned)port]);
         close(s);
         return;
     }
     if (listen(s, 4) < 0) {
-        file_log([NSString stringWithFormat:@"[CSA] listen errno=%d", errno]);
+        IPALog([NSString stringWithFormat:@"[CSA] listen errno=%d", errno]);
         close(s);
         return;
     }
@@ -268,7 +268,7 @@ void KEBCsaServerStart(uint16_t port) {
     });
     dispatch_resume(g_listenSrc);
 
-    file_log([NSString stringWithFormat:@"[CSA] listening on 0.0.0.0:%u",
+    IPALog([NSString stringWithFormat:@"[CSA] listening on 0.0.0.0:%u",
               (unsigned)port]);
 }
 
@@ -287,7 +287,7 @@ void KEBCsaServerPush(NSString *line) {
 
     if (g_pendingSends >= CSA_QUEUE_DROP_THRESHOLD) {
         if ((g_pendingSends % 32) == 0) {
-            file_log([NSString stringWithFormat:
+            IPALog([NSString stringWithFormat:
                       @"[CSA] drop: backlog=%lu",
                       (unsigned long)g_pendingSends]);
         }
@@ -309,7 +309,7 @@ void KEBCsaServerPush(NSString *line) {
         BOOL ok = csa_send_all(fd, data.bytes, data.length);
         g_pendingSends--;
         if (!ok) {
-            file_log(@"[CSA] send failed, dropping client");
+            IPALog(@"[CSA] send failed, dropping client");
             csa_close_client();
         }
     });
@@ -319,7 +319,7 @@ void KEBCsaServerClose(void) {
     if (!g_acceptQueue) return;
     dispatch_async(g_acceptQueue, ^{
         if (g_clientFd >= 0) {
-            file_log(@"[CSA] KEBCsaServerClose: tearing down client");
+            IPALog(@"[CSA] KEBCsaServerClose: tearing down client");
             csa_close_client();
         }
     });

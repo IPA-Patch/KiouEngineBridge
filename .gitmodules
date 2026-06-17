@@ -1,6 +1,6 @@
 [submodule "shared"]
 	path = shared
 	url = https://github.com/IPA-Patch/Shared.git
-[submodule "Sources/Common"]
-	path = Sources/Common
-	url = https://github.com/IPA-Patch/Common.git
+[submodule "Sources/Chinlan"]
+	path = Sources/Chinlan
+	url = https://github.com/IPA-Patch/Chinlan.git

@@ -99,7 +99,7 @@ void HookGStateNotifyPieceMoved(void *self, uint32_t move, int32_t playerSide) {
         }
     }
 
-    file_log([NSString stringWithFormat:
+    IPALog([NSString stringWithFormat:
               @"[GSTATE-MOVE] NotifyPieceMoved self=%p moved_side=%d "
               @"usi=\"%@\" sfen=\"%@\"",
               self, (int)playerSide, usi ?: @"", sfen ?: @""]);
@@ -140,7 +140,7 @@ void InstallGameStateStoreObserveHook(uintptr_t unityBase) {
         MSHookFunction((void *)addr,
                        (void *)HookGStateSetBlackPlayerInfo,
                        (void **)&orig_SetBlackPlayerInfo);
-        file_log([NSString stringWithFormat:
+        IPALog([NSString stringWithFormat:
                   @"[GSTATE] hooked GameStateStore.SetBlackPlayerInfo "
                   @"@0x%lx (base+0x%x)",
                   (unsigned long)addr,
@@ -151,7 +151,7 @@ void InstallGameStateStoreObserveHook(uintptr_t unityBase) {
         MSHookFunction((void *)addr,
                        (void *)HookGStateSetWhitePlayerInfo,
                        (void **)&orig_SetWhitePlayerInfo);
-        file_log([NSString stringWithFormat:
+        IPALog([NSString stringWithFormat:
                   @"[GSTATE] hooked GameStateStore.SetWhitePlayerInfo "
                   @"@0x%lx (base+0x%x)",
                   (unsigned long)addr,
@@ -162,7 +162,7 @@ void InstallGameStateStoreObserveHook(uintptr_t unityBase) {
         MSHookFunction((void *)addr,
                        (void *)HookGStateNotifyPieceMoved,
                        (void **)&orig_NotifyPieceMoved);
-        file_log([NSString stringWithFormat:
+        IPALog([NSString stringWithFormat:
                   @"[GSTATE] hooked GameStateStore.NotifyPieceMoved "
                   @"@0x%lx (base+0x%x)",
                   (unsigned long)addr,

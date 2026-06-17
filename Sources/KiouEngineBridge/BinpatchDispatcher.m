@@ -137,7 +137,7 @@ static void dispatch_one(void *x0, void *x1, void *x2, void *x3, void *x4,
         // a recipe / header skew — log it and return so we at least keep
         // the process alive instead of falling off into orig with an
         // unexpected state.
-        file_log([NSString stringWithFormat:
+        IPALog([NSString stringWithFormat:
                   @"[BINPATCH] unknown hook_id=%u self=%p",
                   (unsigned)hook_id, x0]);
         break;
@@ -149,7 +149,7 @@ void KEBBridgeBinpatchPublish(void) {
         // Tweak.m always sets g_unityBase before reaching us. Guarding
         // anyway so a mis-ordered installer call surfaces in the log
         // instead of crashing on the deref below.
-        file_log(@"[BINPATCH] publish skipped: g_unityBase is zero");
+        IPALog(@"[BINPATCH] publish skipped: g_unityBase is zero");
         return;
     }
     // Slot lives in UnityFramework's __DATA,__bss at the RVA the recipe
@@ -164,7 +164,7 @@ void KEBBridgeBinpatchPublish(void) {
     for (uint32_t i = 0; i < KIOU_BR_HOOK__COUNT; i++) {
         g_inject_entry[i] = kiou_bridge_bypass_entry_for_hook(i);
     }
-    file_log([NSString stringWithFormat:
+    IPALog([NSString stringWithFormat:
               @"[BINPATCH] slot=%p (unityBase+0x%lx) published "
               @"dispatcher=%p inject_entry[ai_opm]=%p inject_entry[adapter]=%p "
               @"cave_start=0x%lx cave_size=%u bypass_off=0x%x count=%u",

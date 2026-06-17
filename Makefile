@@ -38,13 +38,13 @@ include $(THEOS)/makefiles/common.mk
 
 $(TWEAK_NAME)_FILES      := $(shell find $(TWEAK_SOURCES_DIR) \
     \( -name '*.m' -o -name '*.c' -o -name '*.mm' -o -name '*.cpp' \))
-$(TWEAK_NAME)_FILES      += Sources/Common/logging.m
+$(TWEAK_NAME)_FILES      += Sources/Chinlan/logging.m
 
 BUILD_COMMIT             ?= $(shell git rev-parse --short=7 HEAD 2>/dev/null || echo unknown)
 
 $(TWEAK_NAME)_CFLAGS     := -fobjc-arc -Wno-unused-function \
                             -D$(BUILD_COMMIT_DEFINE)=\"$(BUILD_COMMIT)\" \
-                            -ISources/Common
+                            -ISources/Chinlan
 $(TWEAK_NAME)_FRAMEWORKS := Foundation
 
 # ---------------------------------------------------------------------------
@@ -58,7 +58,7 @@ $(TWEAK_NAME)_FRAMEWORKS := Foundation
 #                             dispatcher. No runtime __TEXT writes, survives
 #                             iOS 18 CSM. Implies JAILED=1.
 #
-# Sources/Common/hookengine.h picks the API at compile time via IPA_JAILED.
+# Sources/Chinlan/hookengine.h picks the API at compile time via IPA_JAILED.
 # ---------------------------------------------------------------------------
 ifeq ($(BINPATCH),1)
     JAILED                   := 1

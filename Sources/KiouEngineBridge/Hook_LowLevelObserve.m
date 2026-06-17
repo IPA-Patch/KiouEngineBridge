@@ -235,35 +235,14 @@ bool HookAdapterTryMakeMoveOut(void *self, SfMove move, void *outMove) {
         void *gameCtrl = readPtr(selfCap, ADAPTER_OFF_GAME_CONTROLLER);
         NSString *sfen = SfenFromGameController(gameCtrl);
         NSString *usi  = moveToUsi((SfMove)mv_copy);
-        file_log([NSString stringWithFormat:
+        IPALog([NSString stringWithFormat:
                   @"[ADAPTER2] TryMakeMove self=%p "
                   @"usi=\"%@\" argMove={%@} sfen_after=\"%@\"",
                   selfCap, usi ?: @"", describeMoveBits((SfMove)mv_copy),
                   sfen ?: @""]);
 
-        // Phase 2: forward the observation to the USI engine driver. It
-        // decides whether the next side to move is ours (= time to ask
-        // YaneuraOu for a bestmove) or the opponent's (= just sit and wait).
-        if (sfen) {
-            // Pull `side_to_move` straight from the SFEN's "b"/"w" token
-            // rather than reach into Position internals — keeps this hook
-            // lean and avoids the il2cpp call back into Position fields
-            // from the Unity thread we're already on.
-            int32_t sideToMove = -1;
-            NSArray<NSString *> *parts =
-                [sfen componentsSeparatedByString:@" "];
-            if (parts.count >= 2) {
-                NSString *side = parts[1];
-                if ([side isEqualToString:@"b"]) sideToMove = 0;
-                else if ([side isEqualToString:@"w"]) sideToMove = 1;
-            }
-            UsiEngineOnMoveObserved(usi, sfen, sideToMove);
-            // MetaEmitMove はここでは出さない — ADAPTER2 は「自分のクライアント
-            // が指した手」しか通らない (オンライン対戦では相手手はサーバ state
-            // 経由で来る) ので、ここで出すと自分側 ply のみの片肺 KIF になる。
-            // 両手番分の meta は Hook_GameStateStoreObserve.m の
-            // NotifyPieceMoved フックに集約してある。
-        }
+        // Move observation is handled by Hook_GameStateStoreObserve.m's
+        // NotifyPieceMoved hook, which covers both sides. Nothing to do here.
     });
 
     return ok;
@@ -283,7 +262,7 @@ static bool HookGameCtrlTryMakeMove(void *self, SfMove move) {
                   ? orig_GameCtrlTryMakeMove(self, move) : false;
     NSString *sfen = SfenFromGameController(self);
     NSString *usi  = moveToUsi(move);
-    file_log([NSString stringWithFormat:
+    IPALog([NSString stringWithFormat:
               @"[GAMECTRL] TryMakeMove self=%p ok=%d usi=\"%@\" move={%@} sfen_after=\"%@\"",
               self, (int)ok, usi ?: @"", describeMoveBits(move), sfen ?: @""]);
     // Phase 2 deliberately does NOT notify the USI engine from here —
@@ -314,7 +293,7 @@ void InstallLowLevelObserveHook(uintptr_t unityBase) {
         MSHookFunction((void *)addr,
                        (void *)HookAdapterTryMakeMoveOut,
                        (void **)&orig_AdapterTryMakeMoveOut);
-        file_log([NSString stringWithFormat:
+        IPALog([NSString stringWithFormat:
                   @"[LOWLEVEL] hooked ShogiGameAdapter.TryMakeMove(Move,out) "
                   @"@0x%lx (base+0x%x)",
                   (unsigned long)addr,
@@ -325,7 +304,7 @@ void InstallLowLevelObserveHook(uintptr_t unityBase) {
         MSHookFunction((void *)addr,
                        (void *)HookGameCtrlTryMakeMove,
                        (void **)&orig_GameCtrlTryMakeMove);
-        file_log([NSString stringWithFormat:
+        IPALog([NSString stringWithFormat:
                   @"[LOWLEVEL] hooked GameController.TryMakeMove "
                   @"@0x%lx (base+0x%x)",
                   (unsigned long)addr, (unsigned)RVA_GAMECTRL_TRY_MAKE_MOVE]);
@@ -340,7 +319,7 @@ void InstallLowLevelObserveHook(uintptr_t unityBase) {
     //     covered by HookAdapterTryMakeMoveOut for every move that
     //     reaches the board. Dropping it on binpatch saves a cave and
     //     keeps the hook surface tight.
-    file_log(@"[LOWLEVEL] binpatch build — site hooks driven by cave/SLOT, "
+    IPALog(@"[LOWLEVEL] binpatch build — site hooks driven by cave/SLOT, "
              @"symbol pointers resolved.");
 #endif  // !KIOU_BINPATCH
 }
