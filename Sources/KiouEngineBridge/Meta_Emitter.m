@@ -1,5 +1,22 @@
 #import "Internal.h"
 
+#if KIOU_BINPATCH
+// The meta sidecar is dropped on the binpatch flavour
+// (docs/plans/kiou_engine_bridge_binpatch.md § 2). Provide no-op stubs so
+// the Hook_*.m / Tweak.m call sites can compile without an #if guard at
+// every reference.
+void MetaSetMatchConfig(void *cfg) { (void)cfg; }
+void MetaEmitMatchStart(int32_t local_player) { (void)local_player; }
+void MetaEmitMove(NSString *usi, NSString *sfen_after, int32_t side_to_move) {
+    (void)usi; (void)sfen_after; (void)side_to_move;
+}
+void MetaEmitMatchEnd(usi_match_result_t result,
+                         NSString *final_sfen,
+                         NSString *usi_text) {
+    (void)result; (void)final_sfen; (void)usi_text;
+}
+#else
+
 #import <mach/mach_time.h>
 
 // ===========================================================================
@@ -19,7 +36,7 @@
 //                       the local-player seat (so we know whose side is which)
 //        move         — once per move, fired from Hook_LowLevelObserve's
 //                       Adapter.TryMakeMove(out) observation (same site as
-//                       usi_engine_on_move_observed)
+//                       UsiEngineOnMoveObserved)
 //        match_end    — once per match, from Hook_MatchModeObserve's END_HOOK
 //                       (after the inferred win/lose has been computed)
 //   - No retries, no buffering across reconnects. If no bridge is attached
@@ -80,7 +97,7 @@ static uint64_t volatile g_metaLastMoveMachTime = 0;
 // in match_start instead of MatchConfig when present.
 //
 // Volatile because writers are Unity-side hook callbacks and the reader
-// runs on whichever queue meta_emit_match_start ends up on.
+// runs on whichever queue MetaEmitMatchStart ends up on.
 static void *volatile g_metaLatestBlackPlayerInfo = NULL;
 static void *volatile g_metaLatestWhitePlayerInfo = NULL;
 
@@ -272,19 +289,19 @@ static void meta_emit_dict(NSDictionary *payload) {
                                                    options:0
                                                      error:&err];
     if (!json) {
-        file_log([NSString stringWithFormat:
+        IPALog([NSString stringWithFormat:
                   @"[META] serialize failed: %@",
                   err.localizedDescription ?: @"?"]);
         return;
     }
     NSString *body = [[NSString alloc] initWithData:json encoding:NSUTF8StringEncoding];
     if (!body) {
-        file_log(@"[META] serialize: utf-8 decode failed");
+        IPALog(@"[META] serialize: utf-8 decode failed");
         return;
     }
     NSString *line = [NSString stringWithFormat:@"meta %@\n", body];
-    file_log([NSString stringWithFormat:@"[META>] %@", body]);
-    kiou_ws_server_push(line);
+    IPALog([NSString stringWithFormat:@"[META>] %@", body]);
+    KEBWsServerPush(line);
 }
 
 // ---------------------------------------------------------------------------
@@ -335,7 +352,7 @@ static void meta_do_emit_match_start(const char *trigger) {
     d[@"black"]          = meta_playerDict(blackPI);
     d[@"white"]          = meta_playerDict(whitePI);
 
-    file_log([NSString stringWithFormat:
+    IPALog([NSString stringWithFormat:
               @"[META] match_start emit trigger=%s black_src=%s "
               @"white_src=%s",
               trigger,
@@ -360,7 +377,7 @@ static void meta_do_emit_match_start(const char *trigger) {
 //
 // Whoever wins clears g_metaMatchStartPending so the loser bails.
 // ---------------------------------------------------------------------------
-void meta_emit_match_start(int32_t local_player) {
+void MetaEmitMatchStart(int32_t local_player) {
     g_metaPendingLocalPlayer = local_player;
     g_metaMatchStartPending = true;
     // Reset the captured PlayerInfo from any previous match before we wait
@@ -370,7 +387,7 @@ void meta_emit_match_start(int32_t local_player) {
     g_metaLatestBlackPlayerInfo = NULL;
     g_metaLatestWhitePlayerInfo = NULL;
 
-    file_log([NSString stringWithFormat:
+    IPALog([NSString stringWithFormat:
               @"[META] match_start armed local_player=%d, "
               @"waiting for Set*PlayerInfo (1.5s fallback)",
               (int)local_player]);
@@ -394,7 +411,7 @@ void meta_emit_match_start(int32_t local_player) {
 // bails. Late writes after emit are kept in the cache (so a follow-up
 // stat surface could re-read them) but don't re-emit.
 // ---------------------------------------------------------------------------
-void meta_on_player_info_set(int32_t side, void *playerInfo) {
+void MetaOnPlayerInfoSet(int32_t side, void *playerInfo) {
     if (!playerInfo) return;
     if (side == 0) {
         g_metaLatestBlackPlayerInfo = playerInfo;
@@ -403,7 +420,7 @@ void meta_on_player_info_set(int32_t side, void *playerInfo) {
     } else {
         return;
     }
-    file_log([NSString stringWithFormat:
+    IPALog([NSString stringWithFormat:
               @"[META] PlayerInfo captured side=%d pi=%p "
               @"(black=%p white=%p pending=%d)",
               (int)side, playerInfo,
@@ -421,12 +438,12 @@ void meta_on_player_info_set(int32_t side, void *playerInfo) {
 }
 
 // ---------------------------------------------------------------------------
-// move. Called from the same observation site as usi_engine_on_move_observed
+// move. Called from the same observation site as UsiEngineOnMoveObserved
 // — Hook_LowLevelObserve's AdapterTryMakeMoveOut. `usi` is the move that just
 // landed; `sfen_after` is the resulting position; `side_to_move` is the side
 // whose turn it is NEXT (= opposite of who just moved).
 // ---------------------------------------------------------------------------
-void meta_emit_move(NSString *usi, NSString *sfen_after, int32_t side_to_move) {
+void MetaEmitMove(NSString *usi, NSString *sfen_after, int32_t side_to_move) {
     if (usi.length == 0) return;
 
     uint64_t now = mach_absolute_time();
@@ -473,10 +490,18 @@ void meta_emit_move(NSString *usi, NSString *sfen_after, int32_t side_to_move) {
     d[@"usi"]        = usi;
     d[@"elapsed_ms"] = @(elapsedMs);
     d[@"sfen_after"] = sfen_after ?: (id)[NSNull null];
-    // Remaining-time fields intentionally omitted for the MVP: GameStateStore's
-    // _blackTimeRemaining / _whiteTimeRemaining are ReactiveProperty<float>
-    // whose internal layout dump.cs doesn't pin down. We'll add them once
-    // the layout is confirmed against a live device, separately.
+    // Remaining time from the latest server-authoritative snapshot
+    // (UpdateAuthoritativeSnapshot for Online / CPUStream modes). 0.0f
+    // means no snapshot has arrived this match — AI and Local modes never
+    // receive one, so we emit null for those. The values lag by at most one
+    // server tick relative to the move that just landed, which is acceptable
+    // since this is the same authoritative source the server uses for
+    // adjudication. (ReactiveProperty<float> walking was the original plan
+    // but its layout is still unverified; snapshot args are the simpler path.)
+    float bTime = g_latestBlackTimeSec;
+    float wTime = g_latestWhiteTimeSec;
+    d[@"black_time_sec"] = (bTime > 0.0f) ? @(bTime) : (id)[NSNull null];
+    d[@"white_time_sec"] = (wTime > 0.0f) ? @(wTime) : (id)[NSNull null];
     meta_emit_dict(d);
 }
 
@@ -486,7 +511,7 @@ void meta_emit_move(NSString *usi, NSString *sfen_after, int32_t side_to_move) {
 // state (the caller pulls it via inject_currentSfen — easier than rereading
 // the cache here).
 // ---------------------------------------------------------------------------
-void meta_emit_match_end(usi_match_result_t result,
+void MetaEmitMatchEnd(usi_match_result_t result,
                          NSString *final_sfen,
                          NSString *usi_text) {
     NSMutableDictionary *d = [NSMutableDictionary dictionary];
@@ -496,7 +521,7 @@ void meta_emit_match_end(usi_match_result_t result,
     d[@"total_moves"]  = @(g_metaPlyCounter);
     d[@"final_sfen"]   = final_sfen ?: (id)[NSNull null];
     // GameController.GetUSIText の生戻り値。bridge 側で「startpos moves ...」
-    // または「sfen ... moves ...」として解釈して、これまで meta_emit_move で
+    // または「sfen ... moves ...」として解釈して、これまで MetaEmitMove で
     // 積んできた Record を上書きするグランドトゥルースに使う。差分ベースで
     // 累積する経路だと飛び手 / drop の駒種未確定 / 重複発火などで誤差が
     // 入る余地があるので、対局終了時にここで一発で確定させる。
@@ -510,7 +535,7 @@ void meta_emit_match_end(usi_match_result_t result,
 // MatchConfig stash / clear. Called by Hook_MatchModeObserve's Init hook
 // with the cfg arg, and by the End hook with NULL.
 // ---------------------------------------------------------------------------
-void meta_set_match_config(void *cfg) {
+void MetaSetMatchConfig(void *cfg) {
     g_metaMatchConfig = cfg;
     if (!cfg) {
         // Clearing means the match is over (or the next one hasn't started).
@@ -531,3 +556,5 @@ void meta_set_match_config(void *cfg) {
         g_metaPendingLocalPlayer = -1;
     }
 }
+
+#endif  // !KIOU_BINPATCH

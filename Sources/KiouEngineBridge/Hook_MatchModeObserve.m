@@ -1,6 +1,7 @@
 #import "Internal.h"
 
 #import <mach/mach_time.h>
+#import <UIKit/UIKit.h>
 
 // ===========================================================================
 // Hook_MatchModeObserve — capture every IMatchMode.OnPlayerMoveAsync entry.
@@ -113,28 +114,41 @@ OnPlayerMoveAsync_t orig_RecordReplayMode_OnPlayerMoveAsync = NULL;
 // convention doesn't matter.
 typedef UniTaskRet (*InitializeAsync_t)(void *self, void *cfg, void *stateStore,
                                        void *gameAdapter, void *ct);
-static InitializeAsync_t orig_AI_Init        = NULL;
-static InitializeAsync_t orig_CPUStream_Init = NULL;
-static InitializeAsync_t orig_Local_Init     = NULL;
-static InitializeAsync_t orig_Online_Init    = NULL;
-static InitializeAsync_t orig_Replay_Init    = NULL;
+// `__attribute__((unused))` suppresses -Wunused-variable on the binpatch
+// build where KIOU_CALL_ORIG_RET expands to ((UniTaskRet){0}) and never
+// evaluates the pointer argument.
+static InitializeAsync_t orig_AI_Init        __attribute__((unused)) = NULL;
+static InitializeAsync_t orig_CPUStream_Init __attribute__((unused)) = NULL;
+static InitializeAsync_t orig_Local_Init     __attribute__((unused)) = NULL;
+static InitializeAsync_t orig_Online_Init    __attribute__((unused)) = NULL;
+static InitializeAsync_t orig_Replay_Init    __attribute__((unused)) = NULL;
 
 // OnMatchEndAsync(CT) -> UniTask. Same shape as OnPlayerMoveAsync but
 // without the Move argument.
 typedef UniTaskRet (*OnMatchEndAsync_t)(void *self, void *ct);
-static OnMatchEndAsync_t orig_AI_End        = NULL;
-static OnMatchEndAsync_t orig_CPUStream_End = NULL;
-static OnMatchEndAsync_t orig_Local_End     = NULL;
-static OnMatchEndAsync_t orig_Online_End    = NULL;
-static OnMatchEndAsync_t orig_Replay_End    = NULL;
+static OnMatchEndAsync_t orig_AI_End        __attribute__((unused)) = NULL;
+static OnMatchEndAsync_t orig_CPUStream_End __attribute__((unused)) = NULL;
+static OnMatchEndAsync_t orig_Local_End     __attribute__((unused)) = NULL;
+static OnMatchEndAsync_t orig_Online_End    __attribute__((unused)) = NULL;
+static OnMatchEndAsync_t orig_Replay_End    __attribute__((unused)) = NULL;
 
 // OnMatchStart() -> void. Truly synchronous; no UniTask gymnastics.
+//
+// __attribute__((unused)) is needed because on the binpatch build the
+// KIOU_CALL_ORIG_VOID(ORIG_VAR, self) inside DEFINE_START_HOOK expands to
+// ((void)0), leaving these five `orig_*_Start` storage slots unreferenced.
+// MSHookFunction's installer writes through their addresses on the JB
+// build (the `(void **)&orig_..._Start` argument in the entries[] table),
+// so they're not actually unused at runtime in that flavour — and on
+// binpatch they're simply spare slots. `((unused))` tells -Werror to stay
+// quiet for both shapes without forcing us to gate the declarations
+// themselves with #if.
 typedef void (*OnMatchStart_t)(void *self);
-static OnMatchStart_t orig_AI_Start        = NULL;
-static OnMatchStart_t orig_CPUStream_Start = NULL;
-static OnMatchStart_t orig_Local_Start     = NULL;
-static OnMatchStart_t orig_Online_Start    = NULL;
-static OnMatchStart_t orig_Replay_Start    = NULL;
+static OnMatchStart_t orig_AI_Start        __attribute__((unused)) = NULL;
+static OnMatchStart_t orig_CPUStream_Start __attribute__((unused)) = NULL;
+static OnMatchStart_t orig_Local_Start     __attribute__((unused)) = NULL;
+static OnMatchStart_t orig_Online_Start    __attribute__((unused)) = NULL;
+static OnMatchStart_t orig_Replay_Start    __attribute__((unused)) = NULL;
 
 // First-touch logging counters so we don't spam the log file every move.
 // Log the first three calls per mode and every 30th after that.
@@ -155,33 +169,37 @@ static inline BOOL shouldLog(uint32_t n) {
 // to return void here would corrupt the caller's await frame.
 // ---------------------------------------------------------------------------
 
-#define DEFINE_OPM_HOOK(MODE_LOWER, MODE_TAG, CACHE_VAR, TS_VAR, SEEN_VAR, ORIG_VAR) \
-    static UniTaskRet hook_##MODE_LOWER##_OPM(void *self, uint32_t mv, void *ct) {  \
+#define DEFINE_OPM_HOOK(MODE_PASCAL, MODE_TAG, CACHE_VAR, TS_VAR, SEEN_VAR, ORIG_VAR) \
+    UniTaskRet Hook##MODE_PASCAL##Opm(void *self, uint32_t mv, void *ct) {           \
         if ((CACHE_VAR) != self) (CACHE_VAR) = self;                                \
         (TS_VAR) = mach_absolute_time();                                            \
         uint32_t n = ++(SEEN_VAR);                                                  \
         if (shouldLog(n)) {                                                         \
-            file_log([NSString stringWithFormat:                                    \
+            IPALog([NSString stringWithFormat:                                    \
                       @"[MMODE] " MODE_TAG " OPM call#%u self=%p move=0x%x",       \
                       n, self, (unsigned)mv]);                                      \
         }                                                                           \
-        if (ORIG_VAR) return (ORIG_VAR)(self, mv, ct);                              \
-        return (UniTaskRet){ NULL, NULL };                                          \
+        /* On binpatch KIOU_CALL_ORIG_RET is a no-op: the cave runs orig via  */   \
+        /* the displaced prologue + `B orig+4` after the dispatcher returns.  */   \
+        /* On JB the trampoline installed by MSHookFunction is in ORIG_VAR.   */   \
+        /* Never call ORIG_VAR directly on binpatch: it points at the patched */   \
+        /* instruction (now `B <cave>`), which would recurse infinitely.      */   \
+        return KIOU_CALL_ORIG_RET(UniTaskRet, ORIG_VAR, self, mv, ct);             \
     }
 
-DEFINE_OPM_HOOK(ai,       "AIMatchMode",      g_aiMatchModeCache,
+DEFINE_OPM_HOOK(Ai,        "AIMatchMode",      g_aiMatchModeCache,
                 g_lastAiMatchEvtUs,      g_aiSeen,
                 orig_AIMatchMode_OnPlayerMoveAsync)
-DEFINE_OPM_HOOK(cpustream, "CPUStreamMode",   g_cpuStreamModeCache,
+DEFINE_OPM_HOOK(CpuStream, "CPUStreamMode",   g_cpuStreamModeCache,
                 g_lastCpuStreamEvtUs,    g_cpuStreamSeen,
                 orig_CPUStreamMode_OnPlayerMoveAsync)
-DEFINE_OPM_HOOK(local,    "LocalPvPMode",     g_localPvPModeCache,
+DEFINE_OPM_HOOK(Local,     "LocalPvPMode",    g_localPvPModeCache,
                 g_lastLocalPvPEvtUs,     g_localPvPSeen,
                 orig_LocalPvPMode_OnPlayerMoveAsync)
-DEFINE_OPM_HOOK(online,   "OnlinePvPMode",    g_onlineModeCache,
+DEFINE_OPM_HOOK(Online,    "OnlinePvPMode",   g_onlineModeCache,
                 g_lastOnlineEvtUs,       g_onlinePMSeen,
                 orig_OnlinePvPMode_OnPlayerMoveAsync)
-DEFINE_OPM_HOOK(replay,   "RecordReplayMode", g_recordReplayModeCache,
+DEFINE_OPM_HOOK(Replay,    "RecordReplayMode", g_recordReplayModeCache,
                 g_lastRecordReplayEvtUs, g_recordReplaySeen,
                 orig_RecordReplayMode_OnPlayerMoveAsync)
 
@@ -201,10 +219,10 @@ DEFINE_OPM_HOOK(replay,   "RecordReplayMode", g_recordReplayModeCache,
 // dump.
 // ---------------------------------------------------------------------------
 
-#define DEFINE_INIT_HOOK(MODE_LOWER, MODE_TAG, CACHE_VAR, ORIG_VAR)                     \
-    static UniTaskRet hook_##MODE_LOWER##_Init(void *self, void *cfg,                   \
-                                               void *store, void *adapter,              \
-                                               void *ct) {                              \
+#define DEFINE_INIT_HOOK(MODE_PASCAL, MODE_TAG, CACHE_VAR, ORIG_VAR)                     \
+    UniTaskRet Hook##MODE_PASCAL##Init(void *self, void *cfg,                           \
+                                        void *store, void *adapter,                     \
+                                        void *ct) {                                     \
         if ((CACHE_VAR) != self) (CACHE_VAR) = self;                                    \
         /* Capture the adapter the moment IMatchMode.InitializeAsync hands */          \
         /* it over. Without this, g_adapterCache stays NULL until the first */         \
@@ -216,15 +234,18 @@ DEFINE_OPM_HOOK(replay,   "RecordReplayMode", g_recordReplayModeCache,
             void *gc = readPtr(adapter, KIOU_ADAPTER_OFF_GAME_CONTROLLER);              \
             if (gc && g_gameCtrlCache != gc) g_gameCtrlCache = gc;                      \
         }                                                                               \
-        /* Stash MatchConfig so Meta_Emitter can read player names, time */            \
-        /* control, and mode at match_start time. The cfg pointer is stable */         \
-        /* for the lifetime of the match — il2cpp's Boehm GC won't move it, */         \
-        /* and IMatchMode keeps a strong ref through _matchConfig (Online) */          \
-        /* or via the captured arg itself (the simpler modes). */                      \
-        meta_set_match_config(cfg);                                                     \
-        UniTaskRet ret = { NULL, NULL };                                                \
-        if (ORIG_VAR) ret = (ORIG_VAR)(self, cfg, store, adapter, ct);                  \
-        file_log([NSString stringWithFormat:                                            \
+        /* Stash MatchConfig so Csa_GameInfo (and the legacy Meta_Emitter) */         \
+        /* can read player names, time control, and mode at match_start time. */       \
+        /* The cfg pointer is stable for the lifetime of the match — il2cpp's */       \
+        /* Boehm GC won't move it, and IMatchMode keeps a strong ref through */         \
+        /* _matchConfig (Online) or via the captured arg itself (the simpler */        \
+        /* modes). */                                                                  \
+        MetaSetMatchConfig(cfg);                                                     \
+        CsaSetMatchConfig(cfg);                                                       \
+        /* On binpatch KIOU_CALL_ORIG_RET is a no-op (cave handles orig). */ \
+        UniTaskRet ret =                                                                \
+            KIOU_CALL_ORIG_RET(UniTaskRet, ORIG_VAR, self, cfg, store, adapter, ct);   \
+        IPALog([NSString stringWithFormat:                                            \
                   @"[MMODE] " MODE_TAG " Init self=%p store=%p adapter=%p cfg=%p",      \
                   self, store, adapter, cfg]);                                          \
         return ret;                                                                     \
@@ -233,15 +254,15 @@ DEFINE_OPM_HOOK(replay,   "RecordReplayMode", g_recordReplayModeCache,
 // Init only caches the self pointer — `_localPlayer` lives behind an
 // async assignment we can't see synchronously, so it gets read in
 // OnMatchStart below.
-DEFINE_INIT_HOOK(ai,        "AIMatchMode",      g_aiMatchModeCache,
+DEFINE_INIT_HOOK(Ai,        "AIMatchMode",      g_aiMatchModeCache,
                  orig_AI_Init)
-DEFINE_INIT_HOOK(cpustream, "CPUStreamMode",    g_cpuStreamModeCache,
+DEFINE_INIT_HOOK(CpuStream, "CPUStreamMode",    g_cpuStreamModeCache,
                  orig_CPUStream_Init)
-DEFINE_INIT_HOOK(local,     "LocalPvPMode",     g_localPvPModeCache,
+DEFINE_INIT_HOOK(Local,     "LocalPvPMode",     g_localPvPModeCache,
                  orig_Local_Init)
-DEFINE_INIT_HOOK(online,    "OnlinePvPMode",    g_onlineModeCache,
+DEFINE_INIT_HOOK(Online,    "OnlinePvPMode",    g_onlineModeCache,
                  orig_Online_Init)
-DEFINE_INIT_HOOK(replay,    "RecordReplayMode", g_recordReplayModeCache,
+DEFINE_INIT_HOOK(Replay,    "RecordReplayMode", g_recordReplayModeCache,
                  orig_Replay_Init)
 
 #undef DEFINE_INIT_HOOK
@@ -258,45 +279,58 @@ DEFINE_INIT_HOOK(replay,    "RecordReplayMode", g_recordReplayModeCache,
 // we just call through.
 // ---------------------------------------------------------------------------
 
-#define DEFINE_START_HOOK(MODE_LOWER, MODE_TAG, CACHE_VAR, LP_CACHE, LP_OFFSET, ORIG_VAR) \
-    static void hook_##MODE_LOWER##_Start(void *self) {                                   \
+// The hook body uses KIOU_CALL_ORIG_VOID to run orig before the deferred
+// block — on the JB build that drives the real OnMatchStart synchronously
+// (without it, MSHookFunction would replace the function wholesale); on the
+// binpatch build it expands to (void)0 because the cave already runs the
+// displaced prologue + `B orig+4` outside this function. Either way orig is
+// guaranteed to have run by the time the dispatched block fires on the next
+// main-runloop spin, so `_localPlayer` is populated when the block reads it.
+//
+// We capture `self` and `lp_offset` by value into the block (both are POD —
+// `self` is a void *, no ARC retain). The LP_CACHE / IPALog / usi /
+// meta calls all happen inside the deferred block so they observe the
+// post-orig state.
+#define DEFINE_START_HOOK(MODE_PASCAL, MODE_TAG, CACHE_VAR, LP_CACHE, LP_OFFSET, ORIG_VAR) \
+    void Hook##MODE_PASCAL##Start(void *self) {                                            \
         if ((CACHE_VAR) != self) (CACHE_VAR) = self;                                      \
-        if (ORIG_VAR) (ORIG_VAR)(self);                                                   \
-        int32_t lp = -1;                                                                  \
-        if ((LP_OFFSET) != 0 && self) {                                                   \
-            lp = readI32(self, (LP_OFFSET));                                              \
-            (LP_CACHE) = lp;                                                              \
-        }                                                                                 \
-        file_log([NSString stringWithFormat:                                              \
-                  @"[MMODE] " MODE_TAG " Start self=%p localPlayer=%d",                   \
-                  self, (int)lp]);                                                        \
-        /* Tell the USI engine driver that a match just started so it can */              \
-        /* prep its state machine and (when we're the side to move first) */              \
-        /* kickstart a position+go without waiting for the first observed */              \
-        /* opponent move. */                                                              \
-        usi_engine_on_match_start(lp);                                                    \
-        /* Emit the match_start meta line so the bridge can begin assembling */          \
-        /* its KIF header (player names, mode, time control). MatchConfig is */          \
-        /* already cached from the InitializeAsync hook above, and lp is what */         \
-        /* we've just read — same call site keeps the two notifications in */            \
-        /* lockstep. */                                                                   \
-        meta_emit_match_start(lp);                                                        \
+        KIOU_CALL_ORIG_VOID(ORIG_VAR, self);                                              \
+        void *selfCap = self;                                                             \
+        uintptr_t lpOffsetCap = (uintptr_t)(LP_OFFSET);                                   \
+        dispatch_async(dispatch_get_main_queue(), ^{                                      \
+            int32_t lp = -1;                                                              \
+            if (lpOffsetCap != 0 && selfCap) {                                            \
+                lp = readI32(selfCap, lpOffsetCap);                                       \
+                (LP_CACHE) = lp;                                                          \
+            }                                                                             \
+            IPALog([NSString stringWithFormat:                                          \
+                      @"[MMODE] " MODE_TAG " Start self=%p localPlayer=%d",               \
+                      selfCap, (int)lp]);                                                 \
+            /* Notify the CSA engine driver so it can ship Game_Summary to the */         \
+            /* connected engine (or arm for the next AGREE). Csa_GameInfo reads */        \
+            /* MatchConfig + GameStateStore.Set*PlayerInfo to fill the block. */          \
+            CsaEngineOnMatchStart(lp);                                                    \
+            MetaEmitMatchStart(lp);                                                    \
+            /* Prevent the screen from dimming while a match is active.             */    \
+            /* Already on the main queue here.                                      */    \
+            [UIApplication sharedApplication].idleTimerDisabled = YES;                   \
+        });                                                                                \
     }
 
 // AIMatchMode / CPUStreamMode / OnlinePvPMode capture _localPlayer.
-DEFINE_START_HOOK(ai,        "AIMatchMode",      g_aiMatchModeCache,
+DEFINE_START_HOOK(Ai,        "AIMatchMode",      g_aiMatchModeCache,
                   g_aiLocalPlayer,        OFF_AI_LOCALPLAYER,        orig_AI_Start)
-DEFINE_START_HOOK(cpustream, "CPUStreamMode",    g_cpuStreamModeCache,
+DEFINE_START_HOOK(CpuStream, "CPUStreamMode",    g_cpuStreamModeCache,
                   g_cpuStreamLocalPlayer, OFF_CPUSTREAM_LOCALPLAYER, orig_CPUStream_Start)
-DEFINE_START_HOOK(online,    "OnlinePvPMode",    g_onlineModeCache,
+DEFINE_START_HOOK(Online,    "OnlinePvPMode",    g_onlineModeCache,
                   g_onlineLocalPlayer,    OFF_ONLINE_LOCALPLAYER,    orig_Online_Start)
 
 // LocalPvPMode / RecordReplayMode have no `_localPlayer` — pass offset 0
 // and the macro skips the read.
 static int32_t volatile g_unusedLocalPlayerSlot = -1;
-DEFINE_START_HOOK(local,  "LocalPvPMode",     g_localPvPModeCache,
+DEFINE_START_HOOK(Local,  "LocalPvPMode",     g_localPvPModeCache,
                   g_unusedLocalPlayerSlot, 0, orig_Local_Start)
-DEFINE_START_HOOK(replay, "RecordReplayMode", g_recordReplayModeCache,
+DEFINE_START_HOOK(Replay, "RecordReplayMode", g_recordReplayModeCache,
                   g_unusedLocalPlayerSlot, 0, orig_Replay_Start)
 
 #undef DEFINE_START_HOOK
@@ -406,7 +440,7 @@ static int32_t readCpuStrengthFromOrchestrator(void) {
     // int32 value @4.
     uint8_t hasValue = readU8(params, OFF_GAMEPARAMS_CPU_STRENGTH);
     int32_t value    = readI32(params, OFF_GAMEPARAMS_CPU_STRENGTH + 4);
-    file_log([NSString stringWithFormat:
+    IPALog([NSString stringWithFormat:
               @"[REMATCH] readCpuStrength: orch=%p setup=%p params=%p "
               @"hasValue=%u value=%d",
               orch, setup, params, (unsigned)hasValue, (int)value]);
@@ -421,12 +455,12 @@ static int32_t readCpuStrengthFromOrchestrator(void) {
 // RecordReplay). Anything else is logged + a rematch kick is scheduled.
 static void scheduleAutoRematch(const char *modeTag) {
     if (!modeTag) {
-        file_log(@"[REMATCH] skipped: mode opts out");
+        IPALog(@"[REMATCH] skipped: mode opts out");
         return;
     }
     bool isOnline = (strcmp(modeTag, "online") == 0);
 
-    file_log([NSString stringWithFormat:
+    IPALog([NSString stringWithFormat:
               @"[REMATCH] scheduling auto-rematch mode=%s orch=%p",
               modeTag, g_gameOrchestratorCache]);
 
@@ -439,7 +473,7 @@ static void scheduleAutoRematch(const char *modeTag) {
                    dispatch_get_main_queue(), ^{
         void *orch = g_gameOrchestratorCache;
         if (!orch || g_unityBase == 0) {
-            file_log(@"[REMATCH] step1 skipped: no orchestrator/unityBase");
+            IPALog(@"[REMATCH] step1 skipped: no orchestrator/unityBase");
             return;
         }
         GameOrch_OnEndSequenceCompleted_t fn =
@@ -447,11 +481,11 @@ static void scheduleAutoRematch(const char *modeTag) {
             (g_unityBase + RVA_GAMEORCH_ON_END_SEQUENCE_COMPLETED);
         @try {
             fn(orch);
-            file_log([NSString stringWithFormat:
+            IPALog([NSString stringWithFormat:
                       @"[REMATCH] step1: OnEndSequenceCompleted invoked "
                       @"orch=%p", orch]);
         } @catch (NSException *e) {
-            file_log([NSString stringWithFormat:
+            IPALog([NSString stringWithFormat:
                       @"[REMATCH] step1 threw: %@", e]);
         }
     });
@@ -463,7 +497,7 @@ static void scheduleAutoRematch(const char *modeTag) {
                                  (int64_t)(5.5 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
         if (g_unityBase == 0) {
-            file_log(@"[REMATCH] step2 skipped: no unityBase");
+            IPALog(@"[REMATCH] step2 skipped: no unityBase");
             return;
         }
         if (isOnline) {
@@ -471,18 +505,18 @@ static void scheduleAutoRematch(const char *modeTag) {
                 (g_unityBase + RVA_MATCHING_START_RANK);
             @try {
                 (void)fn(RANK_RULE_BULLET3MIN, false, NULL);
-                file_log([NSString stringWithFormat:
+                IPALog([NSString stringWithFormat:
                           @"[REMATCH] step2: StartRankMatchingAsync "
                           @"rule=Bullet3Min(%d)", RANK_RULE_BULLET3MIN]);
             } @catch (NSException *e) {
-                file_log([NSString stringWithFormat:
+                IPALog([NSString stringWithFormat:
                           @"[REMATCH] step2 (online) threw: %@", e]);
             }
         } else {
             int32_t strength = readCpuStrengthFromOrchestrator();
             if (strength < 0) {
                 strength = CPU_STRENGTH_NORMAL;
-                file_log([NSString stringWithFormat:
+                IPALog([NSString stringWithFormat:
                           @"[REMATCH] step2: CPU strength unreadable, "
                           @"falling back to Normal(%d)", strength]);
             }
@@ -490,20 +524,20 @@ static void scheduleAutoRematch(const char *modeTag) {
                 (g_unityBase + RVA_CPU_MATCH_START_FREE);
             @try {
                 (void)fn(strength, false, NULL);
-                file_log([NSString stringWithFormat:
+                IPALog([NSString stringWithFormat:
                           @"[REMATCH] step2: StartCpuFreeMatchAsync "
                           @"strength=%d", (int)strength]);
             } @catch (NSException *e) {
-                file_log([NSString stringWithFormat:
+                IPALog([NSString stringWithFormat:
                           @"[REMATCH] step2 (cpu) threw: %@", e]);
             }
         }
     });
 }
 
-#define DEFINE_END_HOOK(MODE_LOWER, MODE_TAG, CACHE_VAR, LP_CACHE, HAS_LP,         \
+#define DEFINE_END_HOOK(MODE_PASCAL, MODE_TAG, CACHE_VAR, LP_CACHE, HAS_LP,        \
                         REMATCH_TAG, ORIG_VAR)                                     \
-    static UniTaskRet hook_##MODE_LOWER##_End(void *self, void *ct) {              \
+    UniTaskRet Hook##MODE_PASCAL##End(void *self, void *ct) {                      \
         /* Snapshot localPlayer BEFORE clearing it so we can infer the result. */  \
         int32_t lpSnapshot = (HAS_LP) ? (LP_CACHE) : -1;                           \
         usi_match_result_t result = inferMatchResult(lpSnapshot);                  \
@@ -512,8 +546,8 @@ static void scheduleAutoRematch(const char *modeTag) {
         NSString *finalSfen = inject_currentSfen();                                \
         /* Pull the full game record straight off the GameController while it's */ \
         /* still live. Bridge 側で Match.finish のグランドトゥルースに使う。 */     \
-        NSString *usiText = usiTextFromGameController(g_gameCtrlCache);            \
-        file_log([NSString stringWithFormat:                                       \
+        NSString *usiText = UsiTextFromGameController(g_gameCtrlCache);            \
+        IPALog([NSString stringWithFormat:                                       \
                   @"[MMODE] " MODE_TAG " End self=%p localPlayer=%d "              \
                   @"result=%d sfen=\"%@\"",                                        \
                   self, (int)lpSnapshot, (int)result, finalSfen ?: @""]);          \
@@ -522,98 +556,130 @@ static void scheduleAutoRematch(const char *modeTag) {
         /* Whichever match owned the cached SFEN is over now. Clear it so the */   \
         /* next match doesn't inherit a stale board on its first injection. */     \
         g_authoritativeSfenString = NULL;                                          \
-        /* Roll the USI engine state machine back to READY (after shipping */      \
-        /* `gameover` to the bridge) so a new game's usinewgame is sent */         \
-        /* before the next position+go. */                                         \
-        usi_engine_on_match_end(result);                                           \
-        /* Emit the match_end meta line so the bridge can finalize its KIF */      \
-        /* assembly. After this point we drop the MatchConfig cache so the */      \
-        /* next match's meta_match_start reads fresh. */                           \
-        meta_emit_match_end(result, finalSfen, usiText);                           \
-        meta_set_match_config(NULL);                                               \
+        /* Reset time cache so the next match doesn't inherit stale values.  */   \
+        g_latestBlackTimeSec = 0.0f;                                               \
+        g_latestWhiteTimeSec = 0.0f;                                               \
+        /* Surface the result to the CSA engine driver so it can emit */          \
+        /* #REASON + #WIN/#LOSE/#DRAW before the next match resets state. */      \
+        CsaEngineOnMatchEnd(result);                                              \
+        MetaEmitMatchEnd(result, finalSfen, usiText);                             \
+        MetaSetMatchConfig(NULL);                                                 \
+        CsaSetMatchConfig(NULL);                                                  \
         /* Schedule the auto-rematch sequence. REMATCH_TAG = NULL opts out. */     \
         scheduleAutoRematch(REMATCH_TAG);                                          \
-        if (ORIG_VAR) return (ORIG_VAR)(self, ct);                                 \
-        return (UniTaskRet){ NULL, NULL };                                         \
+        /* Re-enable the idle timer now that the match has ended. The start  */   \
+        /* hook set it on the main queue, so mirror that here.               */   \
+        dispatch_async(dispatch_get_main_queue(), ^{                              \
+            [UIApplication sharedApplication].idleTimerDisabled = NO;            \
+        });                                                                        \
+        /* On binpatch KIOU_CALL_ORIG_RET is a no-op (cave handles orig). */ \
+        return KIOU_CALL_ORIG_RET(UniTaskRet, ORIG_VAR, self, ct);                \
     }
 
-DEFINE_END_HOOK(ai,        "AIMatchMode",      g_aiMatchModeCache,
+DEFINE_END_HOOK(Ai,        "AIMatchMode",      g_aiMatchModeCache,
                 g_aiLocalPlayer,        true,  "ai_cpu",  orig_AI_End)
-DEFINE_END_HOOK(cpustream, "CPUStreamMode",    g_cpuStreamModeCache,
+DEFINE_END_HOOK(CpuStream, "CPUStreamMode",    g_cpuStreamModeCache,
                 g_cpuStreamLocalPlayer, true,  "ai_cpu",  orig_CPUStream_End)
-DEFINE_END_HOOK(online,    "OnlinePvPMode",    g_onlineModeCache,
+DEFINE_END_HOOK(Online,    "OnlinePvPMode",    g_onlineModeCache,
                 g_onlineLocalPlayer,    true,  "online",  orig_Online_End)
-DEFINE_END_HOOK(local,     "LocalPvPMode",     g_localPvPModeCache,
+DEFINE_END_HOOK(Local,     "LocalPvPMode",     g_localPvPModeCache,
                 g_unusedLocalPlayerSlot, false, NULL,     orig_Local_End)
-DEFINE_END_HOOK(replay,    "RecordReplayMode", g_recordReplayModeCache,
+DEFINE_END_HOOK(Replay,    "RecordReplayMode", g_recordReplayModeCache,
                 g_unusedLocalPlayerSlot, false, NULL,     orig_Replay_End)
 
 #undef DEFINE_END_HOOK
 
 // ---------------------------------------------------------------------------
-// Installer. Wires up all five hooks.
+// Installer. Wires up all 20 hooks (5 modes × {Init / Start / OPM / End}).
+// On the binpatch build all 20 sites are routed by the static cave + SLOT
+// dispatcher (KIOU_BR_HOOK_*_INIT / _START / _OPM / _END in
+// recipes/kiouenginebridge.py), so the installer is omitted there.
 // ---------------------------------------------------------------------------
-void install_MatchModeObserve_hook(uintptr_t unityBase) {
+#if !KIOU_BINPATCH
+void InstallMatchModeObserveHook(uintptr_t unityBase) {
     struct { const char *tag; const char *what; uintptr_t rva;
              void *hook; void **origSlot; } entries[] = {
         // OnPlayerMoveAsync — confirms the mode self pointer + populates
         // freshness timestamps used by the route picker.
         { "AIMatchMode",      "OnPlayerMoveAsync", RVA_AI_OPM,
-          (void *)hook_ai_OPM,        (void **)&orig_AIMatchMode_OnPlayerMoveAsync },
+          (void *)HookAiOpm,        (void **)&orig_AIMatchMode_OnPlayerMoveAsync },
         { "CPUStreamMode",    "OnPlayerMoveAsync", RVA_CPUSTREAM_OPM,
-          (void *)hook_cpustream_OPM, (void **)&orig_CPUStreamMode_OnPlayerMoveAsync },
+          (void *)HookCpuStreamOpm, (void **)&orig_CPUStreamMode_OnPlayerMoveAsync },
         { "LocalPvPMode",     "OnPlayerMoveAsync", RVA_LOCAL_OPM,
-          (void *)hook_local_OPM,     (void **)&orig_LocalPvPMode_OnPlayerMoveAsync },
+          (void *)HookLocalOpm,     (void **)&orig_LocalPvPMode_OnPlayerMoveAsync },
         { "OnlinePvPMode",    "OnPlayerMoveAsync", RVA_ONLINE_OPM,
-          (void *)hook_online_OPM,    (void **)&orig_OnlinePvPMode_OnPlayerMoveAsync },
+          (void *)HookOnlineOpm,    (void **)&orig_OnlinePvPMode_OnPlayerMoveAsync },
         { "RecordReplayMode", "OnPlayerMoveAsync", RVA_RECORDREPLAY_OPM,
-          (void *)hook_replay_OPM,    (void **)&orig_RecordReplayMode_OnPlayerMoveAsync },
+          (void *)HookReplayOpm,    (void **)&orig_RecordReplayMode_OnPlayerMoveAsync },
 
         // InitializeAsync — primary cache population, plus _localPlayer
         // capture on the seat-fixed modes.
         { "AIMatchMode",      "InitializeAsync", RVA_AI_INIT,
-          (void *)hook_ai_Init,        (void **)&orig_AI_Init },
+          (void *)HookAiInit,        (void **)&orig_AI_Init },
         { "CPUStreamMode",    "InitializeAsync", RVA_CPUSTREAM_INIT,
-          (void *)hook_cpustream_Init, (void **)&orig_CPUStream_Init },
+          (void *)HookCpuStreamInit, (void **)&orig_CPUStream_Init },
         { "LocalPvPMode",     "InitializeAsync", RVA_LOCAL_INIT,
-          (void *)hook_local_Init,     (void **)&orig_Local_Init },
+          (void *)HookLocalInit,     (void **)&orig_Local_Init },
         { "OnlinePvPMode",    "InitializeAsync", RVA_ONLINE_INIT,
-          (void *)hook_online_Init,    (void **)&orig_Online_Init },
+          (void *)HookOnlineInit,    (void **)&orig_Online_Init },
         { "RecordReplayMode", "InitializeAsync", RVA_RECORDREPLAY_INIT,
-          (void *)hook_replay_Init,    (void **)&orig_Replay_Init },
+          (void *)HookReplayInit,    (void **)&orig_Replay_Init },
 
         // OnMatchEndAsync — clear the cache so cross-match dispatch can't
         // dispatch on a stale mode pointer.
         { "AIMatchMode",      "OnMatchEndAsync", RVA_AI_END,
-          (void *)hook_ai_End,        (void **)&orig_AI_End },
+          (void *)HookAiEnd,        (void **)&orig_AI_End },
         { "CPUStreamMode",    "OnMatchEndAsync", RVA_CPUSTREAM_END,
-          (void *)hook_cpustream_End, (void **)&orig_CPUStream_End },
+          (void *)HookCpuStreamEnd, (void **)&orig_CPUStream_End },
         { "LocalPvPMode",     "OnMatchEndAsync", RVA_LOCAL_END,
-          (void *)hook_local_End,     (void **)&orig_Local_End },
+          (void *)HookLocalEnd,     (void **)&orig_Local_End },
         { "OnlinePvPMode",    "OnMatchEndAsync", RVA_ONLINE_END,
-          (void *)hook_online_End,    (void **)&orig_Online_End },
+          (void *)HookOnlineEnd,    (void **)&orig_Online_End },
         { "RecordReplayMode", "OnMatchEndAsync", RVA_RECORDREPLAY_END,
-          (void *)hook_replay_End,    (void **)&orig_Replay_End },
+          (void *)HookReplayEnd,    (void **)&orig_Replay_End },
 
         // OnMatchStart — synchronous prelude to live play; this is when we
         // read _localPlayer reliably for the seat-fixed modes.
         { "AIMatchMode",      "OnMatchStart", RVA_AI_START,
-          (void *)hook_ai_Start,        (void **)&orig_AI_Start },
+          (void *)HookAiStart,        (void **)&orig_AI_Start },
         { "CPUStreamMode",    "OnMatchStart", RVA_CPUSTREAM_START,
-          (void *)hook_cpustream_Start, (void **)&orig_CPUStream_Start },
+          (void *)HookCpuStreamStart, (void **)&orig_CPUStream_Start },
         { "LocalPvPMode",     "OnMatchStart", RVA_LOCAL_START,
-          (void *)hook_local_Start,     (void **)&orig_Local_Start },
+          (void *)HookLocalStart,     (void **)&orig_Local_Start },
         { "OnlinePvPMode",    "OnMatchStart", RVA_ONLINE_START,
-          (void *)hook_online_Start,    (void **)&orig_Online_Start },
+          (void *)HookOnlineStart,    (void **)&orig_Online_Start },
         { "RecordReplayMode", "OnMatchStart", RVA_RECORDREPLAY_START,
-          (void *)hook_replay_Start,    (void **)&orig_Replay_Start },
+          (void *)HookReplayStart,    (void **)&orig_Replay_Start },
     };
     for (size_t i = 0; i < sizeof(entries) / sizeof(entries[0]); i++) {
         uintptr_t addr = unityBase + entries[i].rva;
         MSHookFunction((void *)addr, entries[i].hook, entries[i].origSlot);
-        file_log([NSString stringWithFormat:
+        IPALog([NSString stringWithFormat:
                   @"[MMODE] hooked %s.%s @0x%lx (base+0x%lx)",
                   entries[i].tag, entries[i].what,
                   (unsigned long)addr, (unsigned long)entries[i].rva]);
     }
 }
+#else   // KIOU_BINPATCH
+// On the binpatch build the static cave + SLOT dispatcher drives every hook
+// body, so MSHookFunction is never called.
+//
+// Importantly we MUST NOT write `unityBase + RVA_*` into `orig_*` here: that
+// address is the patched first instruction (`B <cave>`), so calling it from
+// the inject path would re-enter the dispatcher and loop. The bypass entry
+// for binpatch injection is the cave tail (cave + KIOU_BR_CAVE_BYPASS_OFFSET),
+// computed by `kiou_bridge_bypass_entry_for_hook()` and exposed via
+// `KIOU_BR_BINPATCH_ORIG_OR_BYPASS(orig_*, hook_id, type)` -- the macro
+// returns `g_inject_entry[hook_id]` when `orig_*` is NULL, which is the
+// right call target on this build.
+//
+// Leaving `orig_*` at NULL is therefore the correct (and required) state on
+// binpatch. The installer is kept as a no-op so Tweak.m can dispatch it
+// unconditionally and the log explicitly records that we're on the
+// bypass-entry path.
+void InstallMatchModeObserveHook(uintptr_t unityBase) {
+    (void)unityBase;
+    IPALog(@"[MMODE] binpatch: install is a no-op — orig_* OPM slots stay "
+             @"NULL so the bypass-entry path in inject_pickRoute() is taken.");
+}
+#endif  // !KIOU_BINPATCH

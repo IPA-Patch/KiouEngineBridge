@@ -92,7 +92,7 @@ static void *latestPositionFromGameController(void *gameCtrl) {
 // Exported (declared in Internal.h) so Hook_GameStateStoreObserve.m can
 // read the live SFEN after NotifyPieceMoved without re-implementing the
 // PositionHistory walk.
-NSString *sfenFromGameController(void *gameCtrl) {
+NSString *SfenFromGameController(void *gameCtrl) {
     if (!g_Position_ToSFEN) return nil;
     void *pos = latestPositionFromGameController(gameCtrl);
     if (!pos) return nil;
@@ -112,7 +112,7 @@ NSString *sfenFromGameController(void *gameCtrl) {
 //
 // Exported (declared in Internal.h) so Meta_Emitter.m can pull the
 // snapshot right before it ships match_end.
-NSString *usiTextFromGameController(void *gameCtrl) {
+NSString *UsiTextFromGameController(void *gameCtrl) {
     if (!g_GameCtrl_GetUSIText) return nil;
     if (!ptrLooksValid(gameCtrl)) return nil;
     @try {
@@ -200,7 +200,7 @@ static NSString *describeMoveBits(SfMove m) {
 // ---------------------------------------------------------------------------
 // ShogiGameAdapter.TryMakeMove(Move, out Move)
 // ---------------------------------------------------------------------------
-static bool hook_AdapterTryMakeMoveOut(void *self, SfMove move, void *outMove) {
+bool HookAdapterTryMakeMoveOut(void *self, SfMove move, void *outMove) {
     // Update the injection-side cache before the original runs. Order matters:
     // we want g_adapterCache to be non-NULL as soon as anything goes through
     // this path, and we want g_gameCtrlCache to point at the same Adapter's
@@ -211,50 +211,47 @@ static bool hook_AdapterTryMakeMoveOut(void *self, SfMove move, void *outMove) {
     if (gcSeen && g_gameCtrlCache != gcSeen) g_gameCtrlCache = gcSeen;
     g_lastAdapterEvtUs = mach_absolute_time();
 
-    bool ok = orig_AdapterTryMakeMoveOut
-                  ? orig_AdapterTryMakeMoveOut(self, move, outMove) : false;
-    void *gameCtrl = readPtr(self, ADAPTER_OFF_GAME_CONTROLLER);
-    NSString *sfen = sfenFromGameController(gameCtrl);
-    SfMove executed = 0;
-    if (ptrLooksValid(outMove)) {
-        executed = (SfMove)(uint32_t)readI32(outMove, 0);
-    }
-    NSString *usi = moveToUsi(move);
-    file_log([NSString stringWithFormat:
-              @"[ADAPTER2] TryMakeMove self=%p ok=%d "
-              @"usi=\"%@\" argMove={%@} outMove=0x%x sfen_after=\"%@\"",
-              self, (int)ok, usi ?: @"", describeMoveBits(move),
-              (unsigned)executed, sfen ?: @""]);
+    // Run the original synchronously on the JB build (no-op on binpatch
+    // because the cave handles orig via the displaced prologue + B orig+4).
+    // The return value flows back to the caller verbatim — KIOU's caller
+    // checks it to know whether the move actually committed.
+    bool ok = KIOU_CALL_ORIG_RET(bool, orig_AdapterTryMakeMoveOut,
+                                 self, move, outMove);
 
-    // Phase 2: forward the observation to the USI engine driver. It decides
-    // whether the next side to move is ours (= time to ask YaneuraOu for a
-    // bestmove) or the opponent's (= just sit and wait).
-    if (ok && sfen) {
-        // Pull `side_to_move` straight from the SFEN's "b"/"w" token rather
-        // than reach into Position internals — keeps this hook lean and
-        // avoids the il2cpp call back into Position fields from the Unity
-        // thread we're already on.
-        int32_t sideToMove = -1;
-        NSArray<NSString *> *parts = [sfen componentsSeparatedByString:@" "];
-        if (parts.count >= 2) {
-            NSString *side = parts[1];
-            if ([side isEqualToString:@"b"]) sideToMove = 0;
-            else if ([side isEqualToString:@"w"]) sideToMove = 1;
-        }
-        usi_engine_on_move_observed(usi, sfen, sideToMove);
-        // meta_emit_move はここでは出さない — ADAPTER2 は「自分のクライアント
-        // が指した手」しか通らない (オンライン対戦では相手手はサーバ state
-        // 経由で来る) ので、ここで出すと自分側 ply のみの片肺 KIF になる。
-        // 両手番分の meta は Hook_GameStateStoreObserve.m の
-        // NotifyPieceMoved フックに集約してある。
-    }
+    // orig has completed by this point on JB (synchronous call above) and
+    // will complete on binpatch before the deferred block fires (the cave's
+    // `B orig+4` lands inside the current main-runloop iteration). Either
+    // way the dispatched block observes the post-move PositionHistory.
+    //
+    // outMove cannot be read from inside the deferred block: the caller's
+    // stack frame is gone by then. Instead we copy `move` by value (it's a
+    // packed uint32_t) and reconstruct the USI string from it via moveToUsi
+    // inside the block. The post-move SFEN walks PositionHistory[size-1]
+    // off the cached GameController, which is post-orig truth regardless of
+    // outMove.
+    void *selfCap = self;
+    uint32_t mv_copy = (uint32_t)move;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        void *gameCtrl = readPtr(selfCap, ADAPTER_OFF_GAME_CONTROLLER);
+        NSString *sfen = SfenFromGameController(gameCtrl);
+        NSString *usi  = moveToUsi((SfMove)mv_copy);
+        IPALog([NSString stringWithFormat:
+                  @"[ADAPTER2] TryMakeMove self=%p "
+                  @"usi=\"%@\" argMove={%@} sfen_after=\"%@\"",
+                  selfCap, usi ?: @"", describeMoveBits((SfMove)mv_copy),
+                  sfen ?: @""]);
+
+        // Move observation is handled by Hook_GameStateStoreObserve.m's
+        // NotifyPieceMoved hook, which covers both sides. Nothing to do here.
+    });
+
     return ok;
 }
 
 // ---------------------------------------------------------------------------
 // Project.ShogiCore.GameController.TryMakeMove(Move)
 // ---------------------------------------------------------------------------
-static bool hook_GameCtrlTryMakeMove(void *self, SfMove move) {
+static bool HookGameCtrlTryMakeMove(void *self, SfMove move) {
     // Cache the GameController self pointer for the injection path. We don't
     // know an Adapter from here, so leave g_adapterCache alone — Inject_Move
     // can fall back to gamectrl-only routing if it never saw an adapter.
@@ -263,9 +260,9 @@ static bool hook_GameCtrlTryMakeMove(void *self, SfMove move) {
 
     bool ok = orig_GameCtrlTryMakeMove
                   ? orig_GameCtrlTryMakeMove(self, move) : false;
-    NSString *sfen = sfenFromGameController(self);
+    NSString *sfen = SfenFromGameController(self);
     NSString *usi  = moveToUsi(move);
-    file_log([NSString stringWithFormat:
+    IPALog([NSString stringWithFormat:
               @"[GAMECTRL] TryMakeMove self=%p ok=%d usi=\"%@\" move={%@} sfen_after=\"%@\"",
               self, (int)ok, usi ?: @"", describeMoveBits(move), sfen ?: @""]);
     // Phase 2 deliberately does NOT notify the USI engine from here —
@@ -275,10 +272,14 @@ static bool hook_GameCtrlTryMakeMove(void *self, SfMove move) {
 }
 
 // ---------------------------------------------------------------------------
-// Installer. Wires the three hooks plus the NativeFunction-style trampolines
-// we use to call ToSFEN / GetUSIText from within them.
+// Installer. Resolves NativeFunction-style trampolines (ToSFEN / GetUSIText /
+// Move.ToStringSFEN) — needed by BOTH builds, because Inject_Move and the
+// observation hooks both call them as function pointers. Then, on the JB
+// build only, installs the two MSHookFunction site hooks; on the binpatch
+// build the symbol-pointer resolves remain but the hook wires are
+// orchestrated by the static cave + SLOT dispatcher.
 // ---------------------------------------------------------------------------
-void install_LowLevelObserve_hook(uintptr_t unityBase) {
+void InstallLowLevelObserveHook(uintptr_t unityBase) {
     g_Position_ToSFEN =
         (Position_ToSFEN_t)(void *)(unityBase + RVA_POSITION_TO_SFEN);
     g_GameCtrl_GetUSIText =
@@ -286,12 +287,13 @@ void install_LowLevelObserve_hook(uintptr_t unityBase) {
     g_Move_ToStringSFEN =
         (Move_ToStringSFEN_t)(void *)(unityBase + RVA_SUNFISH_MOVE_TO_STRING_SFEN);
 
+#if !KIOU_BINPATCH
     {
         uintptr_t addr = unityBase + RVA_ADAPTER_TRY_MAKE_MOVE_OUT;
         MSHookFunction((void *)addr,
-                       (void *)hook_AdapterTryMakeMoveOut,
+                       (void *)HookAdapterTryMakeMoveOut,
                        (void **)&orig_AdapterTryMakeMoveOut);
-        file_log([NSString stringWithFormat:
+        IPALog([NSString stringWithFormat:
                   @"[LOWLEVEL] hooked ShogiGameAdapter.TryMakeMove(Move,out) "
                   @"@0x%lx (base+0x%x)",
                   (unsigned long)addr,
@@ -300,11 +302,24 @@ void install_LowLevelObserve_hook(uintptr_t unityBase) {
     {
         uintptr_t addr = unityBase + RVA_GAMECTRL_TRY_MAKE_MOVE;
         MSHookFunction((void *)addr,
-                       (void *)hook_GameCtrlTryMakeMove,
+                       (void *)HookGameCtrlTryMakeMove,
                        (void **)&orig_GameCtrlTryMakeMove);
-        file_log([NSString stringWithFormat:
+        IPALog([NSString stringWithFormat:
                   @"[LOWLEVEL] hooked GameController.TryMakeMove "
                   @"@0x%lx (base+0x%x)",
                   (unsigned long)addr, (unsigned)RVA_GAMECTRL_TRY_MAKE_MOVE]);
     }
+#else
+    // On binpatch:
+    //   ShogiGameAdapter.TryMakeMove(Move,out) → routed via cave entry
+    //     KIOU_BR_HOOK_ADAPTER_TRY_MAKE_MOVE_OUT in
+    //     recipes/kiouenginebridge.py.
+    //   GameController.TryMakeMove(Move) → NOT in CAVE_PATCHES. It was a
+    //     log-only hook on the JB build, and its observation is fully
+    //     covered by HookAdapterTryMakeMoveOut for every move that
+    //     reaches the board. Dropping it on binpatch saves a cave and
+    //     keeps the hook surface tight.
+    IPALog(@"[LOWLEVEL] binpatch build — site hooks driven by cave/SLOT, "
+             @"symbol pointers resolved.");
+#endif  // !KIOU_BINPATCH
 }

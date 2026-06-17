@@ -58,7 +58,7 @@
 // completes before the board snaps to the post-move state. Tunable —
 // raise it if the animation visibly clips, lower it if responsiveness
 // suffers across rapid back-to-back injections.
-#define INJECT_ANIMATION_DELAY_SEC 0.40
+#define INJECT_ANIMATION_DELAY_SEC 0.0
 
 // _stateStore field offsets per IMatchMode concrete implementor. Verified
 // against dump.cs:1419817 (AI), 1420396 (CPUStream), 1421565 (Online),
@@ -163,7 +163,7 @@ static void *inject_latestPositionFromCachedGameCtrl(void);
 // way CPU games do — the previous env/flag-file gate is wired off.
 //
 // What this enables:
-//   - usi_engine_on_match_start fires with the OnlinePvPMode's _localPlayer,
+//   - UsiEngineOnMatchStart fires with the OnlinePvPMode's _localPlayer,
 //     so the engine knows which seat to think for.
 //   - Injection's route picker treats online_opm as eligible just like the
 //     CPU-side routes, so a bestmove from the WASM engine lands through
@@ -388,7 +388,7 @@ static void *inject_resolvePosition(bool *outFromSfen) {
                 sfen = il2cppStringToNSString(strPtr);
             } @catch (NSException *e) { }
         }
-        file_log([NSString stringWithFormat:
+        IPALog([NSString stringWithFormat:
                   @"[INJECT-DBG] resolvePosition via GameCtrl pos=%p "
                   @"sfen=\"%@\"", pos, sfen ?: @""]);
         return pos;
@@ -403,13 +403,13 @@ static void *inject_resolvePosition(bool *outFromSfen) {
         @try {
             void *built = g_Position_CreateFromSFEN(sfenStr);
             if (built && outFromSfen) *outFromSfen = true;
-            file_log([NSString stringWithFormat:
+            IPALog([NSString stringWithFormat:
                       @"[INJECT-DBG] resolvePosition via SFEN strPtr=%p "
                       @"built=%p sfen=\"%@\"",
                       sfenStr, built, sfenDisplay ?: @"<unreadable>"]);
             if (built) return built;
         } @catch (NSException *e) {
-            file_log([NSString stringWithFormat:
+            IPALog([NSString stringWithFormat:
                       @"[INJECT-DBG] resolvePosition: CreateFromSFEN threw "
                       @"sfen=\"%@\" exc=%@",
                       sfenDisplay ?: @"<unreadable>", e]);
@@ -424,18 +424,18 @@ static void *inject_resolvePosition(bool *outFromSfen) {
         @try {
             void *built = g_Position_CreateByType(0);
             if (built && outFromSfen) *outFromSfen = true;
-            file_log([NSString stringWithFormat:
+            IPALog([NSString stringWithFormat:
                       @"[INJECT-DBG] resolvePosition via standard opening "
                       @"built=%p (no GameCtrl, no authoritativeSfen)", built]);
             if (built) return built;
         } @catch (NSException *e) {
-            file_log([NSString stringWithFormat:
+            IPALog([NSString stringWithFormat:
                       @"[INJECT-DBG] resolvePosition: CreateByType threw "
                       @"exc=%@", e]);
         }
     }
 
-    file_log(@"[INJECT-DBG] resolvePosition: all paths exhausted");
+    IPALog(@"[INJECT-DBG] resolvePosition: all paths exhausted");
     return NULL;
 }
 
@@ -530,7 +530,7 @@ static bool inject_buildMove(const char *usi, uint32_t *outMove,
     }
 
     *outMove = g_PSCMove_Create(fromSq, toSq, pieceType, promote, 0);
-    file_log([NSString stringWithFormat:
+    IPALog([NSString stringWithFormat:
               @"[INJECT-DBG] buildMove usi=\"%s\" fromSq=%d toSq=%d "
               @"pieceAtFrom=0x%x pieceType=%d promote=%d => raw=0x%x",
               usi, (int)fromSq, (int)toSq,
@@ -579,24 +579,25 @@ static const char *inject_routeName(kiou_route_t r) {
 // a match-end hook (Phase 2) to clear these caches, the worst case is that
 // we try to dispatch on a stale pointer. That's why we still prefer the
 // freshest observed timestamp when multiple mode caches are populated —
-// it's an ordering hint, not a gate. Adapter / GameCtrl fallbacks remain
-// for the rare case where injection is requested before any OPM has fired
-// (the UI won't redraw but at least the engine state advances).
+// it's an ordering hint, not a gate. Branch F reconstructs per-site bypass
+// trampolines from the fixed cave geometry, so binpatch injection can call
+// OPM / Adapter without re-entering the dispatcher cave.
 static kiou_route_t inject_pickRoute(void) {
     // Pick the mode whose OPM observation timestamp is the newest, treating
     // "never observed" (ts == 0) as infinitely old. The actual route call
-    // still requires (cache != NULL && orig != NULL).
-    struct { void *cache; OnPlayerMoveAsync_t orig; uint64_t ts;
+    // only requires a live cached receiver; on binpatch the callable can be
+    // the reconstructed cave-bypass entry even when orig_* is NULL.
+    struct { void *cache; bool callable; uint64_t ts;
              kiou_route_t route; bool gated; } modes[] = {
-        { g_aiMatchModeCache,      orig_AIMatchMode_OnPlayerMoveAsync,
+        { g_aiMatchModeCache,      KIOU_BR_BINPATCH_AI_OPM_CALLABLE() != NULL,
           g_lastAiMatchEvtUs,       KIOU_ROUTE_AI_OPM,        false },
-        { g_localPvPModeCache,     orig_LocalPvPMode_OnPlayerMoveAsync,
+        { g_localPvPModeCache,     KIOU_BR_BINPATCH_LOCAL_OPM_CALLABLE() != NULL,
           g_lastLocalPvPEvtUs,      KIOU_ROUTE_LOCAL_OPM,     false },
-        { g_cpuStreamModeCache,    orig_CPUStreamMode_OnPlayerMoveAsync,
+        { g_cpuStreamModeCache,    KIOU_BR_BINPATCH_CPUSTREAM_OPM_CALLABLE() != NULL,
           g_lastCpuStreamEvtUs,     KIOU_ROUTE_CPUSTREAM_OPM, false },
-        { g_recordReplayModeCache, orig_RecordReplayMode_OnPlayerMoveAsync,
+        { g_recordReplayModeCache, KIOU_BR_BINPATCH_REPLAY_OPM_CALLABLE() != NULL,
           g_lastRecordReplayEvtUs,  KIOU_ROUTE_REPLAY_OPM,    false },
-        { g_onlineModeCache,       orig_OnlinePvPMode_OnPlayerMoveAsync,
+        { g_onlineModeCache,       KIOU_BR_BINPATCH_ONLINE_OPM_CALLABLE() != NULL,
           g_lastOnlineEvtUs,        KIOU_ROUTE_ONLINE_OPM,
           !g_onlineServerSendAllowed },
     };
@@ -604,7 +605,7 @@ static kiou_route_t inject_pickRoute(void) {
     kiou_route_t best = KIOU_ROUTE_NONE;
     uint64_t bestTs = 0;
     for (size_t i = 0; i < sizeof(modes) / sizeof(modes[0]); i++) {
-        if (!modes[i].cache || !modes[i].orig) continue;
+        if (!modes[i].cache || !modes[i].callable) continue;
         if (modes[i].gated) continue;
         if (modes[i].ts < bestTs) continue;  // older than current best
         bestTs = modes[i].ts;
@@ -613,16 +614,19 @@ static kiou_route_t inject_pickRoute(void) {
     if (best != KIOU_ROUTE_NONE) return best;
 
     // No OPM cache live — fall back to headless engine writes so the
-    // bridge can at least drive the SFEN forward.
-    if (g_adapterCache && orig_AdapterTryMakeMoveOut) return KIOU_ROUTE_ADAPTER;
-    if (g_gameCtrlCache && orig_GameCtrlTryMakeMove)  return KIOU_ROUTE_GAMECTRL;
+    // bridge can at least drive the SFEN forward. GameCtrl stays JB-only:
+    // binpatch does not publish a bypass entry for it.
+    if (g_adapterCache && KIOU_BR_BINPATCH_ADAPTER_CALLABLE()) {
+        return KIOU_ROUTE_ADAPTER;
+    }
+    if (g_gameCtrlCache && orig_GameCtrlTryMakeMove) return KIOU_ROUTE_GAMECTRL;
     return KIOU_ROUTE_NONE;
 }
 
 // ---------------------------------------------------------------------------
 // Ring buffer for recent injections. Single producer (the recv-queue handler
 // after the main-thread dispatch returns), so a simple mutex is overkill,
-// but kiou_inject_dumpRecent() can be called from any thread (signal handler
+// but KEBInjectDumpRecent() can be called from any thread (signal handler
 // etc.), so a lock is the cheapest correct option.
 // ---------------------------------------------------------------------------
 static kiou_inject_record_t g_ring[KIOU_INJECT_RING_SIZE];
@@ -638,18 +642,18 @@ static void inject_pushRecord(const kiou_inject_record_t *rec) {
     pthread_mutex_unlock(&g_ringMu);
 }
 
-void kiou_inject_dumpRecent(void) {
+void KEBInjectDumpRecent(void) {
     pthread_mutex_lock(&g_ringMu);
     size_t count = g_ringCount;
     size_t head  = g_ringHead;
-    file_log([NSString stringWithFormat:@"[INJECT] === recent (%zu) ===",
+    IPALog([NSString stringWithFormat:@"[INJECT] === recent (%zu) ===",
               count]);
     for (size_t i = 0; i < count; i++) {
         // Walk from oldest to newest.
         size_t idx = (head + KIOU_INJECT_RING_SIZE - count + i)
                      % KIOU_INJECT_RING_SIZE;
         kiou_inject_record_t *r = &g_ring[idx];
-        file_log([NSString stringWithFormat:
+        IPALog([NSString stringWithFormat:
                   @"[INJECT] t=%llu usi=\"%s\" route=%s ok=%d "
                   @"raw=0x%x err=\"%s\" sfen=\"%s\"",
                   (unsigned long long)r->ts_us,
@@ -766,21 +770,45 @@ static void inject_runOnMain(const char *usi, uint32_t move,
             void *self = (SELF);                                          \
             OnPlayerMoveAsync_t fn = (ORIG);                              \
             if (!self || !fn) { err = "no_session"; break; }              \
+            IPALog([NSString stringWithFormat:                          \
+                      @"[INJECT-DBG] route=%s callable=%p orig=%p "       \
+                      @"bypass=%p",                                      \
+                      inject_routeName(route), (void *)fn,                \
+                      (void *)(ORIG),                                     \
+                      (void *)((ORIG) ? NULL : fn)]);                     \
+            \
             (void)fn(self, move, NULL);                                   \
             ok = true;                                                    \
             executed = move;                                              \
             /* Locally apply the same move so the headless engine and */  \
             /* GameStateStore advance — disasm confirms OPM alone won't */\
-            /* do it. Failures here are benign (the move might already */ \
-            /* have been applied by an earlier HandleMoveResult) — we */  \
-            /* keep ok=true because the OPM call already succeeded. */    \
-            if (g_adapterCache && orig_AdapterTryMakeMoveOut) {           \
-                uint32_t outMv = 0;                                       \
-                bool tryOk = orig_AdapterTryMakeMoveOut(                  \
-                    (void *)g_adapterCache, move, &outMv);                \
-                file_log([NSString stringWithFormat:                      \
-                          @"[INJECT-DBG] local TryMakeMove tryOk=%d "     \
-                          @"outMv=0x%x", (int)tryOk, (unsigned)outMv]);   \
+            /* do it (it forwards to the server stream and waits for */   \
+            /* HandleMoveResult). On binpatch orig_AdapterTryMakeMoveOut */\
+            /* stays NULL by design (see Hook_MatchModeObserve.m's */     \
+            /* binpatch installer) and the cave-bypass entry has to be */ \
+            /* used instead. KIOU_BR_BINPATCH_ADAPTER_CALLABLE() returns */ \
+            /* orig_* on JB and g_inject_entry[ADAPTER] on binpatch. */   \
+            /* Failures here are benign (the move might already have */   \
+            /* been applied by an earlier HandleMoveResult) — we keep */  \
+            /* ok=true because the OPM call already succeeded. */         \
+            {                                                             \
+                Adapter_TryMakeMove_Out_t adapterFn =                     \
+                    KIOU_BR_BINPATCH_ADAPTER_CALLABLE();                  \
+                if (g_adapterCache && adapterFn) {                        \
+                    uint32_t outMv = 0;                                   \
+                    bool tryOk = adapterFn(                               \
+                        (void *)g_adapterCache, move, &outMv);            \
+                    IPALog([NSString stringWithFormat:                  \
+                              @"[INJECT-DBG] local TryMakeMove tryOk=%d " \
+                              @"outMv=0x%x adapter=%p",                   \
+                              (int)tryOk, (unsigned)outMv,                \
+                              (void *)adapterFn]);                        \
+                } else {                                                  \
+                    IPALog([NSString stringWithFormat:                  \
+                              @"[INJECT-DBG] local TryMakeMove skipped: " \
+                              @"adapterCache=%p adapterFn=%p",            \
+                              g_adapterCache, (void *)adapterFn]);        \
+                }                                                         \
             }                                                             \
             /* Flip the side-to-move ReactiveProperty so the "whose */    \
             /* turn" UI advances. Skipped for open-seat modes */          \
@@ -803,12 +831,12 @@ static void inject_runOnMain(const char *usi, uint32_t move,
                             g_GameStateStore_NotifyPieceMoved(            \
                                 store, move,                              \
                                 (int32_t)(LOCAL_PLAYER));                 \
-                            file_log([NSString stringWithFormat:          \
+                            IPALog([NSString stringWithFormat:          \
                                       @"[INJECT-DBG] NotifyPieceMoved "   \
                                       @"store=%p player=%d",              \
                                       store, (int)(LOCAL_PLAYER)]);       \
                         } @catch (NSException *e) {                       \
-                            file_log([NSString stringWithFormat:          \
+                            IPALog([NSString stringWithFormat:          \
                                       @"[INJECT-DBG] NotifyPieceMoved "   \
                                       @"threw %@", e]);                   \
                         }                                                 \
@@ -825,61 +853,67 @@ static void inject_runOnMain(const char *usi, uint32_t move,
                             @try {                                        \
                                 g_GameStateStore_NotifyStateSynced(       \
                                     store, pos);                          \
-                                file_log([NSString stringWithFormat:      \
+                                IPALog([NSString stringWithFormat:      \
                                           @"[INJECT-DBG] "                \
                                           @"NotifyStateSynced store=%p "  \
                                           @"pos=%p", store, pos]);        \
                             } @catch (NSException *e) {                   \
-                                file_log([NSString stringWithFormat:      \
+                                IPALog([NSString stringWithFormat:      \
                                           @"[INJECT-DBG] "                \
                                           @"NotifyStateSynced threw %@",  \
                                           e]);                            \
                             }                                             \
                         } else {                                          \
-                            file_log(@"[INJECT-DBG] "                     \
+                            IPALog(@"[INJECT-DBG] "                     \
                                      @"NotifyStateSynced skipped: no "    \
                                      @"latest pos");                      \
                         }                                                 \
                     }                                                     \
                 } else {                                                  \
-                    file_log(@"[INJECT-DBG] Notify* skipped: no store");  \
+                    IPALog(@"[INJECT-DBG] Notify* skipped: no store");  \
                 }                                                         \
             }                                                             \
         } while (0)
 
     switch (route) {
         case KIOU_ROUTE_AI_OPM:
-            CALL_OPM(g_aiMatchModeCache, orig_AIMatchMode_OnPlayerMoveAsync,
+            CALL_OPM(g_aiMatchModeCache, KIOU_BR_BINPATCH_AI_OPM_CALLABLE(),
                      OFF_AI_STATESTORE, g_aiLocalPlayer);
             break;
         case KIOU_ROUTE_CPUSTREAM_OPM:
-            CALL_OPM(g_cpuStreamModeCache, orig_CPUStreamMode_OnPlayerMoveAsync,
+            CALL_OPM(g_cpuStreamModeCache, KIOU_BR_BINPATCH_CPUSTREAM_OPM_CALLABLE(),
                      OFF_CPUSTREAM_STATESTORE, g_cpuStreamLocalPlayer);
             break;
         case KIOU_ROUTE_LOCAL_OPM:
             // LocalPvP has no fixed seat — pass -1 to suppress the
             // NotifyPieceMoved call (we can't tell which side this
             // injection represents).
-            CALL_OPM(g_localPvPModeCache, orig_LocalPvPMode_OnPlayerMoveAsync,
+            CALL_OPM(g_localPvPModeCache, KIOU_BR_BINPATCH_LOCAL_OPM_CALLABLE(),
                      OFF_LOCAL_STATESTORE, -1);
             break;
         case KIOU_ROUTE_ONLINE_OPM:
-            CALL_OPM(g_onlineModeCache, orig_OnlinePvPMode_OnPlayerMoveAsync,
+            CALL_OPM(g_onlineModeCache, KIOU_BR_BINPATCH_ONLINE_OPM_CALLABLE(),
                      OFF_ONLINE_STATESTORE, g_onlineLocalPlayer);
             break;
         case KIOU_ROUTE_REPLAY_OPM:
             // RecordReplay also has no fixed seat — same treatment.
-            CALL_OPM(g_recordReplayModeCache, orig_RecordReplayMode_OnPlayerMoveAsync,
+            CALL_OPM(g_recordReplayModeCache, KIOU_BR_BINPATCH_REPLAY_OPM_CALLABLE(),
                      OFF_REPLAY_STATESTORE, -1);
             break;
         case KIOU_ROUTE_ADAPTER: {
             void *self = g_adapterCache;
+            Adapter_TryMakeMove_Out_t fn = KIOU_BR_BINPATCH_ADAPTER_CALLABLE();
             uint32_t outMv = 0;
-            if (!self || !orig_AdapterTryMakeMoveOut) {
+            if (!self || !fn) {
                 err = "no_session";
                 break;
             }
-            ok = orig_AdapterTryMakeMoveOut(self, move, &outMv);
+            IPALog([NSString stringWithFormat:
+                      @"[INJECT-DBG] route=adapter callable=%p orig=%p bypass=%p",
+                      (void *)fn,
+                      (void *)orig_AdapterTryMakeMoveOut,
+                      (void *)(orig_AdapterTryMakeMoveOut ? NULL : fn)]);
+            ok = fn(self, move, &outMv);
             executed = outMv;
             if (!ok) err = "no_legal";
             break;
@@ -922,14 +956,14 @@ static void inject_runOnMain(const char *usi, uint32_t move,
     strncpy(rec.error, err, KIOU_INJECT_ROUTE_MAX - 1);
     inject_pushRecord(&rec);
 
-    file_log([NSString stringWithFormat:
+    IPALog([NSString stringWithFormat:
               @"[INJECT] usi=\"%s\" route=%s ok=%d raw=0x%x err=\"%s\" "
               @"sfen=\"%@\"",
               usi, inject_routeName(route), (int)ok,
               (unsigned)executed, err, sfen ?: @""]);
 
     // Hand the outcome back to the Usi_Engine.m caller (or whichever
-    // future caller wants it). The ring buffer / file_log entries above
+    // future caller wants it). The ring buffer / IPALog entries above
     // remain regardless, so debugging still works without a consumer.
     if (outOk)   *outOk   = ok;
     if (outRaw)  *outRaw  = executed;
@@ -978,7 +1012,7 @@ bool inject_apply(NSString *usi,
         memcpy(rec.usi_in, usiCstr, copyN);
         rec.usi_in[copyN] = '\0';
         inject_pushRecord(&rec);
-        file_log([NSString stringWithFormat:
+        IPALog([NSString stringWithFormat:
                   @"[INJECT] skip usi=\"%s\" reason=%s",
                   rec.usi_in, rec.error]);
         if (outErr) *outErr = [NSString stringWithUTF8String:rec.error];
@@ -989,7 +1023,16 @@ bool inject_apply(NSString *usi,
     // inject_buildMove calls Project.ShogiCore.Position.CreateFromSFEN
     // (and Position.GetPiece) via NativeFunction; calling those off the
     // main thread crashes the il2cpp runtime instantly. Box them all into
-    // dispatch_sync calls.
+    // dispatch_sync calls — but only when the caller isn't already on
+    // the main queue (Csa_Engine's recv-queue dispatch lands here on
+    // main, and dispatch_sync(main_queue) from main is a deadlock).
+#define KIOU_RUN_ON_MAIN_SYNC(block) do {                                   \
+    if ([NSThread isMainThread]) {                                          \
+        block();                                                            \
+    } else {                                                                \
+        dispatch_sync(dispatch_get_main_queue(), block);                    \
+    }                                                                       \
+} while (0)
     __block uint32_t move = 0;
     __block const char *buildErr = NULL;
     __block bool buildOk = false;
@@ -998,7 +1041,7 @@ bool inject_apply(NSString *usi,
     __block int32_t humanSideOut = -1;
 
     NSString *usiBox = [[NSString alloc] initWithUTF8String:usiTok];
-    dispatch_sync(dispatch_get_main_queue(), ^{
+    KIOU_RUN_ON_MAIN_SYNC(^{
         const char *usiInner = [usiBox UTF8String];
         buildOk = inject_buildMove(usiInner, &move, &buildErr);
         if (!buildOk) return;
@@ -1016,7 +1059,7 @@ bool inject_apply(NSString *usi,
 
     if (!buildOk) {
         __block NSString *currentSfen = nil;
-        dispatch_sync(dispatch_get_main_queue(), ^{
+        KIOU_RUN_ON_MAIN_SYNC(^{
             currentSfen = inject_sfenFromCachedGameCtrl();
         });
 
@@ -1031,7 +1074,7 @@ bool inject_apply(NSString *usi,
             strncpy(rec.sfen_after, cstr, KIOU_INJECT_SFEN_MAX - 1);
         }
         inject_pushRecord(&rec);
-        file_log([NSString stringWithFormat:
+        IPALog([NSString stringWithFormat:
                   @"[INJECT] parse_fail usi=\"%s\" err=%s sfen=\"%@\"",
                   usiTok, rec.error, currentSfen ?: @""]);
         if (outSfenAfter) *outSfenAfter = currentSfen;
@@ -1049,7 +1092,7 @@ bool inject_apply(NSString *usi,
         strncpy(rec.error, "not_your_turn", KIOU_INJECT_ROUTE_MAX - 1);
         rec.move_raw = move;
         inject_pushRecord(&rec);
-        file_log([NSString stringWithFormat:
+        IPALog([NSString stringWithFormat:
                   @"[INJECT] not_your_turn usi=\"%s\" raw=0x%x "
                   @"current=%d human=%d route=%s",
                   usiTok, (unsigned)move,
@@ -1069,7 +1112,7 @@ bool inject_apply(NSString *usi,
         strncpy(rec.error, "no_session", KIOU_INJECT_ROUTE_MAX - 1);
         rec.move_raw = move;
         inject_pushRecord(&rec);
-        file_log([NSString stringWithFormat:
+        IPALog([NSString stringWithFormat:
                   @"[INJECT] no_session usi=\"%s\" raw=0x%x",
                   usiTok, (unsigned)move]);
         if (outRaw) *outRaw = move;
@@ -1086,33 +1129,36 @@ bool inject_apply(NSString *usi,
     // the actual mutation. Animation runs in parallel with our wait and
     // wraps up around the time we resume.
     if (g_BoardPresenter_PlayMoveAnimationAsync && g_gameOrchestratorCache) {
-        dispatch_sync(dispatch_get_main_queue(), ^{
+        KIOU_RUN_ON_MAIN_SYNC(^{
             void *boardPresenter = readPtr((void *)g_gameOrchestratorCache,
                                            OFF_GAMEORCH_BOARD_PRESENTER);
             if (!boardPresenter) {
-                file_log(@"[INJECT-DBG] PlayMoveAnimation skipped: "
+                IPALog(@"[INJECT-DBG] PlayMoveAnimation skipped: "
                          @"no BoardPresenter on orch");
                 return;
             }
             @try {
                 (void)g_BoardPresenter_PlayMoveAnimationAsync(boardPresenter,
                                                               move, NULL);
-                file_log([NSString stringWithFormat:
+                IPALog([NSString stringWithFormat:
                           @"[INJECT-DBG] PlayMoveAnimation fired "
                           @"presenter=%p move=0x%x",
                           boardPresenter, (unsigned)move]);
             } @catch (NSException *e) {
-                file_log([NSString stringWithFormat:
+                IPALog([NSString stringWithFormat:
                           @"[INJECT-DBG] PlayMoveAnimation threw: %@", e]);
             }
         });
-        // Sleep on the WS recv queue (NOT the main thread) so the
-        // animation actually runs while we wait. usleep here is safe
-        // because inject_apply is called from the WS recv queue, not
-        // from a Unity callback.
-        usleep((useconds_t)(INJECT_ANIMATION_DELAY_SEC * 1000000.0));
+        // Sleep off the main thread so the animation can actually run.
+        // If inject_apply was called from the main thread (e.g. from
+        // the CSA recv-queue dispatch), sleeping here would block the
+        // UI entirely. Skip the delay in that case — INJECT_ANIMATION_DELAY_SEC
+        // is 0.0 anyway, so this guard is a safety net for future increases.
+        if (![NSThread isMainThread]) {
+            usleep((useconds_t)(INJECT_ANIMATION_DELAY_SEC * 1000000.0));
+        }
     } else {
-        file_log(@"[INJECT-DBG] PlayMoveAnimation skipped: "
+        IPALog(@"[INJECT-DBG] PlayMoveAnimation skipped: "
                  @"fn or orch cache missing");
     }
 
@@ -1121,7 +1167,7 @@ bool inject_apply(NSString *usi,
     __block uint32_t runExecuted = 0;
     __block NSString *runSfen = nil;
     __block NSString *runErr = nil;
-    dispatch_sync(dispatch_get_main_queue(), ^{
+    KIOU_RUN_ON_MAIN_SYNC(^{
         inject_runOnMain([usiBox UTF8String], move, route,
                          &runOk, &runExecuted, &runSfen, &runErr);
     });
@@ -1145,9 +1191,9 @@ NSString *inject_currentSfen(void) {
     return inject_sfenFromCachedGameCtrl();
 }
 
-void install_Inject_hook(uintptr_t unityBase) {
+void InstallInjectHook(uintptr_t unityBase) {
     if (g_SunfishMoveDrop) {
-        file_log(@"[INJECT] install: already initialized, skipping");
+        IPALog(@"[INJECT] install: already initialized, skipping");
         return;
     }
 
@@ -1181,7 +1227,7 @@ void install_Inject_hook(uintptr_t unityBase) {
     // Inject_Move is now a pure helper that Usi_Engine calls into via
     // inject_apply().
 
-    file_log([NSString stringWithFormat:
+    IPALog([NSString stringWithFormat:
               @"[INJECT] installed: create@0x%lx createDrop@0x%lx "
               @"getPiece@0x%lx getPieceType@0x%lx fromSFEN@0x%lx "
               @"notifyPieceMoved@0x%lx notifyStateSynced@0x%lx "

@@ -5,247 +5,207 @@
 </p>
 
 <p align="center">
-  <em>Bridge <strong>KIOU</strong> to a desktop USI shogi engine (YaneuraOu
-  and friends) — observe the live board, ship the SFEN to the engine,
-  replay the engine's <code>bestmove</code> back into the running match.<br/>
-  Runs entirely client-side; the engine sits on a LAN box you already trust.</em>
+  <em>Turn <strong>KIOU</strong> into a CSA match server. The tweak speaks
+  the standard CSA server protocol on TCP <code>:4081</code>, so any CSA
+  client can connect over LAN and play against KIOU's live board — no extra
+  proxy, no host-side wrapper.</em>
 </p>
 
 <p align="center">
-  <img alt="platform" src="https://img.shields.io/badge/platform-iOS%2015.0%E2%80%9316.5-blue?style=flat-square" />
+  <img alt="version" src="https://img.shields.io/badge/version-v0.1.0-2f80ed?style=flat-square" />
+  <img alt="targets KIOU" src="https://img.shields.io/badge/targets-KIOU%201.0.1%20(11)-ff66a3?style=flat-square" />
+  <img alt="platform" src="https://img.shields.io/badge/platform-iOS%2015.0%E2%80%9326-blue?style=flat-square" />
   <img alt="arch" src="https://img.shields.io/badge/arch-arm64%20rootless-555?style=flat-square" />
-  <img alt="target" src="https://img.shields.io/badge/target-com.neconome.shogi-ff66a3?style=flat-square" />
   <img alt="engine" src="https://img.shields.io/badge/engine-Unity%206%20%2B%20il2cpp-black?style=flat-square" />
-  <img alt="protocol" src="https://img.shields.io/badge/wire-WebSocket%20%2B%20USI-1f9d55?style=flat-square" />
+  <img alt="protocol" src="https://img.shields.io/badge/wire-TCP%20%2B%20CSA%20v1.2-1f9d55?style=flat-square" />
   <img alt="side" src="https://img.shields.io/badge/runs-LAN%20only-1f9d55?style=flat-square" />
   <img alt="license" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" />
-  <img alt="status" src="https://img.shields.io/badge/scope-authorized%20testing%20only-c69214?style=flat-square" />
 </p>
 
 ---
 
 Kiou Engine Bridge is the in-app half of a two-piece system: the tweak
-runs inside KIOU and exposes a tiny WebSocket sink on `0.0.0.0:9527`;
-a host-side bridge (your machine running YaneuraOu or any other USI
-engine) connects in, speaks the standard USI protocol, and receives
-`position sfen ...` / `go ...` lines built from the live KIOU board.
-When the engine replies with `bestmove <usi>`, the tweak feeds that
-move back into KIOU's own `TryMakeMove` / `OnPlayerMoveAsync` paths so
-the on-device match advances exactly as if you had played it yourself.
+runs inside KIOU and exposes a CSA TCP server on `0.0.0.0:4081`;
+a CSA client on your LAN connects in, plays through the standard
+`LOGIN` / `Game_Summary` / `AGREE` / `START` handshake, then
+participates in the live KIOU match by submitting CSA-format moves
+(`+7776FU`) and receiving the same notifications the in-game side does.
+When the client plays its move, the tweak parses it and feeds it back
+into KIOU's own `TryMakeMove` / `OnPlayerMoveAsync` paths so the
+on-device match advances exactly as if you had played it yourself.
 
-No proxy server, no cloud, no third-party service — one ~120 KB dylib
-on the phone, one TCP socket to a LAN box, and the engine of your choice
-on the other end.
+No proxy server, no cloud, no third-party service — one ~140 KB dylib
+on the phone, one TCP socket to a LAN box. See `docs/csa_protocol.md`
+for the full wire contract.
 
-### Observation + scoped injection
+KEB exposes the standard CSA v1.2 surface on the TCP link:
 
-Kiou Engine Bridge is **read-mostly with a single narrow write path**.
-The observation hooks (`Hook_LowLevelObserve`, `Hook_MatchModeObserve`,
-`Hook_OnlineObserve`, `Hook_GameOrchestratorObserve`,
-`Hook_GameStateStoreObserve`) only read — they latch live
-`GameController` / `ShogiGameAdapter` / `OnlinePvPMode` pointers,
-convert `Sunfish.Move` to USI, walk `PositionHistory` to extract SFEN.
-No game-state field is mutated through these.
+**KEB → client**
 
-The injection layer (`Inject_Move`) calls into KIOU's own move-commit
-methods as function pointers:
+| Lines | Notes |
+|---|---|
+| `LOGIN:<name> OK`, `LOGOUT:completed` | session control |
+| `BEGIN Game_Summary ... END Game_Summary` | full match preamble, includes `KIOU_*` extension lines |
+| `START:<Game_ID>` | after `AGREE` |
+| `<sign><from><to><PIECE>,T<n>` | per-move notification, both colours |
+| `#RESIGN` / `#SENNICHITE` / `#JISHOGI` / `#CHUDAN` + `#WIN` / `#LOSE` / `#DRAW` | match end |
 
-- `Sunfish.Move.Create` / `Move.CreateDrop` to assemble the
-  packed-uint32 move,
-- `ShogiGameAdapter.TryMakeMove(out Move)` /
-  `GameController.TryMakeMove(Move)` to advance the headless engine,
-- `IMatchMode.OnPlayerMoveAsync(Move, CancellationToken)` so the UI
-  redraws and the server (Online) sees the move.
+**client → KEB**
 
-What the injection layer is **not** allowed to do:
+| Lines | Notes |
+|---|---|
+| `LOGIN <name> <pass>` | accepted unconditionally |
+| `LOGOUT` | tears the session down |
+| `AGREE [<id>]` / `REJECT [<id>]` | advance / decline pre-match |
+| `<sign><from><to><PIECE>` | client's move; injected into KIOU |
+| `%TORYO` | drives `GameOrchestrator.RequestSurrender` |
+| `%KACHI` / `%CHUDAN` | client learns; KIOU is not signalled |
 
-- Touch il2cpp object fields directly. The shared header
-  `kiou_il2cpp.h` is intentionally read-only; the `writeU8` / `writeI32`
-  helpers that `KiouEditor` carries in its own `Internal.h` are
-  deliberately **not** included here. Any future "tweak a board field"
-  regression must opt in explicitly — they don't sneak in via the
-  shared header.
-- Replay anything that didn't come from the engine. Only frames the
-  attached WebSocket client sends as `bestmove <usi>` (after a
-  matching `go`) make it into the move pipeline.
+The full mapping (every CSA field, what KIOU exposes, what we drop)
+lives in `docs/csa_compatibility.md`. The wire-level state machine and
+example session are in `docs/csa_protocol.md`.
 
-Uninstalling the dylib returns KIOU to a fully vanilla state.
+## CSA protocol v1.2 compatibility
 
-## What you get
+KEB targets the [CSA TCP/IP server protocol
+v1.2.1](http://www2.computer-shogi.org/protocol/tcp_ip_server_121.html).
+The table below summarises coverage at a glance; see
+`docs/csa_compatibility.md` for per-field detail.
 
-Four actors, three wires. KIOU is the game itself; Bridge is this
-tweak loaded into KIOU's process; Wrapper is the host-side process
-that translates between WebSocket and a vanilla USI engine's stdio;
-YaneuraOu (or any other USI engine) is the thinking part.
+| Area | Status | Notes |
+|---|---|---|
+| Session (`LOGIN` / `LOGOUT` / liveness `\n`) | ✅ | Credentials accepted unconditionally. |
+| `BEGIN Game_Summary` negotiation | ✅ | `AGREE` / `REJECT` handled; see deviation note below. |
+| `BEGIN Time` block | ⚠️ partial | `Total_Time`, `Byoyomi`, `Increment` written. `Delay`, `Least_Time_Per_Move`, `Time_Roundup` omitted (KIOU does not expose them). |
+| Initial position `BEGIN Position` | ✅ | Full 9×9 board + hand pieces in CSA form, derived from KIOU's live SFEN. |
+| Per-turn move exchange with `,T<n>` | ✅ | Both colours notified. `T<n>` omitted in modes without authoritative clocks (VsAI / LocalPvP). |
+| `%TORYO` (resign) | ✅ | Calls `GameOrchestrator.RequestSurrender`. |
+| `%KACHI` (nyugyoku win) | ⚠️ partial | KEB learns and sends `#JISHOGI`; KIOU side is not signalled (no public declaration API yet). |
+| `%CHUDAN` (abort) | ⚠️ partial | KEB sends `#CHUDAN`; KIOU is not notified. |
+| `#WIN` / `#LOSE` / `#DRAW` result delivery | ✅ | |
+| `#RESIGN` / `#SENNICHITE` reason markers | ✅ | |
+| `#TIME_UP` / `#ILLEGAL_MOVE` reason markers | ⛔ | Emitted as `#RESIGN` — KIOU does not expose end-reason detail. |
+| `To_Move` in handicap games | ⚠️ | Derived from KIOU_Sfen side-to-move; older builds hard-coded `+`. |
+| Multi-client fanout | ⛔ | One client at a time; a new connect preempts the prior session. |
 
-- **KIOU <-> Bridge** — in-process: il2cpp hook callbacks for the
-  read side, function-pointer calls into `Move.Create` /
-  `OnPlayerMoveAsync` / `TryMakeMove` for the inject side.
-- **Bridge <-> Wrapper** — WebSocket text frames on
-  `ws://<device>:9527`, USI lines + sidecar `meta{...}` lines.
-- **Wrapper <-> YaneuraOu** — stdio pipes (the way YaneuraOu
-  already expects to be driven).
+**Key deviation from the spec.** KIOU's CPU starts moving as soon as the
+match begins, before the client can reply with `AGREE`. KEB therefore
+emits `START:<Game_ID>` immediately alongside `Game_Summary` and skips
+the `AGREE_WAIT` barrier — clients receive `START:` before their `AGREE`
+is acknowledged, which Floodgate-grade clients accept silently.
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant K as KIOU
-    participant B as Bridge (this tweak)
-    participant W as Wrapper (host)
-    participant E as YaneuraOu
+### KIOU_* extensions
 
-    Note over K,B: in-process hooks
-    Note over B,W: ws://device:9527 (USI + meta)
-    Note over W,E: stdio pipes
+KEB inserts vendor-prefixed lines inside `Game_Summary` for data CSA has
+no equivalent for. A strict CSA parser must ignore unknown keys.
 
-    Note over B,W: USI handshake
-    W->>B: usi
-    B-->>W: id name ... / id author ... / usiok
-    W->>B: isready
-    B-->>W: readyok
-    W->>B: usinewgame
-
-    Note over K,W: Match start — Bridge emits sidecar meta
-    K-->>B: IMatchMode.InitializeAsync (latch self / local_player)
-    B-->>W: meta{"type":"match_start","mode":"OnlinePvPMode","local_player":0,...}
-
-    loop Per move while it's our turn
-        K-->>B: TryMakeMove observation -> SFEN / side_to_move
-        B->>W: position sfen <SFEN>
-        B->>W: go btime ... wtime ...
-        W->>E: position sfen <SFEN> / go ...
-        E-->>W: bestmove 7g7f
-        W->>B: bestmove 7g7f
-        Note over B,K: inject_apply -> Move.Create -> OnPlayerMoveAsync -> TryMakeMove
-        B->>K: replay move through KIOU's move pipeline
-        B-->>W: meta{"type":"move","usi":"7g7f","sfen_after":"...",...}
-    end
-
-    K-->>B: IMatchMode.OnMatchEndAsync (result + final SFEN + GetUSIText)
-    B-->>W: meta{"type":"match_end","result":"win","final_sfen":"...","usi_text":"..."}
-```
-
-Each `meta` frame is a single line prefixed with the literal
-`meta` followed by a single JSON object, so the Wrapper can demux
-it from real USI traffic without parsing JSON for every line.
-
-## How it works
-
-```mermaid
-flowchart TD
-    obs["Hook_LowLevelObserve<br/>Hook_MatchModeObserve<br/>Hook_OnlineObserve"]
-    state(["g_gameCtrlCache &middot; g_adapterCache<br/>g_*ModeCache &middot; g_localPlayer*"])
-    sfen["sfenFromGameController()<br/>moveToUsi()"]
-
-    obs -- "latch self / extract SFEN+USI" --> state
-    state --> sfen
-    sfen --> wsout
-
-    ws[("WebSocket :9527<br/>opcode 0x1 text frames")]
-    wsout["Usi_Engine state machine<br/>BOOT / HANDSHAKE / READY /<br/>THINKING / INJECTING"]
-    wsout --> ws
-    ws -- "bestmove &lt;usi&gt;" --> wsin
-    wsin["inject_apply(usi)"]
-
-    wsin --> commit["Move.Create / CreateDrop<br/>OnPlayerMoveAsync<br/>Adapter.TryMakeMove"]
-    commit --> kiou(["KIOU board state advances"])
-
-    state --> meta["Meta_Emitter (sidecar)"]
-    meta --> ws
-```
-
-Two protocol streams share one TCP port:
-
-| Stream | Direction | Wire | Purpose |
-|---|---|---|---|
-| **USI** | bidirectional | one USI command per text frame | drive the engine, accept `bestmove` back |
-| **meta** | tweak -> host | `meta{...json}\n` per frame | match lifecycle + per-move record for KIF assembly |
-
-The USI state machine (`Usi_Engine.m`) walks the standard
-`usi` -> `usiok` -> `isready` -> `readyok` -> `usinewgame` -> `position` ->
-`go` -> `bestmove` cycle; on `bestmove` it hops onto the Unity main
-thread and calls `inject_apply` to commit the move through KIOU's own
-move pipeline.
+| Key | Example value | Description |
+|---|---|---|
+| `KIOU_Mode` | `VsAI` | Match mode: `VsAI`, `LocalPvP`, `OnlinePvP`, `RecordReplay`, `Spectate`. |
+| `KIOU_StartPosition` | `Standard` | Initial position type (e.g. `HandicapLance`, `TsumeShogi`). |
+| `KIOU_Sfen` | `lnsgk…` | Full SFEN of the starting position; used to set the board for non-standard starts. |
+| `KIOU_Rank+` / `KIOU_Rank-` | `六段` | Player rank (Online matches). |
+| `KIOU_Rate+` / `KIOU_Rate-` | `1832` | Player rate; omitted when zero. |
+| `KIOU_UserId+` / `KIOU_UserId-` | `550e8400-e29b-41d4-a716-446655440000` | Player user id (UUID format); omitted when blank. |
+| `KIOU_StartedAt` | `2026-06-16T09:30:03Z` | Wall-clock ISO 8601 UTC at match start. |
 
 ## Install
 
-Pick the row that matches how your device is signed.
+### Jailbroken device (rootless)
 
-### Jailbroken (rootless — Dopamine / palera1n)
+`make package install` transfers and installs the `.deb` over SSH.
+Requires `openssh-server` on the device (install via Sileo/Zebra).
 
 ```sh
+make package
 make package install THEOS_DEVICE_IP=<device-ip>
 ```
 
 The dylib lands at `/var/jb/Library/MobileSubstrate/DynamicLibraries/KiouEngineBridge.dylib`
-and is loaded by MobileSubstrate / ElleKit on next launch. Respring or
-relaunch KIOU, then point your host bridge at `ws://<device-ip>:9527`.
+and is loaded by ElleKit on next launch. Respring or relaunch KIOU, then
+point your CSA client at `tcp://<device-ip>:4081`.
 
-### Sideloadly / AltStore / Apple Developer Program
+### Jailed dylib (TrollStore)
+
+TrollStore is only supported on specific iOS versions. Check the
+[supported versions table](https://ios.cfw.guide/installing-trollstore/)
+before proceeding.
 
 ```sh
-make jailed
+make JAILED=1
 # -> packages/jailed/KiouEngineBridge.dylib
 ```
 
-`make jailed` rebuilds with Dobby statically linked and copies the
-artifact into `packages/jailed/`. The target also runs `otool -L` and
-the output must **not** mention `libsubstrate` or `libdobby`.
+Stage inside the decrypted KIOU `.app/Frameworks/`, add an `LC_LOAD_DYLIB`,
+and install via TrollStore.
 
-In Sideloadly:
+### Patched IPA (Sideload)
 
-1. Drop the decrypted KIOU `.ipa` in.
-2. Under **Inject dylibs**, add `packages/jailed/KiouEngineBridge.dylib`.
-3. Sign with your Apple ID / certificate and install.
+For devices where TrollStore is unavailable. Install the patched IPA with
+[Sideloadly](https://sideloadly.io/) or [AltStore](https://altstore.io/).
 
-The same dylib works with AltStore (drop the IPA in, add the dylib
-under **Settings -> Advanced** before signing).
+Requires a **decrypted** KIOU IPA (e.g. obtained via [palera1n](https://palera.in/) +
+Filza, or [TrollDecrypt](https://github.com/donato-fiore/TrollDecrypt)). The
+App Store download is FairPlay-encrypted and cannot be patched directly.
+
+```sh
+make BINPATCH=1
+# -> packages/binpatch/KiouEngineBridge.dylib
+```
+
+Then build the patched IPA:
+
+```sh
+shared/tools/build_patched_ipa.sh \
+  --recipe kiouenginebridge \
+  --framework UnityFramework \
+  --dylib packages/binpatch/KiouEngineBridge.dylib \
+  --input Kiou-1.0.1.ipa
+# -> Kiou-1.0.1-patched.ipa
+```
+
+Unlike runtime hook engines (Substrate, Dobby, frida-gum), the static
+binary patch never writes to `__TEXT` at runtime and survives the iOS 18
+Code Signing Monitor (CSM) — the binpatch flavour covers iOS 15.0 – 18.x.
+
+All three build flavours ship the full CSA protocol surface — Game_Summary,
+per-move notifications, resign / draw handling. See
+`docs/plans/kiou_engine_bridge_binpatch.md` § 2 for the full build matrix.
 
 ## Compatibility
 
 | | |
 |---|---|
 | **KIOU app version** | `1.0.1` (`CFBundleVersion` 11) |
-| **iOS** | 15.0 – 16.5, arm64, rootless |
-| **Engine wire** | standard USI protocol over WebSocket text frames |
+| **KIOU minimum iOS** | 10.0 (`MinimumOSVersion` in app bundle) |
+| **KiouEngineBridge minimum iOS** | 15.0 |
+| **Tested on** | 15.0 – 26, arm64 |
+| **Distribution** | Jailbroken `.deb`, TrollStore-injected jailed `.dylib`, Patched IPA (Sideloadly / AltStore) |
+| **Engine wire** | CSA server protocol v1.2 over plain TCP (`:4081`) |
 
-All hooks are pinned to RVAs from this exact KIOU build's
-`UnityFramework`. After a KIOU update the RVAs will drift and the
-tweak will silently no-op (or crash on a method whose signature
-changed). **Don't install this dylib against a KIOU version other
-than the one above without re-deriving every RVA first.**
+All hook sites are RVA-pinned to this exact KIOU build. After a KIOU update
+the RVAs will drift.
 
 ## Requirements
 
 - [Theos](https://theos.dev/) with the standard iOS toolchain installed
   (`$THEOS` set). Kiou Engine Bridge is pure Objective-C — no Orion,
   no Swift runtime.
-- iOS 15.0–16.5, arm64, rootless layout.
+- iOS 15.0–26, arm64.
 - For the jailed (sideload) path: a decrypted copy of the KIOU `.ipa`.
-- A host-side bridge that speaks USI over WebSocket against
-  `ws://<device-ip>:9527`. YaneuraOu wrapped in a tiny WS adapter is
-  the reference setup.
 
-## Layout
+### Developer hooks
 
+```sh
+make hooks
 ```
-Sources/KiouEngineBridge/
-  Internal.h                    # tweak-private declarations
-  Tweak.m                       # constructor + UnityFramework dyld walk
-  Hook_LowLevelObserve.m        # TryMakeMove / SFEN / USI extraction
-  Hook_MatchModeObserve.m       # IMatchMode lifecycle (5 modes, 3 methods)
-  Hook_OnlineObserve.m          # OnlinePvPMode snapshot / result observer
-  Hook_GameOrchestratorObserve.m# match-end auto-rematch helper
-  Hook_GameStateStoreObserve.m  # Set*PlayerInfo capture for meta_emit
-  Hook_AfkSuppress.m            # pin GameOrchestrator.IsAfkEnabled = false
-  Inject_Move.m                 # bestmove -> Move.Create / TryMakeMove path
-  Usi_Engine.m                  # USI state machine (Phase 2)
-  Server_WebSocket.m            # 0.0.0.0:9527 listener + recv loop
-  Meta_Emitter.m                # sidecar JSON stream for KIF assembly
 
-vendor/dobby                    # symlink to KiouEditor/vendor/dobby/
-../_shared/                     # kiou-shared submodule (logging, il2cpp, hookengine)
-```
+Registers `scripts/` as the git hooks path so `scripts/pre-commit` fires
+before every commit. When a commit touches `recipes/*.py` or
+`shared/tools/`, the hook runs `tools.verify_sites` to cross-check every
+`_SITES` row against `assets/dump.cs.index.json`. If the dump index is
+absent (not committed to the repo) the hook exits 0 and prints a heads-up —
+it is a local-only gate, not a CI requirement.
 
 ## Where the logs go
 
@@ -257,40 +217,17 @@ The dylib writes its own diagnostic log into the KIOU sandbox:
 
 — which translates to `/var/mobile/Containers/Data/Application/<UUID>/tmp/kiouenginebridge.log`
 on a jailbroken device. Tail it over SSH to watch matches and the
-USI handshake resolve in real time:
+CSA handshake resolve in real time:
 
 ```sh
 ssh root@<device-ip> 'tail -F /var/mobile/Containers/Data/Application/*/tmp/kiouenginebridge.log'
 ```
 
-Each match produces `[MMODE]` lifecycle lines, `[WS]` connection
-events, and `[USI]` engine-state transitions interleaved with the
+Each match produces `[MMODE]` lifecycle lines, `[CSA]` connection
+events, and `[CSA-ENG]` engine-state transitions interleaved with the
 move-injection results.
-
-## Sibling tweaks
-
-Kiou Engine Bridge shares its il2cpp helpers and logging plumbing with
-two sister projects you can install side-by-side. All three can
-coexist in the same KIOU process:
-
-- [**Kiou Editor**](https://github.com/IPA-Patch/KiouEditor) — the
-  client-side customization suite (item unlock, premium gating, engine
-  tuning, voice unlock, etc).
-- [**Kiou Kif Exporter**](https://github.com/IPA-Patch/KiouKifExporter) —
-  saves every match as a standard KIF 2.0 file in the app sandbox,
-  ready for Files.app / AirDrop / PiyoShogi.
 
 ## License
 
 Released under the [MIT License](LICENSE) — see the `LICENSE` file for the
 full text.
-
-### Scope of use
-
-Intended for **authorized penetration testing and personal research**. The
-repository ships no proprietary KIOU assets and does not distribute the
-IPA — sourcing a decrypted copy of KIOU for the sideload path is the
-reader's responsibility. Online ranked play through this bridge can
-affect your account's rating; the tweak does not gate that behavior,
-so use against ranked matches only on accounts and in jurisdictions
-where you have the authority to do so.

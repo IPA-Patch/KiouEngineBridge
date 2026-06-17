@@ -39,6 +39,13 @@
 #define RVA_ONLINE_HANDLE_RESULT       0x5A0CBD0
 #define RVA_CPUSTREAM_UPDATE_SNAPSHOT  0x59EB0E0  // CPUStreamMode counterpart
 
+// Latest server-authoritative remaining time, cached from
+// UpdateAuthoritativeSnapshot (Online) and CpuStream_UpdateSnapshot.
+// Exported via Internal.h so Meta_Emitter can embed them in meta_move.
+// 0.0f means "no snapshot received yet this match".
+float volatile g_latestBlackTimeSec = 0.0f;
+float volatile g_latestWhiteTimeSec = 0.0f;
+
 // ---------------------------------------------------------------------------
 // (A) UpdateAuthoritativeSnapshot
 //
@@ -58,12 +65,12 @@ typedef void (*UpdateAuthoritativeSnapshot_t)(void *self,
                                               int32_t moveCount);
 static UpdateAuthoritativeSnapshot_t orig_UpdateAuthoritativeSnapshot = NULL;
 
-static void hook_UpdateAuthoritativeSnapshot(void *self,
-                                             void *sfenStr,
-                                             int32_t turn,
-                                             float blackTimeSec,
-                                             float whiteTimeSec,
-                                             int32_t moveCount) {
+void HookUpdateAuthoritativeSnapshot(void *self,
+                                      void *sfenStr,
+                                      int32_t turn,
+                                      float blackTimeSec,
+                                      float whiteTimeSec,
+                                      int32_t moveCount) {
     // The fact that we just received an authoritative snapshot is the
     // strongest "this is an online match" signal we have. Cache the
     // OnlinePvPMode self so Inject_Move can route to OnPlayerMoveAsync if
@@ -71,9 +78,11 @@ static void hook_UpdateAuthoritativeSnapshot(void *self,
     if (g_onlineModeCache != self) g_onlineModeCache = self;
     g_lastOnlineEvtUs = mach_absolute_time();
     if (sfenStr) g_authoritativeSfenString = sfenStr;
+    g_latestBlackTimeSec = blackTimeSec;
+    g_latestWhiteTimeSec = whiteTimeSec;
 
     NSString *sfen = il2cppStringToNSString(sfenStr);
-    file_log([NSString stringWithFormat:
+    IPALog([NSString stringWithFormat:
               @"[SNAPSHOT] online turn=%d move_count=%d "
               @"black=%.2fs white=%.2fs sfen=\"%@\"",
               (int)turn, (int)moveCount,
@@ -81,7 +90,7 @@ static void hook_UpdateAuthoritativeSnapshot(void *self,
               sfen ?: @""]);
     // Phase 2 doesn't surface snapshots over WS — Usi_Engine relies on
     // ADAPTER2 observations (which fire whenever the local engine applies
-    // a move) for turn tracking. The file_log line above is enough to
+    // a move) for turn tracking. The IPALog line above is enough to
     // debug authoritative-state drift after the fact.
     (void)sfen;
     if (orig_UpdateAuthoritativeSnapshot) {
@@ -112,7 +121,7 @@ static HandleMoveResult_t orig_HandleMoveResult = NULL;
 
 static uint32_t g_handleResultCount = 0;
 
-static void hook_HandleMoveResult(void *self, void *reply) {
+void HookHandleMoveResult(void *self, void *reply) {
     if (g_onlineModeCache != self) g_onlineModeCache = self;
     g_lastOnlineEvtUs = mach_absolute_time();
 
@@ -120,12 +129,12 @@ static void hook_HandleMoveResult(void *self, void *reply) {
     if (n <= 3 || (n % 30) == 0) {
         // Log the first three replies in full and then sample every 30th to
         // keep the file from ballooning during long matches.
-        file_log([NSString stringWithFormat:
+        IPALog([NSString stringWithFormat:
                   @"[RESULT] online HandleMoveResult call#%u self=%p reply=%p",
                   n, self, reply]);
     }
     // Phase 2: HandleMoveResult is server-side bookkeeping; the USI engine
-    // doesn't need to see it. file_log keeps a sampled trace for postmortems.
+    // doesn't need to see it. IPALog keeps a sampled trace for postmortems.
     if (orig_HandleMoveResult) orig_HandleMoveResult(self, reply);
 }
 
@@ -138,25 +147,27 @@ static void hook_HandleMoveResult(void *self, void *reply) {
 // ---------------------------------------------------------------------------
 static UpdateAuthoritativeSnapshot_t orig_CpuStream_UpdateSnapshot = NULL;
 
-static void hook_CpuStream_UpdateSnapshot(void *self,
-                                          void *sfenStr,
-                                          int32_t turn,
-                                          float blackTimeSec,
-                                          float whiteTimeSec,
-                                          int32_t moveCount) {
+void HookCpuStreamUpdateSnapshot(void *self,
+                                   void *sfenStr,
+                                   int32_t turn,
+                                   float blackTimeSec,
+                                   float whiteTimeSec,
+                                   int32_t moveCount) {
     if (g_cpuStreamModeCache != self) g_cpuStreamModeCache = self;
     g_lastCpuStreamEvtUs = mach_absolute_time();
     if (sfenStr) g_authoritativeSfenString = sfenStr;
+    g_latestBlackTimeSec = blackTimeSec;
+    g_latestWhiteTimeSec = whiteTimeSec;
 
     NSString *sfen = il2cppStringToNSString(sfenStr);
-    file_log([NSString stringWithFormat:
+    IPALog([NSString stringWithFormat:
               @"[SNAPSHOT] cpu_stream turn=%d move_count=%d "
               @"black=%.2fs white=%.2fs sfen=\"%@\"",
               (int)turn, (int)moveCount,
               (double)blackTimeSec, (double)whiteTimeSec,
               sfen ?: @""]);
-    // Phase 2: see comment in hook_UpdateAuthoritativeSnapshot — snapshots
-    // stay file_log-only and the USI engine tracks turns via ADAPTER2.
+    // Phase 2: see comment in HookUpdateAuthoritativeSnapshot — snapshots
+    // stay IPALog-only and the USI engine tracks turns via ADAPTER2.
     (void)sfen;
     if (orig_CpuStream_UpdateSnapshot) {
         orig_CpuStream_UpdateSnapshot(self, sfenStr, turn,
@@ -168,12 +179,13 @@ static void hook_CpuStream_UpdateSnapshot(void *self,
 // ---------------------------------------------------------------------------
 // Installer.
 // ---------------------------------------------------------------------------
-void install_OnlineObserve_hook(uintptr_t unityBase) {
+#if !KIOU_BINPATCH
+void InstallOnlineObserveHook(uintptr_t unityBase) {
     uintptr_t addrSnap = unityBase + RVA_ONLINE_UPDATE_SNAPSHOT;
     MSHookFunction((void *)addrSnap,
-                   (void *)hook_UpdateAuthoritativeSnapshot,
+                   (void *)HookUpdateAuthoritativeSnapshot,
                    (void **)&orig_UpdateAuthoritativeSnapshot);
-    file_log([NSString stringWithFormat:
+    IPALog([NSString stringWithFormat:
               @"[ONLINE] hooked OnlinePvPMode.UpdateAuthoritativeSnapshot "
               @"@0x%lx (base+0x%x)",
               (unsigned long)addrSnap,
@@ -181,9 +193,9 @@ void install_OnlineObserve_hook(uintptr_t unityBase) {
 
     uintptr_t addrRes = unityBase + RVA_ONLINE_HANDLE_RESULT;
     MSHookFunction((void *)addrRes,
-                   (void *)hook_HandleMoveResult,
+                   (void *)HookHandleMoveResult,
                    (void **)&orig_HandleMoveResult);
-    file_log([NSString stringWithFormat:
+    IPALog([NSString stringWithFormat:
               @"[ONLINE] hooked OnlinePvPMode.HandleMoveResult "
               @"@0x%lx (base+0x%x)",
               (unsigned long)addrRes,
@@ -191,11 +203,16 @@ void install_OnlineObserve_hook(uintptr_t unityBase) {
 
     uintptr_t addrCpuSnap = unityBase + RVA_CPUSTREAM_UPDATE_SNAPSHOT;
     MSHookFunction((void *)addrCpuSnap,
-                   (void *)hook_CpuStream_UpdateSnapshot,
+                   (void *)HookCpuStreamUpdateSnapshot,
                    (void **)&orig_CpuStream_UpdateSnapshot);
-    file_log([NSString stringWithFormat:
+    IPALog([NSString stringWithFormat:
               @"[ONLINE] hooked CPUStreamMode.UpdateAuthoritativeSnapshot "
               @"@0x%lx (base+0x%x)",
               (unsigned long)addrCpuSnap,
               (unsigned)RVA_CPUSTREAM_UPDATE_SNAPSHOT]);
 }
+#endif  // !KIOU_BINPATCH
+// On the binpatch build, the three Online/CPUStream observation sites are
+// routed via the static cave + SLOT dispatcher
+// (KIOU_BR_HOOK_ONLINE_UPDATE_SNAPSHOT / _ONLINE_HANDLE_RESULT /
+// _CPUSTREAM_UPDATE_SNAPSHOT in recipes/kiouenginebridge.py).
