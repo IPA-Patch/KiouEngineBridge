@@ -262,6 +262,13 @@ NSString *CsaBuildGameSummary(int32_t local_player,
 
     // KIOU_* extensions — non-standard CSA fields preserved for richer KIF
     // metadata. A strict CSA parser is required to ignore unknown keys.
+    //
+    // KIOU_Sfen: the raw SFEN of the starting position. Redundant with
+    // BEGIN Position but lets CSA clients reconstruct the board without
+    // parsing the multi-line CSA position format.
+    if (sfen.length > 0) {
+        [out appendFormat:@"KIOU_Sfen:%@\n", sfen];
+    }
     [out appendFormat:@"KIOU_Mode:%@\n", csa_matchModeName(mode)];
     [out appendFormat:@"KIOU_StartPosition:%@\n",
                        csa_initialPositionName(startPos)];
