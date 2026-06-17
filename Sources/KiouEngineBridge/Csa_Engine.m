@@ -182,6 +182,16 @@ static void csa_handle_login(NSString *line) {
     NSString *name = (parts.count >= 2) ? parts[1] : @"engine";
     CsaEngineSendLine([NSString stringWithFormat:@"LOGIN:%@ OK", name]);
 
+    int s = atomic_load(&g_csaState);
+    if (s == CSA_STATE_PLAYING) {
+        // CsaEngineOnTcpClientConnected already shipped Game_Summary for
+        // the in-progress match. A late LOGIN from a verbose client gets
+        // the OK reply above but doesn't re-trigger renegotiation.
+        file_log(@"[CSA-ENG] LOGIN in PLAYING — Game_Summary already sent, "
+                 @"skipping renegotiation");
+        return;
+    }
+
     int32_t lp = atomic_load(&g_csaLocalPlayer);
     if (lp == 0 || lp == 1) {
         // We already have a KIOU match in progress — push Game_Summary now.
@@ -587,6 +597,17 @@ void CsaEngineOnMoveObserved(uint32_t move,
 void CsaEngineOnTcpClientConnected(void) {
     file_log(@"[CSA-ENG] tcp client connected");
     csa_set_state(CSA_STATE_LOGIN);
+    // If a KIOU match is already in progress (reconnect mid-game, or the
+    // engine simply attached after the user already started a CPU match),
+    // auto-ship Game_Summary so the engine doesn't need to send LOGIN to
+    // discover the current state. Standard CSA engines that DO send LOGIN
+    // still get a normal LOGIN: <name> OK reply; csa_handle_login skips
+    // re-sending Game_Summary when we're already past LOGIN state.
+    int32_t lp = atomic_load(&g_csaLocalPlayer);
+    if (lp == 0 || lp == 1) {
+        file_log(@"[CSA-ENG] mid-match reconnect — auto-renegotiating");
+        csa_send_game_summary(lp);
+    }
 }
 
 void CsaEngineOnTcpClientDisconnected(void) {
