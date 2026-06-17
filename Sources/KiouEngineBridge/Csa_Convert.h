@@ -189,6 +189,40 @@ int32_t DropPieceTypeFromHandDelta(NSString *sfenBefore,
                                    NSString *sfenAfter,
                                    int32_t playerSide);
 
+// ---------------------------------------------------------------------------
+// Move legality checks.
+//
+// Lightweight validators KEB runs before handing a CSA-supplied move off to
+// inject_apply. They don't replicate the full shogi rule engine — KIOU is
+// the authority on board state — but they catch the categories of input
+// that, when fed through inject, leave KIOU's internal state inconsistent
+// (the 'piece bounces back' symptom from on-device testing):
+//
+//   - dropping onto an occupied square
+//   - moving from an empty square
+//   - moving from a square whose piece doesn't match the named piece type
+//   - moving onto a square already holding the same side's piece
+//   - drop landing on a rank with no escape (pawn / lance on rank 1,
+//     knight on ranks 1-2; from the moving side's perspective)
+//   - two pawns on the same file (nifu) when dropping a pawn
+//
+// All four return a short ASCII reason string on rejection, or NULL when
+// the move passes. `playerSide` is 0=Black, 1=White. Square indices follow
+// the KIOU PSC convention (0..80).
+// ---------------------------------------------------------------------------
+
+const char *ValidateCsaDrop(NSString *sfenBefore,
+                            uint32_t toSquare,
+                            int32_t pscPieceType,
+                            int32_t playerSide);
+
+const char *ValidateCsaMove(NSString *sfenBefore,
+                            uint32_t fromSquare,
+                            uint32_t toSquare,
+                            int32_t pscPieceType,
+                            BOOL promote,
+                            int32_t playerSide);
+
 // Convenience: given a CSA-formatted move that's missing its `,T<n>`
 // suffix, append `,T<seconds>` (or return the original unchanged when
 // `seconds` < 0). Used by the engine driver when it knows the time spent
