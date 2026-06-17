@@ -82,7 +82,7 @@ void HookUpdateAuthoritativeSnapshot(void *self,
     g_latestWhiteTimeSec = whiteTimeSec;
 
     NSString *sfen = il2cppStringToNSString(sfenStr);
-    file_log([NSString stringWithFormat:
+    IPALog([NSString stringWithFormat:
               @"[SNAPSHOT] online turn=%d move_count=%d "
               @"black=%.2fs white=%.2fs sfen=\"%@\"",
               (int)turn, (int)moveCount,
@@ -90,7 +90,7 @@ void HookUpdateAuthoritativeSnapshot(void *self,
               sfen ?: @""]);
     // Phase 2 doesn't surface snapshots over WS — Usi_Engine relies on
     // ADAPTER2 observations (which fire whenever the local engine applies
-    // a move) for turn tracking. The file_log line above is enough to
+    // a move) for turn tracking. The IPALog line above is enough to
     // debug authoritative-state drift after the fact.
     (void)sfen;
     if (orig_UpdateAuthoritativeSnapshot) {
@@ -129,12 +129,12 @@ void HookHandleMoveResult(void *self, void *reply) {
     if (n <= 3 || (n % 30) == 0) {
         // Log the first three replies in full and then sample every 30th to
         // keep the file from ballooning during long matches.
-        file_log([NSString stringWithFormat:
+        IPALog([NSString stringWithFormat:
                   @"[RESULT] online HandleMoveResult call#%u self=%p reply=%p",
                   n, self, reply]);
     }
     // Phase 2: HandleMoveResult is server-side bookkeeping; the USI engine
-    // doesn't need to see it. file_log keeps a sampled trace for postmortems.
+    // doesn't need to see it. IPALog keeps a sampled trace for postmortems.
     if (orig_HandleMoveResult) orig_HandleMoveResult(self, reply);
 }
 
@@ -160,14 +160,14 @@ void HookCpuStreamUpdateSnapshot(void *self,
     g_latestWhiteTimeSec = whiteTimeSec;
 
     NSString *sfen = il2cppStringToNSString(sfenStr);
-    file_log([NSString stringWithFormat:
+    IPALog([NSString stringWithFormat:
               @"[SNAPSHOT] cpu_stream turn=%d move_count=%d "
               @"black=%.2fs white=%.2fs sfen=\"%@\"",
               (int)turn, (int)moveCount,
               (double)blackTimeSec, (double)whiteTimeSec,
               sfen ?: @""]);
     // Phase 2: see comment in HookUpdateAuthoritativeSnapshot — snapshots
-    // stay file_log-only and the USI engine tracks turns via ADAPTER2.
+    // stay IPALog-only and the USI engine tracks turns via ADAPTER2.
     (void)sfen;
     if (orig_CpuStream_UpdateSnapshot) {
         orig_CpuStream_UpdateSnapshot(self, sfenStr, turn,
@@ -185,7 +185,7 @@ void InstallOnlineObserveHook(uintptr_t unityBase) {
     MSHookFunction((void *)addrSnap,
                    (void *)HookUpdateAuthoritativeSnapshot,
                    (void **)&orig_UpdateAuthoritativeSnapshot);
-    file_log([NSString stringWithFormat:
+    IPALog([NSString stringWithFormat:
               @"[ONLINE] hooked OnlinePvPMode.UpdateAuthoritativeSnapshot "
               @"@0x%lx (base+0x%x)",
               (unsigned long)addrSnap,
@@ -195,7 +195,7 @@ void InstallOnlineObserveHook(uintptr_t unityBase) {
     MSHookFunction((void *)addrRes,
                    (void *)HookHandleMoveResult,
                    (void **)&orig_HandleMoveResult);
-    file_log([NSString stringWithFormat:
+    IPALog([NSString stringWithFormat:
               @"[ONLINE] hooked OnlinePvPMode.HandleMoveResult "
               @"@0x%lx (base+0x%x)",
               (unsigned long)addrRes,
@@ -205,7 +205,7 @@ void InstallOnlineObserveHook(uintptr_t unityBase) {
     MSHookFunction((void *)addrCpuSnap,
                    (void *)HookCpuStreamUpdateSnapshot,
                    (void **)&orig_CpuStream_UpdateSnapshot);
-    file_log([NSString stringWithFormat:
+    IPALog([NSString stringWithFormat:
               @"[ONLINE] hooked CPUStreamMode.UpdateAuthoritativeSnapshot "
               @"@0x%lx (base+0x%x)",
               (unsigned long)addrCpuSnap,

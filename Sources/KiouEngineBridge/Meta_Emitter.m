@@ -289,18 +289,18 @@ static void meta_emit_dict(NSDictionary *payload) {
                                                    options:0
                                                      error:&err];
     if (!json) {
-        file_log([NSString stringWithFormat:
+        IPALog([NSString stringWithFormat:
                   @"[META] serialize failed: %@",
                   err.localizedDescription ?: @"?"]);
         return;
     }
     NSString *body = [[NSString alloc] initWithData:json encoding:NSUTF8StringEncoding];
     if (!body) {
-        file_log(@"[META] serialize: utf-8 decode failed");
+        IPALog(@"[META] serialize: utf-8 decode failed");
         return;
     }
     NSString *line = [NSString stringWithFormat:@"meta %@\n", body];
-    file_log([NSString stringWithFormat:@"[META>] %@", body]);
+    IPALog([NSString stringWithFormat:@"[META>] %@", body]);
     KEBWsServerPush(line);
 }
 
@@ -352,7 +352,7 @@ static void meta_do_emit_match_start(const char *trigger) {
     d[@"black"]          = meta_playerDict(blackPI);
     d[@"white"]          = meta_playerDict(whitePI);
 
-    file_log([NSString stringWithFormat:
+    IPALog([NSString stringWithFormat:
               @"[META] match_start emit trigger=%s black_src=%s "
               @"white_src=%s",
               trigger,
@@ -387,7 +387,7 @@ void MetaEmitMatchStart(int32_t local_player) {
     g_metaLatestBlackPlayerInfo = NULL;
     g_metaLatestWhitePlayerInfo = NULL;
 
-    file_log([NSString stringWithFormat:
+    IPALog([NSString stringWithFormat:
               @"[META] match_start armed local_player=%d, "
               @"waiting for Set*PlayerInfo (1.5s fallback)",
               (int)local_player]);
@@ -420,7 +420,7 @@ void MetaOnPlayerInfoSet(int32_t side, void *playerInfo) {
     } else {
         return;
     }
-    file_log([NSString stringWithFormat:
+    IPALog([NSString stringWithFormat:
               @"[META] PlayerInfo captured side=%d pi=%p "
               @"(black=%p white=%p pending=%d)",
               (int)side, playerInfo,

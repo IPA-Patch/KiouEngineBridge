@@ -74,7 +74,7 @@ UniTaskRet HookGameOrchActivateAsync(void *self, void *setup,
     // three, then every 30th. Activation only happens at scene transitions
     // so we'll almost never spam, but the cap is cheap insurance.
     if (n <= 3 || (n % 30) == 0) {
-        file_log([NSString stringWithFormat:
+        IPALog([NSString stringWithFormat:
                   @"[GAMEORCH] ActivateAsync call#%u self=%p setup=%p",
                   n, self, setup]);
     }
@@ -92,7 +92,7 @@ void InstallGameOrchestratorObserveHook(uintptr_t unityBase) {
     uintptr_t addr = unityBase + RVA_GAMEORCH_ACTIVATE;
     MSHookFunction((void *)addr, (void *)HookGameOrchActivateAsync,
                    (void **)&orig_GameOrch_ActivateAsync);
-    file_log([NSString stringWithFormat:
+    IPALog([NSString stringWithFormat:
               @"[GAMEORCH] hooked GameOrchestrator.ActivateAsync @0x%lx "
               @"(base+0x%lx)",
               (unsigned long)addr, (unsigned long)RVA_GAMEORCH_ACTIVATE]);

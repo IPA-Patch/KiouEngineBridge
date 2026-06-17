@@ -111,7 +111,7 @@ static const char *csa_state_name(int s) {
 static void csa_set_state_impl(int newState, const char *caller) {
     int old = atomic_exchange(&g_csaState, newState);
     if (old != newState) {
-        file_log([NSString stringWithFormat:@"[CSA-ENG] state %s -> %s (from %s)",
+        IPALog([NSString stringWithFormat:@"[CSA-ENG] state %s -> %s (from %s)",
                   csa_state_name(old), csa_state_name(newState), caller]);
     }
 }
@@ -123,7 +123,7 @@ static void csa_set_state_impl(int newState, const char *caller) {
 // ---------------------------------------------------------------------------
 void CsaEngineSendLine(NSString *line) {
     if (line.length == 0) return;
-    file_log([NSString stringWithFormat:@"[CSA>] %@", line]);
+    IPALog([NSString stringWithFormat:@"[CSA>] %@", line]);
     KEBCsaServerPush(line);
 }
 
@@ -159,7 +159,7 @@ static void csa_send_game_summary(int32_t local_player) {
     NSString *startSfen = nil;
     NSString *summary = CsaBuildGameSummary(local_player, &gameId, &startSfen);
     if (summary.length == 0) {
-        file_log(@"[CSA-ENG] CsaBuildGameSummary returned empty — "
+        IPALog(@"[CSA-ENG] CsaBuildGameSummary returned empty — "
                  @"deferring Game_Summary");
         return;
     }
@@ -170,7 +170,7 @@ static void csa_send_game_summary(int32_t local_player) {
     // NotifyPieceMoved fires, which leaves the validator blind for move 1).
     if (startSfen.length > 0) {
         g_csaPrevSfen = startSfen;
-        file_log([NSString stringWithFormat:
+        IPALog([NSString stringWithFormat:
                   @"[CSA-ENG] seeded g_csaPrevSfen from Game_Summary sfen=%@",
                   startSfen]);
     }
@@ -227,7 +227,7 @@ static void csa_handle_login(NSString *line) {
                 // next move observation to be dropped.
                 csa_send_game_summary(lpCap);
             } else {
-                file_log([NSString stringWithFormat:
+                IPALog([NSString stringWithFormat:
                           @"[CSA-ENG] LOGIN renegotiate skipped: state "
                           @"changed to %s before main-queue dispatch",
                           csa_state_name(now)]);
@@ -247,11 +247,11 @@ static void csa_handle_agree(NSString *line) {
         // csa_send_game_summary already shipped START and rolled us into
         // PLAYING because KIOU does not wait for AGREE. A late AGREE from
         // the engine is harmless — log and drop.
-        file_log(@"[CSA-ENG] AGREE in PLAYING — already started, dropping");
+        IPALog(@"[CSA-ENG] AGREE in PLAYING — already started, dropping");
         return;
     }
     if (s != CSA_STATE_AGREE_WAIT) {
-        file_log([NSString stringWithFormat:
+        IPALog([NSString stringWithFormat:
                   @"[CSA-ENG] AGREE in state %s — ignoring",
                   csa_state_name(s)]);
         return;
@@ -263,7 +263,7 @@ static void csa_handle_agree(NSString *line) {
 
 static void csa_handle_reject(NSString *line) {
     (void)line;
-    file_log(@"[CSA-ENG] engine REJECTed match — staying connected");
+    IPALog(@"[CSA-ENG] engine REJECTed match — staying connected");
     NSString *gid = g_csaLastGameID ?: @"GAME";
     CsaEngineSendLine([NSString stringWithFormat:@"REJECT:%@ by engine", gid]);
     csa_set_state(CSA_STATE_LOGIN);
@@ -312,7 +312,7 @@ static void csa_handle_line(NSString *line) {
         csa_handle_move_from_engine(trimmed);
         return;
     }
-    file_log([NSString stringWithFormat:
+    IPALog([NSString stringWithFormat:
               @"[CSA-ENG] ignoring unrecognised line: %@", trimmed]);
 }
 
@@ -328,7 +328,7 @@ extern void InjectNyugyokuDeclaration(int32_t playerSide);
 static void csa_handle_special(NSString *line) {
     int s = atomic_load(&g_csaState);
     if (s != CSA_STATE_PLAYING) {
-        file_log([NSString stringWithFormat:
+        IPALog([NSString stringWithFormat:
                   @"[CSA-ENG] special %@ in state %s — ignoring",
                   line, csa_state_name(s)]);
         return;
@@ -355,12 +355,12 @@ static void csa_handle_special(NSString *line) {
         return;
     }
     if ([line isEqualToString:@"%CHUDAN"]) {
-        file_log(@"[CSA-ENG] %%CHUDAN received — not surfaced to KIOU");
+        IPALog(@"[CSA-ENG] %%CHUDAN received — not surfaced to KIOU");
         CsaEngineSendLine(@"#CHUDAN");
         csa_set_state(CSA_STATE_GAME_OVER);
         return;
     }
-    file_log([NSString stringWithFormat:
+    IPALog([NSString stringWithFormat:
               @"[CSA-ENG] unknown special: %@", line]);
 }
 
@@ -405,7 +405,7 @@ static void csa_apply_engine_move(NSString *line, uint32_t move,
 static void csa_handle_move_from_engine(NSString *line) {
     int s = atomic_load(&g_csaState);
     if (s != CSA_STATE_PLAYING) {
-        file_log([NSString stringWithFormat:
+        IPALog([NSString stringWithFormat:
                   @"[CSA-ENG] move in state %s — ignoring: %@",
                   csa_state_name(s), line]);
         return;
@@ -416,13 +416,13 @@ static void csa_handle_move_from_engine(NSString *line) {
     int32_t playerSide = -1;
     int32_t timeSpent = -1;
     if (!MoveBitsFromCsaText(line, &move, &pieceType, &playerSide, &timeSpent)) {
-        file_log([NSString stringWithFormat:
+        IPALog([NSString stringWithFormat:
                   @"[CSA-ENG] malformed move: %@", line]);
         return;
     }
     (void)timeSpent;  // engine-reported think time is logged but unused
 
-    file_log([NSString stringWithFormat:
+    IPALog([NSString stringWithFormat:
               @"[CSA-ENG-DBG] parsed line=\"%@\" move=0x%x piece=%d "
               @"side=%d t=%d — about to dispatch_async(main)",
               line, (unsigned)move, (int)pieceType,
@@ -433,27 +433,27 @@ static void csa_handle_move_from_engine(NSString *line) {
     // handler runs on isn't.
     NSString *lineCap = [line copy];
     dispatch_async(dispatch_get_main_queue(), ^{
-        file_log([NSString stringWithFormat:
+        IPALog([NSString stringWithFormat:
                   @"[CSA-ENG-DBG] main-queue dispatch arrived for: %@",
                   lineCap]);
         csa_apply_engine_move(lineCap, move, pieceType, playerSide);
-        file_log(@"[CSA-ENG-DBG] csa_apply_engine_move returned cleanly");
+        IPALog(@"[CSA-ENG-DBG] csa_apply_engine_move returned cleanly");
     });
-    file_log(@"[CSA-ENG-DBG] dispatch_async(main) submitted, returning");
+    IPALog(@"[CSA-ENG-DBG] dispatch_async(main) submitted, returning");
 }
 
 static void csa_apply_engine_move(NSString *line, uint32_t move,
                                   int32_t pieceType, int32_t playerSide) {
-    file_log([NSString stringWithFormat:
+    IPALog([NSString stringWithFormat:
               @"[CSA-ENG-DBG] csa_apply_engine_move entered line=%@", line]);
 
     // Re-check the state on the main queue — a LOGOUT / match_end could
     // have landed between the recv-queue dispatch and us getting picked up.
     int s = atomic_load(&g_csaState);
-    file_log([NSString stringWithFormat:
+    IPALog([NSString stringWithFormat:
               @"[CSA-ENG-DBG] state on main queue=%s", csa_state_name(s)]);
     if (s != CSA_STATE_PLAYING) {
-        file_log([NSString stringWithFormat:
+        IPALog([NSString stringWithFormat:
                   @"[CSA-ENG] move state changed to %s before main "
                   @"dispatch — dropping: %@",
                   csa_state_name(s), line]);
@@ -463,7 +463,7 @@ static void csa_apply_engine_move(NSString *line, uint32_t move,
     uint32_t promote = (move >> 14) & 1;
     uint32_t from    = (move >> 7) & 0x7F;
     uint32_t to      = move & 0x7F;
-    file_log([NSString stringWithFormat:
+    IPALog([NSString stringWithFormat:
               @"[CSA-ENG-DBG] decoded from=%u to=%u promote=%u drop=%u",
               from, to, promote, drop]);
 
@@ -474,7 +474,7 @@ static void csa_apply_engine_move(NSString *line, uint32_t move,
     // claims.
     int32_t enginePlayer = lp;
     if (enginePlayer != -1 && playerSide != enginePlayer) {
-        file_log([NSString stringWithFormat:
+        IPALog([NSString stringWithFormat:
                   @"[CSA-ENG] move side mismatch: engine=%d got=%d "
                   @"(applying anyway)",
                   enginePlayer, playerSide]);
@@ -498,7 +498,7 @@ static void csa_apply_engine_move(NSString *line, uint32_t move,
         if (prev.length > 0) {
             int32_t fromPiece = PscPieceTypeAtSquare(prev, from);
             if (fromPiece >= 9 && fromPiece <= 14) {
-                file_log([NSString stringWithFormat:
+                IPALog([NSString stringWithFormat:
                           @"[CSA-ENG] promote bit cleared (from=%u "
                           @"already holds promoted piece %d): %@",
                           from, fromPiece, line]);
@@ -506,16 +506,16 @@ static void csa_apply_engine_move(NSString *line, uint32_t move,
             }
         }
     }
-    file_log(@"[CSA-ENG-DBG] promote check done — building toUsi");
+    IPALog(@"[CSA-ENG-DBG] promote check done — building toUsi");
 
     NSString *toCsa = CsaSquareFromMoveBits(to);
     NSString *toUsi = csa_squareToUsi(toCsa);
     if (!toUsi) {
-        file_log([NSString stringWithFormat:
+        IPALog([NSString stringWithFormat:
                   @"[CSA-ENG] bad to-square in: %@", line]);
         return;
     }
-    file_log([NSString stringWithFormat:
+    IPALog([NSString stringWithFormat:
               @"[CSA-ENG-DBG] toCsa=%@ toUsi=%@", toCsa, toUsi]);
 
     // Cheap legality pre-checks. The primary goal is to keep blatantly
@@ -531,7 +531,7 @@ static void csa_apply_engine_move(NSString *line, uint32_t move,
     // dead-end drops, nifu, piece-type mismatches).
     NSString *validatorSfen = g_csaPrevSfen;
 
-    file_log([NSString stringWithFormat:
+    IPALog([NSString stringWithFormat:
               @"[CSA-ENG-DBG] validator sfen len=%lu — running validator",
               (unsigned long)validatorSfen.length]);
 
@@ -540,11 +540,11 @@ static void csa_apply_engine_move(NSString *line, uint32_t move,
             ? ValidateCsaDrop(validatorSfen, to, pieceType, playerSide)
             : ValidateCsaMove(validatorSfen, from, to, pieceType,
                               promote ? YES : NO, playerSide);
-        file_log([NSString stringWithFormat:
+        IPALog([NSString stringWithFormat:
                   @"[CSA-ENG-DBG] validator result reason=%s",
                   reason ?: "OK"]);
         if (reason) {
-            file_log([NSString stringWithFormat:
+            IPALog([NSString stringWithFormat:
                       @"[CSA-ENG] rejecting illegal move (reason=%s): %@",
                       reason, line]);
             // CSA spec lets the server emit `#ILLEGAL_MOVE` on the engine's
@@ -560,7 +560,7 @@ static void csa_apply_engine_move(NSString *line, uint32_t move,
     if (drop) {
         NSString *letter = csa_pieceToUsiDropLetter(pieceType);
         if (!letter) {
-            file_log([NSString stringWithFormat:
+            IPALog([NSString stringWithFormat:
                       @"[CSA-ENG] cannot map drop piece %d to USI: %@",
                       pieceType, line]);
             return;
@@ -570,7 +570,7 @@ static void csa_apply_engine_move(NSString *line, uint32_t move,
         NSString *fromCsa = CsaSquareFromMoveBits(from);
         NSString *fromUsi = csa_squareToUsi(fromCsa);
         if (!fromUsi) {
-            file_log([NSString stringWithFormat:
+            IPALog([NSString stringWithFormat:
                       @"[CSA-ENG] bad from-square in: %@", line]);
             return;
         }
@@ -579,14 +579,14 @@ static void csa_apply_engine_move(NSString *line, uint32_t move,
             : [NSString stringWithFormat:@"%@%@", fromUsi, toUsi];
     }
 
-    file_log([NSString stringWithFormat:
+    IPALog([NSString stringWithFormat:
               @"[CSA-ENG-DBG] built usi=%@ — calling inject_apply", usi]);
 
     NSString *outSfen = nil;
     NSString *outErr = nil;
     uint32_t outRaw = 0;
     bool ok = inject_apply(usi, &outSfen, &outRaw, &outErr);
-    file_log([NSString stringWithFormat:
+    IPALog([NSString stringWithFormat:
               @"[CSA-ENG] inject_apply usi=%@ ok=%d raw=0x%x err=%@ sfen=%@",
               usi, (int)ok, (unsigned)outRaw, outErr ?: @"", outSfen ?: @""]);
     if (!ok) {
@@ -623,7 +623,7 @@ void CsaEngineOnMatchStart(int32_t local_player) {
     g_csaLastMoveMachTicks[1] = startMach;
 
     int s = atomic_load(&g_csaState);
-    file_log([NSString stringWithFormat:
+    IPALog([NSString stringWithFormat:
               @"[CSA-ENG] match_start local_player=%d state=%s",
               (int)local_player, csa_state_name(s)]);
 
@@ -655,7 +655,7 @@ void CsaEngineOnMatchStart(int32_t local_player) {
 
 void CsaEngineOnMatchEnd(usi_match_result_t result) {
     int s = atomic_load(&g_csaState);
-    file_log([NSString stringWithFormat:
+    IPALog([NSString stringWithFormat:
               @"[CSA-ENG] match_end result=%d state=%s",
               (int)result, csa_state_name(s)]);
 
@@ -686,7 +686,7 @@ void CsaEngineOnMoveObserved(uint32_t move,
     uint32_t to = move & 0x7F;
     int32_t pscPieceType = PscPieceTypeAtSquare(sfenAfter, to);
     if (pscPieceType < 0) {
-        file_log([NSString stringWithFormat:
+        IPALog([NSString stringWithFormat:
                   @"[CSA-ENG] cannot resolve piece type at to=%u "
                   @"(sfen=%@) — emitting raw bits log only",
                   to, sfenAfter ?: @""]);
@@ -710,7 +710,7 @@ void CsaEngineOnMoveObserved(uint32_t move,
     int32_t handDelta = DropPieceTypeFromHandDelta(g_csaPrevSfen, sfenAfter,
                                                    playerSide);
     if (!isDrop && handDelta > 0) {
-        file_log([NSString stringWithFormat:
+        IPALog([NSString stringWithFormat:
                   @"[CSA-ENG] drop inferred from hand delta — piece=%d "
                   @"(move bit said normal move)", handDelta]);
         isDrop = YES;
@@ -792,7 +792,7 @@ void CsaEngineOnMoveObserved(uint32_t move,
     NSString *csa = CsaTextFromMoveBits(move, pscPieceType, playerSide,
                                         timeSpent);
     if (!csa) {
-        file_log([NSString stringWithFormat:
+        IPALog([NSString stringWithFormat:
                   @"[CSA-ENG] CsaTextFromMoveBits returned nil for "
                   @"move=0x%x piece=%d side=%d drop=%d promote=%d "
                   @"prevSfen=\"%@\" postSfen=\"%@\"",
@@ -815,7 +815,7 @@ void CsaEngineOnMoveObserved(uint32_t move,
 // ---------------------------------------------------------------------------
 
 void CsaEngineOnTcpClientConnected(void) {
-    file_log(@"[CSA-ENG] tcp client connected");
+    IPALog(@"[CSA-ENG] tcp client connected");
     csa_set_state(CSA_STATE_LOGIN);
     // If a KIOU match is already in progress (reconnect mid-game, or the
     // engine simply attached after the user already started a CPU match),
@@ -843,7 +843,7 @@ void CsaEngineOnTcpClientConnected(void) {
 }
 
 void CsaEngineOnTcpClientDisconnected(void) {
-    file_log(@"[CSA-ENG] tcp client disconnected");
+    IPALog(@"[CSA-ENG] tcp client disconnected");
     csa_set_state(CSA_STATE_BOOT);
 }
 
@@ -858,5 +858,5 @@ static void csa_engine_line_handler(NSString *line) {
 
 void CsaEngineInstall(void) {
     KEBCsaServerSetLineHandler(csa_engine_line_handler);
-    file_log(@"[CSA-ENG] installed (line handler registered)");
+    IPALog(@"[CSA-ENG] installed (line handler registered)");
 }
