@@ -177,6 +177,18 @@ NSString *CsaPositionFromSfen(NSString *sfen);
 // 9..14. Returns -1 if the square is empty or sfen is malformed.
 int32_t PscPieceTypeAtSquare(NSString *sfen, uint32_t square);
 
+// Find the piece type that disappeared from one player's hand between two
+// SFEN snapshots. Used to recover the dropped piece type when KIOU's Move
+// bits don't carry a usable upper-16 encoding for drops. Returns the PSC
+// PieceType (1..7 — drops are always unpromoted) of the missing piece, or
+// -1 when the hands match exactly (no drop happened) or sfen is malformed.
+//
+// playerSide: 0=Black (look at the uppercase hand letters), 1=White
+// (lowercase hand letters).
+int32_t DropPieceTypeFromHandDelta(NSString *sfenBefore,
+                                   NSString *sfenAfter,
+                                   int32_t playerSide);
+
 // Convenience: given a CSA-formatted move that's missing its `,T<n>`
 // suffix, append `,T<seconds>` (or return the original unchanged when
 // `seconds` < 0). Used by the engine driver when it knows the time spent
