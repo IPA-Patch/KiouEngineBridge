@@ -1023,7 +1023,16 @@ bool inject_apply(NSString *usi,
     // inject_buildMove calls Project.ShogiCore.Position.CreateFromSFEN
     // (and Position.GetPiece) via NativeFunction; calling those off the
     // main thread crashes the il2cpp runtime instantly. Box them all into
-    // dispatch_sync calls.
+    // dispatch_sync calls — but only when the caller isn't already on
+    // the main queue (Csa_Engine's recv-queue dispatch lands here on
+    // main, and dispatch_sync(main_queue) from main is a deadlock).
+#define KIOU_RUN_ON_MAIN_SYNC(block) do {                                   \
+    if ([NSThread isMainThread]) {                                          \
+        block();                                                            \
+    } else {                                                                \
+        dispatch_sync(dispatch_get_main_queue(), block);                    \
+    }                                                                       \
+} while (0)
     __block uint32_t move = 0;
     __block const char *buildErr = NULL;
     __block bool buildOk = false;
@@ -1032,7 +1041,7 @@ bool inject_apply(NSString *usi,
     __block int32_t humanSideOut = -1;
 
     NSString *usiBox = [[NSString alloc] initWithUTF8String:usiTok];
-    dispatch_sync(dispatch_get_main_queue(), ^{
+    KIOU_RUN_ON_MAIN_SYNC(^{
         const char *usiInner = [usiBox UTF8String];
         buildOk = inject_buildMove(usiInner, &move, &buildErr);
         if (!buildOk) return;
@@ -1050,7 +1059,7 @@ bool inject_apply(NSString *usi,
 
     if (!buildOk) {
         __block NSString *currentSfen = nil;
-        dispatch_sync(dispatch_get_main_queue(), ^{
+        KIOU_RUN_ON_MAIN_SYNC(^{
             currentSfen = inject_sfenFromCachedGameCtrl();
         });
 
@@ -1120,7 +1129,7 @@ bool inject_apply(NSString *usi,
     // the actual mutation. Animation runs in parallel with our wait and
     // wraps up around the time we resume.
     if (g_BoardPresenter_PlayMoveAnimationAsync && g_gameOrchestratorCache) {
-        dispatch_sync(dispatch_get_main_queue(), ^{
+        KIOU_RUN_ON_MAIN_SYNC(^{
             void *boardPresenter = readPtr((void *)g_gameOrchestratorCache,
                                            OFF_GAMEORCH_BOARD_PRESENTER);
             if (!boardPresenter) {
@@ -1155,7 +1164,7 @@ bool inject_apply(NSString *usi,
     __block uint32_t runExecuted = 0;
     __block NSString *runSfen = nil;
     __block NSString *runErr = nil;
-    dispatch_sync(dispatch_get_main_queue(), ^{
+    KIOU_RUN_ON_MAIN_SYNC(^{
         inject_runOnMain([usiBox UTF8String], move, route,
                          &runOk, &runExecuted, &runSfen, &runErr);
     });
