@@ -47,7 +47,7 @@ static uint32_t g_afkCheckCount = 0;
 static bool HookIsAfkEnabled(void *self) {
     uint32_t n = ++g_afkCheckCount;
     if (n <= 3 || (n % 600) == 0) {
-        file_log([NSString stringWithFormat:
+        IPALog([NSString stringWithFormat:
                   @"[AFK] IsAfkEnabled call#%u self=%p -> returning false "
                   @"(watchdog suppressed)", n, self]);
     }
@@ -64,7 +64,7 @@ void InstallAfkSuppressHook(uintptr_t unityBase) {
     MSHookFunction((void *)addr,
                    (void *)HookIsAfkEnabled,
                    (void **)&orig_IsAfkEnabled);
-    file_log([NSString stringWithFormat:
+    IPALog([NSString stringWithFormat:
               @"[AFK] hooked GameOrchestrator.IsAfkEnabled @0x%lx "
               @"(base+0x%x) — AFK watchdog now permanently disabled",
               (unsigned long)addr,

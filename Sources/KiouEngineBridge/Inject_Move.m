@@ -388,7 +388,7 @@ static void *inject_resolvePosition(bool *outFromSfen) {
                 sfen = il2cppStringToNSString(strPtr);
             } @catch (NSException *e) { }
         }
-        file_log([NSString stringWithFormat:
+        IPALog([NSString stringWithFormat:
                   @"[INJECT-DBG] resolvePosition via GameCtrl pos=%p "
                   @"sfen=\"%@\"", pos, sfen ?: @""]);
         return pos;
@@ -403,13 +403,13 @@ static void *inject_resolvePosition(bool *outFromSfen) {
         @try {
             void *built = g_Position_CreateFromSFEN(sfenStr);
             if (built && outFromSfen) *outFromSfen = true;
-            file_log([NSString stringWithFormat:
+            IPALog([NSString stringWithFormat:
                       @"[INJECT-DBG] resolvePosition via SFEN strPtr=%p "
                       @"built=%p sfen=\"%@\"",
                       sfenStr, built, sfenDisplay ?: @"<unreadable>"]);
             if (built) return built;
         } @catch (NSException *e) {
-            file_log([NSString stringWithFormat:
+            IPALog([NSString stringWithFormat:
                       @"[INJECT-DBG] resolvePosition: CreateFromSFEN threw "
                       @"sfen=\"%@\" exc=%@",
                       sfenDisplay ?: @"<unreadable>", e]);
@@ -424,18 +424,18 @@ static void *inject_resolvePosition(bool *outFromSfen) {
         @try {
             void *built = g_Position_CreateByType(0);
             if (built && outFromSfen) *outFromSfen = true;
-            file_log([NSString stringWithFormat:
+            IPALog([NSString stringWithFormat:
                       @"[INJECT-DBG] resolvePosition via standard opening "
                       @"built=%p (no GameCtrl, no authoritativeSfen)", built]);
             if (built) return built;
         } @catch (NSException *e) {
-            file_log([NSString stringWithFormat:
+            IPALog([NSString stringWithFormat:
                       @"[INJECT-DBG] resolvePosition: CreateByType threw "
                       @"exc=%@", e]);
         }
     }
 
-    file_log(@"[INJECT-DBG] resolvePosition: all paths exhausted");
+    IPALog(@"[INJECT-DBG] resolvePosition: all paths exhausted");
     return NULL;
 }
 
@@ -530,7 +530,7 @@ static bool inject_buildMove(const char *usi, uint32_t *outMove,
     }
 
     *outMove = g_PSCMove_Create(fromSq, toSq, pieceType, promote, 0);
-    file_log([NSString stringWithFormat:
+    IPALog([NSString stringWithFormat:
               @"[INJECT-DBG] buildMove usi=\"%s\" fromSq=%d toSq=%d "
               @"pieceAtFrom=0x%x pieceType=%d promote=%d => raw=0x%x",
               usi, (int)fromSq, (int)toSq,
@@ -646,14 +646,14 @@ void KEBInjectDumpRecent(void) {
     pthread_mutex_lock(&g_ringMu);
     size_t count = g_ringCount;
     size_t head  = g_ringHead;
-    file_log([NSString stringWithFormat:@"[INJECT] === recent (%zu) ===",
+    IPALog([NSString stringWithFormat:@"[INJECT] === recent (%zu) ===",
               count]);
     for (size_t i = 0; i < count; i++) {
         // Walk from oldest to newest.
         size_t idx = (head + KIOU_INJECT_RING_SIZE - count + i)
                      % KIOU_INJECT_RING_SIZE;
         kiou_inject_record_t *r = &g_ring[idx];
-        file_log([NSString stringWithFormat:
+        IPALog([NSString stringWithFormat:
                   @"[INJECT] t=%llu usi=\"%s\" route=%s ok=%d "
                   @"raw=0x%x err=\"%s\" sfen=\"%s\"",
                   (unsigned long long)r->ts_us,
@@ -770,7 +770,7 @@ static void inject_runOnMain(const char *usi, uint32_t move,
             void *self = (SELF);                                          \
             OnPlayerMoveAsync_t fn = (ORIG);                              \
             if (!self || !fn) { err = "no_session"; break; }              \
-            file_log([NSString stringWithFormat:                          \
+            IPALog([NSString stringWithFormat:                          \
                       @"[INJECT-DBG] route=%s callable=%p orig=%p "       \
                       @"bypass=%p",                                      \
                       inject_routeName(route), (void *)fn,                \
@@ -798,13 +798,13 @@ static void inject_runOnMain(const char *usi, uint32_t move,
                     uint32_t outMv = 0;                                   \
                     bool tryOk = adapterFn(                               \
                         (void *)g_adapterCache, move, &outMv);            \
-                    file_log([NSString stringWithFormat:                  \
+                    IPALog([NSString stringWithFormat:                  \
                               @"[INJECT-DBG] local TryMakeMove tryOk=%d " \
                               @"outMv=0x%x adapter=%p",                   \
                               (int)tryOk, (unsigned)outMv,                \
                               (void *)adapterFn]);                        \
                 } else {                                                  \
-                    file_log([NSString stringWithFormat:                  \
+                    IPALog([NSString stringWithFormat:                  \
                               @"[INJECT-DBG] local TryMakeMove skipped: " \
                               @"adapterCache=%p adapterFn=%p",            \
                               g_adapterCache, (void *)adapterFn]);        \
@@ -831,12 +831,12 @@ static void inject_runOnMain(const char *usi, uint32_t move,
                             g_GameStateStore_NotifyPieceMoved(            \
                                 store, move,                              \
                                 (int32_t)(LOCAL_PLAYER));                 \
-                            file_log([NSString stringWithFormat:          \
+                            IPALog([NSString stringWithFormat:          \
                                       @"[INJECT-DBG] NotifyPieceMoved "   \
                                       @"store=%p player=%d",              \
                                       store, (int)(LOCAL_PLAYER)]);       \
                         } @catch (NSException *e) {                       \
-                            file_log([NSString stringWithFormat:          \
+                            IPALog([NSString stringWithFormat:          \
                                       @"[INJECT-DBG] NotifyPieceMoved "   \
                                       @"threw %@", e]);                   \
                         }                                                 \
@@ -853,24 +853,24 @@ static void inject_runOnMain(const char *usi, uint32_t move,
                             @try {                                        \
                                 g_GameStateStore_NotifyStateSynced(       \
                                     store, pos);                          \
-                                file_log([NSString stringWithFormat:      \
+                                IPALog([NSString stringWithFormat:      \
                                           @"[INJECT-DBG] "                \
                                           @"NotifyStateSynced store=%p "  \
                                           @"pos=%p", store, pos]);        \
                             } @catch (NSException *e) {                   \
-                                file_log([NSString stringWithFormat:      \
+                                IPALog([NSString stringWithFormat:      \
                                           @"[INJECT-DBG] "                \
                                           @"NotifyStateSynced threw %@",  \
                                           e]);                            \
                             }                                             \
                         } else {                                          \
-                            file_log(@"[INJECT-DBG] "                     \
+                            IPALog(@"[INJECT-DBG] "                     \
                                      @"NotifyStateSynced skipped: no "    \
                                      @"latest pos");                      \
                         }                                                 \
                     }                                                     \
                 } else {                                                  \
-                    file_log(@"[INJECT-DBG] Notify* skipped: no store");  \
+                    IPALog(@"[INJECT-DBG] Notify* skipped: no store");  \
                 }                                                         \
             }                                                             \
         } while (0)
@@ -908,7 +908,7 @@ static void inject_runOnMain(const char *usi, uint32_t move,
                 err = "no_session";
                 break;
             }
-            file_log([NSString stringWithFormat:
+            IPALog([NSString stringWithFormat:
                       @"[INJECT-DBG] route=adapter callable=%p orig=%p bypass=%p",
                       (void *)fn,
                       (void *)orig_AdapterTryMakeMoveOut,
@@ -956,14 +956,14 @@ static void inject_runOnMain(const char *usi, uint32_t move,
     strncpy(rec.error, err, KIOU_INJECT_ROUTE_MAX - 1);
     inject_pushRecord(&rec);
 
-    file_log([NSString stringWithFormat:
+    IPALog([NSString stringWithFormat:
               @"[INJECT] usi=\"%s\" route=%s ok=%d raw=0x%x err=\"%s\" "
               @"sfen=\"%@\"",
               usi, inject_routeName(route), (int)ok,
               (unsigned)executed, err, sfen ?: @""]);
 
     // Hand the outcome back to the Usi_Engine.m caller (or whichever
-    // future caller wants it). The ring buffer / file_log entries above
+    // future caller wants it). The ring buffer / IPALog entries above
     // remain regardless, so debugging still works without a consumer.
     if (outOk)   *outOk   = ok;
     if (outRaw)  *outRaw  = executed;
@@ -1012,7 +1012,7 @@ bool inject_apply(NSString *usi,
         memcpy(rec.usi_in, usiCstr, copyN);
         rec.usi_in[copyN] = '\0';
         inject_pushRecord(&rec);
-        file_log([NSString stringWithFormat:
+        IPALog([NSString stringWithFormat:
                   @"[INJECT] skip usi=\"%s\" reason=%s",
                   rec.usi_in, rec.error]);
         if (outErr) *outErr = [NSString stringWithUTF8String:rec.error];
@@ -1074,7 +1074,7 @@ bool inject_apply(NSString *usi,
             strncpy(rec.sfen_after, cstr, KIOU_INJECT_SFEN_MAX - 1);
         }
         inject_pushRecord(&rec);
-        file_log([NSString stringWithFormat:
+        IPALog([NSString stringWithFormat:
                   @"[INJECT] parse_fail usi=\"%s\" err=%s sfen=\"%@\"",
                   usiTok, rec.error, currentSfen ?: @""]);
         if (outSfenAfter) *outSfenAfter = currentSfen;
@@ -1092,7 +1092,7 @@ bool inject_apply(NSString *usi,
         strncpy(rec.error, "not_your_turn", KIOU_INJECT_ROUTE_MAX - 1);
         rec.move_raw = move;
         inject_pushRecord(&rec);
-        file_log([NSString stringWithFormat:
+        IPALog([NSString stringWithFormat:
                   @"[INJECT] not_your_turn usi=\"%s\" raw=0x%x "
                   @"current=%d human=%d route=%s",
                   usiTok, (unsigned)move,
@@ -1112,7 +1112,7 @@ bool inject_apply(NSString *usi,
         strncpy(rec.error, "no_session", KIOU_INJECT_ROUTE_MAX - 1);
         rec.move_raw = move;
         inject_pushRecord(&rec);
-        file_log([NSString stringWithFormat:
+        IPALog([NSString stringWithFormat:
                   @"[INJECT] no_session usi=\"%s\" raw=0x%x",
                   usiTok, (unsigned)move]);
         if (outRaw) *outRaw = move;
@@ -1133,19 +1133,19 @@ bool inject_apply(NSString *usi,
             void *boardPresenter = readPtr((void *)g_gameOrchestratorCache,
                                            OFF_GAMEORCH_BOARD_PRESENTER);
             if (!boardPresenter) {
-                file_log(@"[INJECT-DBG] PlayMoveAnimation skipped: "
+                IPALog(@"[INJECT-DBG] PlayMoveAnimation skipped: "
                          @"no BoardPresenter on orch");
                 return;
             }
             @try {
                 (void)g_BoardPresenter_PlayMoveAnimationAsync(boardPresenter,
                                                               move, NULL);
-                file_log([NSString stringWithFormat:
+                IPALog([NSString stringWithFormat:
                           @"[INJECT-DBG] PlayMoveAnimation fired "
                           @"presenter=%p move=0x%x",
                           boardPresenter, (unsigned)move]);
             } @catch (NSException *e) {
-                file_log([NSString stringWithFormat:
+                IPALog([NSString stringWithFormat:
                           @"[INJECT-DBG] PlayMoveAnimation threw: %@", e]);
             }
         });
@@ -1155,7 +1155,7 @@ bool inject_apply(NSString *usi,
         // from a Unity callback.
         usleep((useconds_t)(INJECT_ANIMATION_DELAY_SEC * 1000000.0));
     } else {
-        file_log(@"[INJECT-DBG] PlayMoveAnimation skipped: "
+        IPALog(@"[INJECT-DBG] PlayMoveAnimation skipped: "
                  @"fn or orch cache missing");
     }
 
@@ -1190,7 +1190,7 @@ NSString *inject_currentSfen(void) {
 
 void InstallInjectHook(uintptr_t unityBase) {
     if (g_SunfishMoveDrop) {
-        file_log(@"[INJECT] install: already initialized, skipping");
+        IPALog(@"[INJECT] install: already initialized, skipping");
         return;
     }
 
@@ -1224,7 +1224,7 @@ void InstallInjectHook(uintptr_t unityBase) {
     // Inject_Move is now a pure helper that Usi_Engine calls into via
     // inject_apply().
 
-    file_log([NSString stringWithFormat:
+    IPALog([NSString stringWithFormat:
               @"[INJECT] installed: create@0x%lx createDrop@0x%lx "
               @"getPiece@0x%lx getPieceType@0x%lx fromSFEN@0x%lx "
               @"notifyPieceMoved@0x%lx notifyStateSynced@0x%lx "

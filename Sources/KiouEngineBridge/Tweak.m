@@ -47,7 +47,7 @@ static void installUnityHooks(void) {
 
     g_unityBase = unityBase;
 
-    file_log([NSString stringWithFormat:
+    IPALog([NSString stringWithFormat:
               @"UnityFramework base=0x%lx (%s)",
               (unsigned long)unityBase, unityName ? unityName : "?"]);
 
@@ -98,7 +98,7 @@ static void installUnityHooks(void) {
 #endif
 
     g_unityHooked = YES;
-    file_log(@"=== KiouEngineBridge: all hooks installed ===");
+    IPALog(@"=== KiouEngineBridge: all hooks installed ===");
 }
 
 static void retryInstallHooks(void) {
@@ -113,8 +113,8 @@ static void retryInstallHooks(void) {
 }
 
 __attribute__((constructor)) static void init(void) {
-    logging_init("com.neconome.shogi.kiouenginebridge");
-    file_log(@"=== KiouEngineBridge loaded ===");
+    IPALoggingInit("com.neconome.shogi.kiouenginebridge");
+    IPALog(@"=== KiouEngineBridge loaded ===");
     // Build identity so a stray log file can be matched back to the exact
     // dylib that wrote it. Flavor distinguishes JB (libsubstrate) / jailed
     // (Dobby-static) / binpatch (static cave + SLOT dispatcher).
@@ -125,7 +125,7 @@ __attribute__((constructor)) static void init(void) {
 #else
     static const char *const kBuildFlavor = "jb";
 #endif
-    file_log([NSString stringWithFormat:
+    IPALog([NSString stringWithFormat:
               @"build commit=%s flavor=%s built=%s %s",
               KIOU_ENGINE_BRIDGE_COMMIT, kBuildFlavor,
               __DATE__, __TIME__]);
@@ -146,5 +146,5 @@ __attribute__((constructor)) static void init(void) {
         retryInstallHooks();
     });
 
-    file_log(@"=== KiouEngineBridge constructor done ===");
+    IPALog(@"=== KiouEngineBridge constructor done ===");
 }

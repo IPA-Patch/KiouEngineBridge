@@ -533,7 +533,7 @@ int32_t DropPieceTypeFromHandDelta(NSString *sfenBefore,
 }
 
 // ---------------------------------------------------------------------------
-// Move legality checks. The shared file_log() emits a single line per
+// Move legality checks. The shared IPALog() emits a single line per
 // rejection so the device log captures the reason without each caller
 // having to format their own message.
 //

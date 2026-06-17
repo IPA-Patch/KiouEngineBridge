@@ -42,12 +42,12 @@ void InjectResign(int32_t playerSide) {
     resolve_request_surrender();
     void *orch = g_gameOrchestratorCache;
     if (!orch || !g_RequestSurrender) {
-        file_log([NSString stringWithFormat:
+        IPALog([NSString stringWithFormat:
                   @"[RESIGN] cannot resign player=%d: orch=%p fn=%p",
                   (int)playerSide, orch, g_RequestSurrender]);
         return;
     }
-    file_log([NSString stringWithFormat:
+    IPALog([NSString stringWithFormat:
               @"[RESIGN] invoking GameOrchestrator.RequestSurrender "
               @"(player=%d, orch=%p)",
               (int)playerSide, orch]);
@@ -55,14 +55,14 @@ void InjectResign(int32_t playerSide) {
         @try {
             g_RequestSurrender(orch);
         } @catch (NSException *e) {
-            file_log([NSString stringWithFormat:
+            IPALog([NSString stringWithFormat:
                       @"[RESIGN] threw: %@", e]);
         }
     });
 }
 
 void InjectNyugyokuDeclaration(int32_t playerSide) {
-    file_log([NSString stringWithFormat:
+    IPALog([NSString stringWithFormat:
               @"[RESIGN] %%KACHI for player=%d — no KIOU API surfaced yet, "
               @"only the CSA session learns of the declaration",
               (int)playerSide]);
