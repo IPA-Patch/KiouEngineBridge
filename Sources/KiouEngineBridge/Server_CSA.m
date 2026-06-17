@@ -5,6 +5,7 @@
 #import <fcntl.h>
 #import <netinet/in.h>
 #import <netinet/tcp.h>
+#import <stdatomic.h>
 #import <sys/socket.h>
 #import <unistd.h>
 
@@ -26,7 +27,7 @@
 //     CRLF-terminated on the inbound side; we tolerate either.
 //   - A serial GCD queue funnels every KEBCsaServerPush() through one
 //     producer-consumer slot. If the queue length crosses a soft cap we
-//     drop the oldest pending line and log a [CSA] warning.
+//     drop the new line and log a [CSA] warning.
 //
 // What it deliberately doesn't do:
 //   - TLS. CSA's TCP transport is unencrypted by design.
@@ -52,8 +53,8 @@ static dispatch_queue_t g_acceptQueue = NULL;
 static dispatch_queue_t g_recvQueue   = NULL;
 static dispatch_source_t g_listenSrc  = NULL;
 static int g_listenFd = -1;
-static int g_clientFd = -1;
-static NSUInteger g_pendingSends = 0;
+static _Atomic int g_clientFd = -1;
+static _Atomic uint32_t g_pendingSends = 0;
 
 static kiou_csa_line_handler_t g_lineHandler = NULL;
 
@@ -92,12 +93,12 @@ static BOOL csa_send_all(int fd, const uint8_t *buf, size_t len) {
 }
 
 static void csa_close_client(void) {
-    bool wasUp = (g_clientFd >= 0);
-    if (g_clientFd >= 0) {
-        close(g_clientFd);
-        g_clientFd = -1;
+    int fd = atomic_exchange(&g_clientFd, -1);
+    bool wasUp = (fd >= 0);
+    if (fd >= 0) {
+        close(fd);
     }
-    g_pendingSends = 0;
+    atomic_store(&g_pendingSends, 0);
     if (wasUp) {
         // Let the CSA engine driver reset its state machine. Symbol always
         // resolves because Csa_Stubs.m provides a no-op until Task 4 lands
@@ -195,7 +196,7 @@ static void csa_handle_accept(void) {
     // New-client-wins. A stale recv loop parked on a dead fd would
     // otherwise reject the new peer; CSA engines tend to reconnect after
     // crashes, and we want the most recent connect to be authoritative.
-    if (g_clientFd >= 0) {
+    if (atomic_load(&g_clientFd) >= 0) {
         IPALog([NSString stringWithFormat:
                   @"[CSA] preempt: closing prior client fd=%d to make room "
                   @"for %s:%u",
@@ -212,7 +213,7 @@ static void csa_handle_accept(void) {
     if (flags >= 0) fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
 
     csa_set_keepalive(fd);
-    g_clientFd = fd;
+    atomic_store(&g_clientFd, fd);
     CsaEngineOnTcpClientConnected();
 
     dispatch_async(g_recvQueue, ^{
@@ -283,31 +284,31 @@ void KEBCsaServerSetLineHandler(kiou_csa_line_handler_t fn) {
 void KEBCsaServerPush(NSString *line) {
     if (!line) return;
     if (!g_acceptQueue) return;   // server never started
-    if (g_clientFd < 0) return;   // no client attached
+    if (atomic_load(&g_clientFd) < 0) return;   // no client attached
 
-    if (g_pendingSends >= CSA_QUEUE_DROP_THRESHOLD) {
-        if ((g_pendingSends % 32) == 0) {
+    uint32_t pending = atomic_load(&g_pendingSends);
+    if (pending >= CSA_QUEUE_DROP_THRESHOLD) {
+        if ((pending % 32) == 0) {
             IPALog([NSString stringWithFormat:
-                      @"[CSA] drop: backlog=%lu",
-                      (unsigned long)g_pendingSends]);
+                      @"[CSA] drop: backlog=%u", pending]);
         }
         return;
     }
 
-    g_pendingSends++;
+    atomic_fetch_add(&g_pendingSends, 1);
     NSString *withNewline = [line hasSuffix:@"\n"]
         ? [line copy]
         : [line stringByAppendingString:@"\n"];
 
     dispatch_async(g_acceptQueue, ^{
-        int fd = g_clientFd;
+        int fd = atomic_load(&g_clientFd);
         if (fd < 0) {
-            g_pendingSends--;
+            atomic_fetch_sub(&g_pendingSends, 1);
             return;
         }
         NSData *data = [withNewline dataUsingEncoding:NSUTF8StringEncoding];
         BOOL ok = csa_send_all(fd, data.bytes, data.length);
-        g_pendingSends--;
+        atomic_fetch_sub(&g_pendingSends, 1);
         if (!ok) {
             IPALog(@"[CSA] send failed, dropping client");
             csa_close_client();
@@ -318,7 +319,7 @@ void KEBCsaServerPush(NSString *line) {
 void KEBCsaServerClose(void) {
     if (!g_acceptQueue) return;
     dispatch_async(g_acceptQueue, ^{
-        if (g_clientFd >= 0) {
+        if (atomic_load(&g_clientFd) >= 0) {
             IPALog(@"[CSA] KEBCsaServerClose: tearing down client");
             csa_close_client();
         }

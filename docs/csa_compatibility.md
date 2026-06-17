@@ -41,9 +41,9 @@ KEB follows it exactly, with the local KIOU side filling the server role.
 | First to move | `To_Move:+` | Hard-coded `+` (KIOU always starts on Black's move). | ⚠️ no handicap-aware override yet |
 | Max moves | `Max_Moves:<n>` | — | ⛔ KIOU does not expose a hard move cap. |
 | Rematch on draw | `Rematch_On_Draw:NO` | — | ⛔ omitted. |
-| Engine accept | `AGREE [<id>]` | Triggers `START:<Game_ID>`. The optional id is accepted but not validated. | ✅ |
+| Engine accept | `AGREE [<id>]` | Accepted but treated as a no-op when already PLAYING (KEB sends `START` immediately after `Game_Summary` — see note below). | ⚠️ AGREE arrives late |
 | Engine reject | `REJECT [<id>]` | Sends `REJECT:<Game_ID> by engine`, drops back to LOGIN. KIOU side stays in match. | ✅ |
-| Match start | `START:<Game_ID>` | Emitted after AGREE. | ✅ |
+| Match start | `START:<Game_ID>` | Emitted immediately after `Game_Summary` without waiting for `AGREE`, because KIOU's CPU starts committing moves the moment `OnMatchStart` fires. | ⚠️ pre-emptive START |
 
 ## Time control
 
@@ -83,7 +83,7 @@ arrives. KEB follows the same pattern from both directions.
 |---|---|---|---|
 | Notify move | `<sign><from><to><PIECE>,T<n>` | Emitted from `Hook_GameStateStoreObserve::HookNotifyPieceMoved` for every KIOU move (both sides). `,T<n>` derived from the snapshot-delta on Online/CPUStream; omitted in modes without authoritative clocks. | ✅ |
 | Engine submits move | `<sign><from><to><PIECE>` | Parsed via `MoveBitsFromCsaText`, translated to USI, fed into `inject_apply`. The `,T<n>` suffix is accepted but ignored (KIOU keeps its own clock). | ✅ |
-| Engine resigns | `%TORYO` | Sends `#RESIGN` + `#WIN`, calls `GameOrchestrator.RequestSurrender` on the main thread (`Inject_Resign.m`). | ⚠️ surrenders the local seat |
+| Engine resigns | `%TORYO` | Sends `#RESIGN` + `#LOSE`, calls `GameOrchestrator.RequestSurrender` for the local seat. The engine controls the local player, so `%TORYO` means the local seat surrenders. | ⚠️ surrenders the local seat |
 | Engine nyugyoku win | `%KACHI` | Sends `#JISHOGI` + `#WIN`, advances to GAME_OVER. KIOU side is not signalled. | ⚠️ engine learns; KIOU stays |
 | Engine pauses | `%CHUDAN` | Sends `#CHUDAN`, advances to GAME_OVER. KIOU is not signalled. | ⚠️ engine learns; KIOU stays |
 | Liveness ping | bare LF | Logged and ignored. | ✅ |
