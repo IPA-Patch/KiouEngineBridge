@@ -68,6 +68,11 @@ static NSString *volatile g_csaLastGameID = nil;
 static float volatile g_csaLastBlackRemainSec = NAN;
 static float volatile g_csaLastWhiteRemainSec = NAN;
 
+// Previous-move SFEN. Used to detect drops by hand-delta against the
+// post-move SFEN (the KIOU Move bits don't encode the dropped piece type
+// in any reverse-engineered form yet — Task 7 of the migration plan).
+static NSString *volatile g_csaPrevSfen = nil;
+
 // Wall-clock fallback. When KIOU's per-side clock is unavailable (VsAI's
 // CPU side reports 86400s "no limit," NaN on the very first move, etc.)
 // we measure think time the boring way: how long ago did the *opponent*
@@ -399,6 +404,30 @@ static void csa_handle_move_from_engine(NSString *line) {
     uint32_t promote  = (move >> 14) & 1;
     uint32_t drop     = (move >> 15) & 1;
 
+    // MoveBitsFromCsaText flags promote=true whenever the CSA piece
+    // mnemonic is a promoted form (TO/NY/NK/NG/UM/RY), but in CSA a
+    // promoted name on the move line carries two cases:
+    //
+    //   (1) the piece was unpromoted on `from` and is promoting on this move
+    //   (2) the piece was already promoted on `from` and is just moving
+    //
+    // We disambiguate by reading the piece sitting on `from` in the
+    // pre-move SFEN. If it's already promoted (PieceType 9..14), the
+    // move is case (2) and USI must NOT carry a trailing '+'.
+    if (promote && !drop) {
+        NSString *prev = g_csaPrevSfen;
+        if (prev.length > 0) {
+            int32_t fromPiece = PscPieceTypeAtSquare(prev, from);
+            if (fromPiece >= 9 && fromPiece <= 14) {
+                file_log([NSString stringWithFormat:
+                          @"[CSA-ENG] promote bit cleared (from=%u "
+                          @"already holds promoted piece %d): %@",
+                          from, fromPiece, line]);
+                promote = 0;
+            }
+        }
+    }
+
     NSString *toCsa = CsaSquareFromMoveBits(to);
     NSString *toUsi = csa_squareToUsi(toCsa);
     if (!toUsi) {
@@ -449,6 +478,9 @@ void CsaEngineOnMatchStart(int32_t local_player) {
     // delta isn't computed against a stale previous-match value.
     g_csaLastBlackRemainSec = NAN;
     g_csaLastWhiteRemainSec = NAN;
+    // Drop the previous match's SFEN so hand-delta drop detection and
+    // pre-move piece lookup don't carry across matches.
+    g_csaPrevSfen = nil;
     // Bootstrap the wall-clock baseline so the first move's T<n> falls
     // back to "match-start → first move" wall-time when the live clock is
     // unavailable. We seed the BLACK side because the very first move is
@@ -517,16 +549,46 @@ void CsaEngineOnMoveObserved(uint32_t move,
         return;
     }
 
-    // For normal promoting moves, CsaTextFromMoveBits wants the *unpromoted*
-    // piece type and uses the promote bit to compute the destination piece
-    // name (FU → TO etc). The post-move SFEN at the `to` square already
-    // holds the promoted piece type; downshift before handing over.
     uint32_t promote = (move >> 14) & 1;
-    uint32_t drop    = (move >> 15) & 1;
-    if (!drop && promote && pscPieceType >= 9 && pscPieceType <= 14) {
+    uint32_t dropBit = (move >> 15) & 1;
+    BOOL isDrop = dropBit ? YES : NO;
+
+    // KIOU's Move bits don't always set the drop bit reliably (the upper-16
+    // encoding for drops is still under RE — Task 7 of the migration plan).
+    // Cross-check by comparing the previous SFEN's hand-piece counts: if
+    // the player who just moved is missing exactly one piece in hand, the
+    // move was a drop and that's the dropped piece type.
+    int32_t handDelta = DropPieceTypeFromHandDelta(g_csaPrevSfen, sfenAfter,
+                                                   playerSide);
+    if (!isDrop && handDelta > 0) {
+        file_log([NSString stringWithFormat:
+                  @"[CSA-ENG] drop inferred from hand delta — piece=%d "
+                  @"(move bit said normal move)", handDelta]);
+        isDrop = YES;
+        pscPieceType = handDelta;
+    }
+
+    if (isDrop) {
+        // Drops are always unpromoted. Use the hand-delta result when
+        // available (more reliable than reading the to-square's piece).
+        if (handDelta > 0) pscPieceType = handDelta;
+    } else if (promote && pscPieceType >= 9 && pscPieceType <= 14) {
+        // For normal promoting moves, CsaTextFromMoveBits wants the
+        // *unpromoted* piece type and re-promotes it for display. The
+        // post-move SFEN at the `to` square already holds the promoted
+        // piece type; downshift before handing over.
         // 9 TO -> 1 FU, 10 NY -> 2 KY, 11 NK -> 3 KE, 12 NG -> 4 GI,
         // 13 UM -> 5 KA, 14 RY -> 6 HI.
         pscPieceType = pscPieceType - 8;
+    }
+
+    // Patch the drop bit into the move uint so CsaTextFromMoveBits emits
+    // the canonical "+0055FU" form (from = "00") regardless of whether
+    // KIOU's original bits had the drop flag set.
+    if (isDrop) {
+        move = (move | (1u << 15)) & ~(1u << 14);
+        // Clear the from field so MoveBitsFromCsaText round-trips cleanly.
+        move &= ~(((uint32_t)0x7F) << 7);
     }
 
     // Compute T<n> in seconds for this move. Two paths feed it:
@@ -583,11 +645,20 @@ void CsaEngineOnMoveObserved(uint32_t move,
     if (!csa) {
         file_log([NSString stringWithFormat:
                   @"[CSA-ENG] CsaTextFromMoveBits returned nil for "
-                  @"move=0x%x piece=%d side=%d",
-                  (unsigned)move, (int)pscPieceType, (int)playerSide]);
+                  @"move=0x%x piece=%d side=%d drop=%d promote=%d "
+                  @"prevSfen=\"%@\" postSfen=\"%@\"",
+                  (unsigned)move, (int)pscPieceType, (int)playerSide,
+                  (int)isDrop, (int)promote,
+                  g_csaPrevSfen ?: @"", sfenAfter ?: @""]);
+        // Even on emit failure, advance the SFEN snapshot so the next
+        // hand-delta / promote check works against the latest board.
+        g_csaPrevSfen = [sfenAfter copy];
         return;
     }
     CsaEngineSendLine(csa);
+    // Roll forward the prev-SFEN cache so the *next* move can do
+    // hand-delta drop detection and pre-move piece lookup.
+    g_csaPrevSfen = [sfenAfter copy];
 }
 
 // ---------------------------------------------------------------------------

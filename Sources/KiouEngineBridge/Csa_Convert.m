@@ -445,6 +445,93 @@ int32_t PscPieceTypeAtSquare(NSString *sfen, uint32_t square) {
     return -1;
 }
 
+// ---------------------------------------------------------------------------
+// Hand-piece counting. SFEN hand strings look like "2P3pn" (two Black pawns,
+// three white pawns, one white knight). Walk the string and accumulate per-
+// PSC-PieceType counts into `outCounts[1..7]` (index 0 is unused). Returns
+// NO on malformed input (unknown letter, malformed count, etc).
+//
+// Uppercase letters land in `outBlackCounts`, lowercase in `outWhiteCounts`.
+// Empty hand ("-") returns YES with both arrays left zeroed.
+// ---------------------------------------------------------------------------
+static BOOL csa_parseHand(NSString *hand,
+                          uint32_t outBlackCounts[8],
+                          uint32_t outWhiteCounts[8]) {
+    for (int i = 0; i < 8; i++) {
+        outBlackCounts[i] = 0;
+        outWhiteCounts[i] = 0;
+    }
+    if (hand.length == 0) return NO;
+    if ([hand isEqualToString:@"-"]) return YES;
+
+    NSUInteger i = 0;
+    while (i < hand.length) {
+        uint32_t count = 1;
+        unichar ch = [hand characterAtIndex:i];
+        if (ch >= '0' && ch <= '9') {
+            uint32_t n = 0;
+            while (i < hand.length) {
+                unichar d = [hand characterAtIndex:i];
+                if (d < '0' || d > '9') break;
+                n = n * 10 + (uint32_t)(d - '0');
+                i++;
+            }
+            if (n == 0) return NO;
+            count = n;
+            if (i >= hand.length) return NO;
+            ch = [hand characterAtIndex:i];
+        }
+        i++;
+        int32_t base = -1;
+        switch (ch) {
+            case 'P': case 'p': base = 1; break;
+            case 'L': case 'l': base = 2; break;
+            case 'N': case 'n': base = 3; break;
+            case 'S': case 's': base = 4; break;
+            case 'B': case 'b': base = 5; break;
+            case 'R': case 'r': base = 6; break;
+            case 'G': case 'g': base = 7; break;
+            default: return NO;
+        }
+        BOOL isBlack = (ch >= 'A' && ch <= 'Z');
+        if (isBlack) outBlackCounts[base] += count;
+        else         outWhiteCounts[base] += count;
+    }
+    return YES;
+}
+
+int32_t DropPieceTypeFromHandDelta(NSString *sfenBefore,
+                                   NSString *sfenAfter,
+                                   int32_t playerSide) {
+    if (sfenBefore.length == 0 || sfenAfter.length == 0) return -1;
+    if (playerSide != 0 && playerSide != 1) return -1;
+
+    NSArray<NSString *> *beforeParts = [sfenBefore componentsSeparatedByString:@" "];
+    NSArray<NSString *> *afterParts  = [sfenAfter componentsSeparatedByString:@" "];
+    if (beforeParts.count < 3 || afterParts.count < 3) return -1;
+
+    uint32_t beforeBlack[8], beforeWhite[8];
+    uint32_t afterBlack[8],  afterWhite[8];
+    if (!csa_parseHand(beforeParts[2], beforeBlack, beforeWhite)) return -1;
+    if (!csa_parseHand(afterParts[2],  afterBlack,  afterWhite))  return -1;
+
+    const uint32_t *beforeCount = (playerSide == 0) ? beforeBlack : beforeWhite;
+    const uint32_t *afterCount  = (playerSide == 0) ? afterBlack  : afterWhite;
+
+    // Find the piece type whose count decreased by exactly 1.
+    int32_t found = -1;
+    for (int32_t pt = 1; pt <= 7; pt++) {
+        if (beforeCount[pt] == afterCount[pt] + 1) {
+            if (found != -1) return -1;  // ambiguous — two pieces left the hand
+            found = pt;
+        } else if (beforeCount[pt] != afterCount[pt]) {
+            // Any other delta (count went up, or dropped by >1) is unusable.
+            return -1;
+        }
+    }
+    return found;
+}
+
 NSString *CsaTextAppendingTime(NSString *csaMove, int32_t seconds) {
     if (seconds < 0 || csaMove.length == 0) return csaMove;
     if ([csaMove rangeOfString:@",T"].location != NSNotFound) {
