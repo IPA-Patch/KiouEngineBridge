@@ -493,3 +493,5 @@ logs/*
 assets/dump.cs
 assets/dump.cs.index.json
 # *.ipa already ignored globally above.
+assets/YaneuraOu
+assets/nn.bin
