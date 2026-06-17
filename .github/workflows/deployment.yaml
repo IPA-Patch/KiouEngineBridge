@@ -1,9 +1,5 @@
 name: deployment
 
-# CD: when a v*.*.* tag is pushed, build both flavors and publish them
-# as GitHub Release assets. The release name and tag are identical (no
-# auto-prerelease, no draft); pre-releases ship via tags like v0.2.0-rc.1.
-
 on:
   push:
     tags:
@@ -11,50 +7,50 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing tag to (re)build a release for (e.g. v0.1.0)"
-        required: true
-        type: string
+        description: "Version tag to build (e.g. v0.2.0). Empty = use ref name."
+        required: false
+        default: ""
 
 permissions:
-  contents: write  # required for softprops/action-gh-release
+  contents: write
 
 env:
   THEOS: ${{ github.workspace }}/theos
   IOS_SDK_VERSION: "16.5"
+  LDID_VERSION: "v2.1.5-procursus7"
+  LDID_SHA256: "4b8862b2fefa2cd7fa8f88cb0310779619aeaa8c72d6aff22f019b470f2fa99a"
+
+concurrency:
+  group: deployment-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   release:
-    name: build + release
     runs-on: ubuntu-latest
+
     steps:
       - name: Resolve tag
         id: tag
         run: |
           if [ -n "${{ inputs.tag }}" ]; then
-              echo "value=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+            echo "value=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
           else
-              echo "value=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "value=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Checkout source at tag
-        uses: actions/checkout@v6
+        uses: actions/checkout@v5
         with:
           ref: ${{ steps.tag.outputs.value }}
-          fetch-depth: 0
-          # Sources/Common is a submodule (IPA-Patch/Shared); the build
-          # references logging.m and binpatch.m from inside it.
           submodules: recursive
+          fetch-depth: 0
 
       - name: Verify control version matches tag
-        # Catch the "bumped the tag but forgot to update control" class of
-        # mistake before the build wastes several minutes producing a .deb
-        # whose embedded version disagrees with the GitHub Release name.
-        # control's Version field must equal the tag without the leading "v".
         run: |
           TAG="${{ steps.tag.outputs.value }}"
           VER="${TAG#v}"
           CTRL_VER=$(grep -E '^Version:' control | awk '{print $2}')
-          echo "Tag version : ${VER}"
+          echo "Tag version    : ${VER}"
           echo "Control version: ${CTRL_VER}"
           if [ "${VER}" != "${CTRL_VER}" ]; then
               echo "::error::control Version (${CTRL_VER}) does not match tag (${VER})"
@@ -63,9 +59,6 @@ jobs:
 
       - name: Install host build tools
         run: |
-          # Mirrors integration.yaml: ldid is NOT in the noble apt repos
-          # and is installed separately below. libtinfo6 / libncurses6 are
-          # the runtime deps the Procursus ldid binary links against.
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
               build-essential curl git make perl xz-utils \
@@ -73,12 +66,6 @@ jobs:
               libtinfo6 libncurses6
 
       - name: Install ldid
-        # apt has no ldid on Ubuntu noble (24.04), so pull the prebuilt
-        # Linux x86_64 binary from the ProcursusTeam release. SHA256
-        # pinned so a release-asset swap can't silently swap our signer.
-        env:
-          LDID_VERSION: "v2.1.5-procursus7"
-          LDID_SHA256: "4b8862b2fefa2cd7fa8f88cb0310779619aeaa8c72d6aff22f019b470f2fa99a"
         run: |
           curl -L -o /tmp/ldid \
               "https://github.com/ProcursusTeam/ldid/releases/download/${LDID_VERSION}/ldid_linux_x86_64"
@@ -90,28 +77,19 @@ jobs:
         id: theos-cache
         uses: actions/cache@v5
         with:
-          path: |
-            theos
-          # Bump on toolchain layout changes (see Install Theos comment).
+          path: theos
           key: theos-linux-${{ env.IOS_SDK_VERSION }}-v3
 
       - name: Install Theos
         if: steps.theos-cache.outputs.cache-hit != 'true'
         run: |
-          # Mirrors integration.yaml.
-          # Theos itself.
           git clone --recursive https://github.com/theos/theos.git "$THEOS"
 
-          # iOS cross-toolchain from L1ghtmann/llvm-project. The tarball
-          # already lays out the linux/iphone/ directory under
-          # $THEOS/toolchain, which is what Theos's makefiles expect --
-          # no rename needed.
           ARCH=$(uname -m)
           curl -fsSL \
               "https://github.com/L1ghtmann/llvm-project/releases/latest/download/iOSToolchain-${ARCH}.tar.xz" \
             | tar xJ -C "$THEOS/toolchain"
 
-          # iOS SDK matching IOS_SDK_VERSION.
           mkdir -p "$THEOS/sdks"
           curl -L -o /tmp/sdk.tar.gz \
               "https://github.com/theos/sdks/archive/master.tar.gz"
@@ -121,49 +99,54 @@ jobs:
 
       - name: Verify Theos
         run: |
-          ls "$THEOS"
-          ls "$THEOS/sdks"
           test -d "$THEOS/sdks/iPhoneOS${IOS_SDK_VERSION}.sdk"
+          test -x "$THEOS/toolchain/linux/iphone/bin/clang"
+          "$THEOS/toolchain/linux/iphone/bin/clang" --version
 
       - name: Build rootless .deb (MobileSubstrate)
         run: |
           make clean
-          make package
+          make package FINALPACKAGE=1
           ls -la packages/
 
       - name: Build jailed .dylib (Dobby static)
         run: |
-          make jailed
+          make jailed FINALPACKAGE=1
           ls -la packages/jailed/
 
-      - name: Sanity check jailed dylib (no external hook engine)
+      - name: Build binpatch .dylib (iOS 18, __DATA slot table)
         run: |
-          DYLIB=packages/jailed/KiouEngineBridge.dylib
-          test -f "$DYLIB"
-          if command -v otool >/dev/null 2>&1; then
-              otool -L "$DYLIB"
-              if otool -L "$DYLIB" | grep -E "libsubstrate|libdobby"; then
-                  echo "::error::Jailed dylib leaks an external hook-engine dependency"
-                  exit 1
+          make binpatch FINALPACKAGE=1
+          ls -la packages/binpatch/
+
+      - name: Sanity-check dylibs (no external hook engine)
+        run: |
+          for DYLIB in packages/jailed/KiouEngineBridge.dylib \
+                       packages/binpatch/KiouEngineBridge.dylib; do
+              test -f "$DYLIB"
+              if command -v otool >/dev/null 2>&1; then
+                  otool -L "$DYLIB"
+                  if otool -L "$DYLIB" | grep -E "libsubstrate|libdobby"; then
+                      echo "::error::$DYLIB leaks an external hook-engine dependency"
+                      exit 1
+                  fi
+              else
+                  strings "$DYLIB" | grep -E "libsubstrate|libdobby\.dylib" \
+                      && { echo "::error::$DYLIB leaks an external hook-engine dependency"; exit 1; } \
+                      || echo "$DYLIB: no external hook-engine references found"
               fi
-          else
-              strings "$DYLIB" | grep -E "libsubstrate|libdobby\.dylib" \
-                  && { echo "::error::Jailed dylib leaks an external hook-engine dependency"; exit 1; } \
-                  || echo "no external hook-engine references found"
-          fi
+          done
 
       - name: Stage release assets
         id: assets
         run: |
           mkdir -p dist
-          # Versioned .deb file name copied verbatim out of packages/.
           cp packages/*.deb dist/
-          # Rename the jailed dylib to include the tag so Releases makes
-          # it obvious which build a user is grabbing.
-          TAG="${{ steps.tag.outputs.value }}"
-          VER="${TAG#v}"
+          DEB=$(basename packages/*.deb .deb)
           cp packages/jailed/KiouEngineBridge.dylib \
-             "dist/KiouEngineBridge-${VER}-jailed.dylib"
+             "dist/${DEB}-jailed.dylib"
+          cp packages/binpatch/KiouEngineBridge.dylib \
+             "dist/${DEB}-binpatch.dylib"
           ls -la dist/
 
       - name: Compute SHA256 checksums
@@ -172,14 +155,31 @@ jobs:
           sha256sum * > SHA256SUMS
           cat SHA256SUMS
 
+      - name: Extract release notes from CHANGELOG
+        id: notes
+        run: |
+          TAG="${{ steps.tag.outputs.value }}"
+          VER="${TAG#v}"
+          awk -v ver="$VER" '
+            $0 ~ "^## \\[" ver "\\]" { in_section = 1; print; next }
+            in_section && /^## \[/ { exit }
+            in_section { print }
+          ' CHANGELOG.md > release_notes.md
+          if [ ! -s release_notes.md ]; then
+            echo "(no CHANGELOG section for ${TAG}; see CHANGELOG.md for context)" \
+              > release_notes.md
+          fi
+          cat release_notes.md
+
       - name: Publish release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.value }}
           name: ${{ steps.tag.outputs.value }}
-          generate_release_notes: true
+          body_path: release_notes.md
           files: |
             dist/*.deb
             dist/*.dylib
             dist/SHA256SUMS
           fail_on_unmatched_files: true
+          prerelease: ${{ contains(steps.tag.outputs.value, '-') }}
