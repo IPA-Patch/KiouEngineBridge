@@ -458,13 +458,14 @@ static void csa_handle_move_from_engine(NSString *line) {
     //
     // We prefer the live SFEN over g_csaPrevSfen here: the cached value is
     // a snapshot captured from NotifyPieceMoved, which fires even on a
-    // move KIOU later rolls back. The live read picks up that rollback,
-    // so a follow-up illegal move that the cache would have approved
-    // (because the cached board still believes the rolled-back piece is
-    // where the original move landed) gets rejected correctly. Falls
-    // back to the cached SFEN when the live read isn't available yet
-    // (the very first move of the session).
-    NSString *validatorSfen = SfenFromGameController(g_gameCtrlCache);
+    // move KIOU later rolls back. inject_currentSfen does an internal
+    // dispatch_sync onto the Unity main thread before reading
+    // GameController.GetUSIText, which is mandatory — calling
+    // SfenFromGameController from this CSA recv queue dereferences
+    // il2cpp objects off-main and crashes the runtime. Falls back to the
+    // cached SFEN when the live read isn't available yet (the very first
+    // move of the session).
+    NSString *validatorSfen = inject_currentSfen();
     if (validatorSfen.length == 0) validatorSfen = g_csaPrevSfen;
 
     if (validatorSfen.length > 0) {
