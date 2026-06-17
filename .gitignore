@@ -495,3 +495,15 @@ assets/dump.cs.index.json
 # *.ipa already ignored globally above.
 assets/YaneuraOu
 assets/nn.bin
+
+# Engine bridge / test scripts — not distributed with the repo.
+scripts/*.py
+scripts/*.sh
+
+# Internal development docs — not distributed with the repo.
+docs/plans/
+docs/archive/
+
+# Claude Code session files — local only.
+.claude/plans/
+.claude/settings.local.json
