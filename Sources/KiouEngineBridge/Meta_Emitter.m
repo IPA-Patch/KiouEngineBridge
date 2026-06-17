@@ -301,7 +301,7 @@ static void meta_emit_dict(NSDictionary *payload) {
     }
     NSString *line = [NSString stringWithFormat:@"meta %@\n", body];
     IPALog([NSString stringWithFormat:@"[META>] %@", body]);
-    KEBWsServerPush(line);
+    KEBCsaServerPush(line);
 }
 
 // ---------------------------------------------------------------------------
