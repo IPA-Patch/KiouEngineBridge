@@ -44,10 +44,10 @@ static IsAfkEnabled_t orig_IsAfkEnabled = NULL;
 // 600th (= ~ once every 10 seconds at 60 fps).
 static uint32_t g_afkCheckCount = 0;
 
-static bool hook_IsAfkEnabled(void *self) {
+static bool HookIsAfkEnabled(void *self) {
     uint32_t n = ++g_afkCheckCount;
     if (n <= 3 || (n % 600) == 0) {
-        file_log([NSString stringWithFormat:
+        IPALog([NSString stringWithFormat:
                   @"[AFK] IsAfkEnabled call#%u self=%p -> returning false "
                   @"(watchdog suppressed)", n, self]);
     }
@@ -58,14 +58,19 @@ static bool hook_IsAfkEnabled(void *self) {
     return false;
 }
 
-void install_AfkSuppress_hook(uintptr_t unityBase) {
+#if !KIOU_BINPATCH
+void InstallAfkSuppressHook(uintptr_t unityBase) {
     uintptr_t addr = unityBase + RVA_GAMEORCH_IS_AFK_ENABLED;
     MSHookFunction((void *)addr,
-                   (void *)hook_IsAfkEnabled,
+                   (void *)HookIsAfkEnabled,
                    (void **)&orig_IsAfkEnabled);
-    file_log([NSString stringWithFormat:
+    IPALog([NSString stringWithFormat:
               @"[AFK] hooked GameOrchestrator.IsAfkEnabled @0x%lx "
               @"(base+0x%x) — AFK watchdog now permanently disabled",
               (unsigned long)addr,
               (unsigned)RVA_GAMEORCH_IS_AFK_ENABLED]);
 }
+#endif  // !KIOU_BINPATCH
+// On the binpatch build, IsAfkEnabled is replaced wholesale by a
+// `MOVZ W0, #0; RET` inline patch in recipes/kiouenginebridge.py (PATCHES),
+// so InstallAfkSuppressHook is intentionally omitted here.

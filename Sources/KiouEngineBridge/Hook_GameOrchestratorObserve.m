@@ -66,15 +66,15 @@ static GameOrch_ActivateAsync_t orig_GameOrch_ActivateAsync = NULL;
 // ---------------------------------------------------------------------------
 static uint32_t g_orchSeen = 0;
 
-static UniTaskRet hook_GameOrch_ActivateAsync(void *self, void *setup,
-                                               void *assetLoader, void *ct) {
+UniTaskRet HookGameOrchActivateAsync(void *self, void *setup,
+                                       void *assetLoader, void *ct) {
     if (g_gameOrchestratorCache != self) g_gameOrchestratorCache = self;
     uint32_t n = ++g_orchSeen;
     // Match the seen-counter cadence used by the OPM hooks: log the first
     // three, then every 30th. Activation only happens at scene transitions
     // so we'll almost never spam, but the cap is cheap insurance.
     if (n <= 3 || (n % 30) == 0) {
-        file_log([NSString stringWithFormat:
+        IPALog([NSString stringWithFormat:
                   @"[GAMEORCH] ActivateAsync call#%u self=%p setup=%p",
                   n, self, setup]);
     }
@@ -87,12 +87,18 @@ static UniTaskRet hook_GameOrch_ActivateAsync(void *self, void *setup,
 // ---------------------------------------------------------------------------
 // Installer. Called once from Tweak.m::installUnityHooks().
 // ---------------------------------------------------------------------------
-void install_GameOrchestratorObserve_hook(uintptr_t unityBase) {
+#if !KIOU_BINPATCH
+void InstallGameOrchestratorObserveHook(uintptr_t unityBase) {
     uintptr_t addr = unityBase + RVA_GAMEORCH_ACTIVATE;
-    MSHookFunction((void *)addr, (void *)hook_GameOrch_ActivateAsync,
+    MSHookFunction((void *)addr, (void *)HookGameOrchActivateAsync,
                    (void **)&orig_GameOrch_ActivateAsync);
-    file_log([NSString stringWithFormat:
+    IPALog([NSString stringWithFormat:
               @"[GAMEORCH] hooked GameOrchestrator.ActivateAsync @0x%lx "
               @"(base+0x%lx)",
               (unsigned long)addr, (unsigned long)RVA_GAMEORCH_ACTIVATE]);
 }
+#endif  // !KIOU_BINPATCH
+// On the binpatch build, the static cave routes GameOrchestrator.ActivateAsync
+// through the SLOT-published dispatcher (see recipes/kiouenginebridge.py
+// CAVE_PATCHES entry KIOU_BR_HOOK_GAMEORCH_ACTIVATE). The dispatcher will
+// invoke HookGameOrchActivateAsync once Phase E wires it up.
