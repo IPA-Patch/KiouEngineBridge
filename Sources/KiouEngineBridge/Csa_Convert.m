@@ -849,6 +849,27 @@ const char *ValidateCsaMove(NSString *sfenBefore,
         if (!inEnemyCamp) return "promote_outside_enemy_camp";
     }
 
+    // Must-promote check: FU/KY cannot be left unpromoted on rank 1 (Black)
+    // or rank 9 (White); KE cannot be left unpromoted on ranks 1-2 (Black)
+    // or ranks 8-9 (White). Only applies to unpromoted pieces (fromPiece 1..8)
+    // making a non-promoting move.
+    if (!promote && fromPiece >= 1 && fromPiece <= 8) {
+        uint32_t toRank = (toSquare % 9) + 1;  // 1..9
+        if (playerSide == 0) {
+            // Black: rank 1 is the back rank.
+            if ((fromPiece == 1 /*FU*/ || fromPiece == 2 /*KY*/) && toRank == 1)
+                return "must_promote";
+            if (fromPiece == 3 /*KE*/ && toRank <= 2)
+                return "must_promote";
+        } else {
+            // White: rank 9 is the back rank.
+            if ((fromPiece == 1 /*FU*/ || fromPiece == 2 /*KY*/) && toRank == 9)
+                return "must_promote";
+            if (fromPiece == 3 /*KE*/ && toRank >= 8)
+                return "must_promote";
+        }
+    }
+
     // Per-piece reachability: does this piece type actually reach toSquare
     // from fromSquare given board occupancy? Uses the unpromoted base type
     // for pieces that just landed in the from-square still unpromoted
