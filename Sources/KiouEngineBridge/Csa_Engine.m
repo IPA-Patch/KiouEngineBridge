@@ -404,21 +404,36 @@ static void csa_handle_move_from_engine(NSString *line) {
     }
     (void)timeSpent;  // engine-reported think time is logged but unused
 
-    // Hop to the Unity main queue: both the legality probe
-    // (inject_currentSfen / SfenFromGameController) and inject_apply touch
-    // il2cpp methods that are only safe from the main thread. The CSA
-    // recv queue this handler runs on isn't.
+    file_log([NSString stringWithFormat:
+              @"[CSA-ENG-DBG] parsed line=\"%@\" move=0x%x piece=%d "
+              @"side=%d t=%d — about to dispatch_async(main)",
+              line, (unsigned)move, (int)pieceType,
+              (int)playerSide, (int)timeSpent]);
+
+    // Hop to the Unity main queue: inject_apply touches il2cpp methods
+    // that are only safe from the main thread. The CSA recv queue this
+    // handler runs on isn't.
     NSString *lineCap = [line copy];
     dispatch_async(dispatch_get_main_queue(), ^{
+        file_log([NSString stringWithFormat:
+                  @"[CSA-ENG-DBG] main-queue dispatch arrived for: %@",
+                  lineCap]);
         csa_apply_engine_move(lineCap, move, pieceType, playerSide);
+        file_log(@"[CSA-ENG-DBG] csa_apply_engine_move returned cleanly");
     });
+    file_log(@"[CSA-ENG-DBG] dispatch_async(main) submitted, returning");
 }
 
 static void csa_apply_engine_move(NSString *line, uint32_t move,
                                   int32_t pieceType, int32_t playerSide) {
+    file_log([NSString stringWithFormat:
+              @"[CSA-ENG-DBG] csa_apply_engine_move entered line=%@", line]);
+
     // Re-check the state on the main queue — a LOGOUT / match_end could
     // have landed between the recv-queue dispatch and us getting picked up.
     int s = atomic_load(&g_csaState);
+    file_log([NSString stringWithFormat:
+              @"[CSA-ENG-DBG] state on main queue=%s", csa_state_name(s)]);
     if (s != CSA_STATE_PLAYING) {
         file_log([NSString stringWithFormat:
                   @"[CSA-ENG] move state changed to %s before main "
@@ -430,6 +445,9 @@ static void csa_apply_engine_move(NSString *line, uint32_t move,
     uint32_t promote = (move >> 14) & 1;
     uint32_t from    = (move >> 7) & 0x7F;
     uint32_t to      = move & 0x7F;
+    file_log([NSString stringWithFormat:
+              @"[CSA-ENG-DBG] decoded from=%u to=%u promote=%u drop=%u",
+              from, to, promote, drop]);
 
     int32_t lp = atomic_load(&g_csaLocalPlayer);
     // The connected CSA engine stands in for KIOU's local human player —
@@ -470,6 +488,7 @@ static void csa_apply_engine_move(NSString *line, uint32_t move,
             }
         }
     }
+    file_log(@"[CSA-ENG-DBG] promote check done — building toUsi");
 
     NSString *toCsa = CsaSquareFromMoveBits(to);
     NSString *toUsi = csa_squareToUsi(toCsa);
@@ -478,30 +497,34 @@ static void csa_apply_engine_move(NSString *line, uint32_t move,
                   @"[CSA-ENG] bad to-square in: %@", line]);
         return;
     }
+    file_log([NSString stringWithFormat:
+              @"[CSA-ENG-DBG] toCsa=%@ toUsi=%@", toCsa, toUsi]);
 
     // Cheap legality pre-checks. The primary goal is to keep blatantly
     // illegal moves (drop on occupied, move from empty, nifu, dead-end
-    // drops, etc) from reaching inject_apply, because KIOU's
-    // GameController silently bounces those back and leaves both the
-    // board and the engine's view inconsistent.
+    // drops, etc) from reaching inject_apply.
     //
-    // We prefer the live SFEN over g_csaPrevSfen here: the cached value is
-    // a snapshot captured from NotifyPieceMoved, which fires even on a
-    // move KIOU later rolls back. inject_currentSfen does an internal
-    // dispatch_sync onto the Unity main thread before reading
-    // GameController.GetUSIText, which is mandatory — calling
-    // SfenFromGameController from this CSA recv queue dereferences
-    // il2cpp objects off-main and crashes the runtime. Falls back to the
-    // cached SFEN when the live read isn't available yet (the very first
-    // move of the session).
-    NSString *validatorSfen = inject_currentSfen();
-    if (validatorSfen.length == 0) validatorSfen = g_csaPrevSfen;
+    // We use the cached g_csaPrevSfen (captured from NotifyPieceMoved)
+    // rather than a live read, because the live read needs il2cpp main-
+    // thread guarantees that earlier attempts couldn't satisfy without
+    // crashing the runtime. KIOU's own validation catches the
+    // position-specific rules anyway; the cached SFEN is enough to
+    // reject the obvious categories KEB cares about (occupied drops,
+    // dead-end drops, nifu, piece-type mismatches).
+    NSString *validatorSfen = g_csaPrevSfen;
+
+    file_log([NSString stringWithFormat:
+              @"[CSA-ENG-DBG] validator sfen len=%lu — running validator",
+              (unsigned long)validatorSfen.length]);
 
     if (validatorSfen.length > 0) {
         const char *reason = drop
             ? ValidateCsaDrop(validatorSfen, to, pieceType, playerSide)
             : ValidateCsaMove(validatorSfen, from, to, pieceType,
                               promote ? YES : NO, playerSide);
+        file_log([NSString stringWithFormat:
+                  @"[CSA-ENG-DBG] validator result reason=%s",
+                  reason ?: "OK"]);
         if (reason) {
             file_log([NSString stringWithFormat:
                       @"[CSA-ENG] rejecting illegal move (reason=%s): %@",
@@ -537,6 +560,9 @@ static void csa_apply_engine_move(NSString *line, uint32_t move,
             ? [NSString stringWithFormat:@"%@%@+", fromUsi, toUsi]
             : [NSString stringWithFormat:@"%@%@", fromUsi, toUsi];
     }
+
+    file_log([NSString stringWithFormat:
+              @"[CSA-ENG-DBG] built usi=%@ — calling inject_apply", usi]);
 
     NSString *outSfen = nil;
     NSString *outErr = nil;
