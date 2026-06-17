@@ -187,7 +187,9 @@ static csa_time_control_t csa_readTimeControl(void *tcc) {
 // every CSA-standard field is required; KIOU_* extensions sit between the
 // position block and END Game_Summary so a strict CSA parser ignores them.
 // ---------------------------------------------------------------------------
-NSString *CsaBuildGameSummary(int32_t local_player, NSString **outGameId) {
+NSString *CsaBuildGameSummary(int32_t local_player,
+                              NSString **outGameId,
+                              NSString **outStartSfen) {
     void *cfg = g_csaMatchConfig;
     if (!cfg) {
         // No MatchConfig — without it we cannot construct a meaningful
@@ -249,6 +251,7 @@ NSString *CsaBuildGameSummary(int32_t local_player, NSString **outGameId) {
     [out appendString:@"BEGIN Position\n"];
     NSString *sfen = SfenFromGameController(g_gameCtrlCache);
     if (sfen.length > 0) {
+        if (outStartSfen) *outStartSfen = [sfen copy];
         NSString *csaPos = CsaPositionFromSfen(sfen);
         if (csaPos.length > 0) {
             [out appendString:csaPos];

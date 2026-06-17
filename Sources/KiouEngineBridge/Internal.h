@@ -412,7 +412,13 @@ void CsaOnPlayerInfoSet(int32_t side, void *playerInfo);
 // `*outGameId` (may be NULL). Returns nil when MatchConfig has not been
 // captured yet — the caller (Csa_Engine.m) defers Game_Summary delivery
 // in that case.
-NSString *CsaBuildGameSummary(int32_t local_player, NSString **outGameId);
+// outGameId receives the Game_ID string (never nil on success).
+// outStartSfen receives the SFEN of the starting position (nil when
+// SfenFromGameController was unavailable). Callers may cache this as the
+// initial g_csaPrevSfen so first-move validators have a board snapshot.
+NSString *CsaBuildGameSummary(int32_t local_player,
+                              NSString **outGameId,
+                              NSString **outStartSfen);
 
 // Build the CSA `#REASON` + `#OUTCOME` pair (e.g. `"#RESIGN\n#WIN"`).
 // Returns nil for unknown results so the engine driver can suppress the
