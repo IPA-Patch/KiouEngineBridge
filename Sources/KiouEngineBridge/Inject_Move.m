@@ -58,7 +58,7 @@
 // completes before the board snaps to the post-move state. Tunable —
 // raise it if the animation visibly clips, lower it if responsiveness
 // suffers across rapid back-to-back injections.
-#define INJECT_ANIMATION_DELAY_SEC 0.15
+#define INJECT_ANIMATION_DELAY_SEC 0.0
 
 // _stateStore field offsets per IMatchMode concrete implementor. Verified
 // against dump.cs:1419817 (AI), 1420396 (CPUStream), 1421565 (Online),
