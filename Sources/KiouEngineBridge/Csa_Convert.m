@@ -532,6 +532,155 @@ int32_t DropPieceTypeFromHandDelta(NSString *sfenBefore,
     return found;
 }
 
+// ---------------------------------------------------------------------------
+// Move legality checks. The shared file_log() emits a single line per
+// rejection so the device log captures the reason without each caller
+// having to format their own message.
+//
+// We deliberately rely on the SFEN snapshot rather than KIOU's own legal-
+// move generator (which we don't have a stable RVA for). That misses
+// position-specific rules KIOU still applies (uchifuzume, double check,
+// etc), but it catches the cheap "obviously bad" categories that we
+// observed leaving KIOU's state inconsistent on inject.
+//
+// piece-type letter cache for the helpers below.
+// ---------------------------------------------------------------------------
+
+const char *ValidateCsaDrop(NSString *sfenBefore,
+                            uint32_t toSquare,
+                            int32_t pscPieceType,
+                            int32_t playerSide) {
+    if (sfenBefore.length == 0) return NULL;  // no prior snapshot → don't block
+    if (toSquare > 80) return "to_oob";
+    if (pscPieceType < 1 || pscPieceType > 7) return "drop_promoted";
+    if (playerSide != 0 && playerSide != 1) return "bad_side";
+
+    // 1. Target square must be empty.
+    int32_t occupant = PscPieceTypeAtSquare(sfenBefore, toSquare);
+    if (occupant > 0) return "drop_on_occupied";
+
+    // 2. Nowhere-to-go: pawn / lance must not land on the deepest rank;
+    //    knight must not land on the two deepest ranks. Deepest rank is
+    //    rank 1 for Black (SQ?1), rank 9 for White (SQ?9).
+    uint32_t rank = (toSquare % 9) + 1;  // 1..9
+    uint32_t deepest = (playerSide == 0) ? 1u : 9u;
+    if (pscPieceType == 1 /*FU*/ || pscPieceType == 2 /*KY*/) {
+        if (rank == deepest) return "drop_deadend";
+    } else if (pscPieceType == 3 /*KE*/) {
+        uint32_t blocked2 = (playerSide == 0) ? 2u : 8u;
+        if (rank == deepest || rank == blocked2) return "drop_deadend";
+    }
+
+    // 3. Nifu: dropping a pawn onto a file that already holds an
+    //    unpromoted pawn of the same side is illegal.
+    if (pscPieceType == 1) {
+        uint32_t file = (toSquare / 9) + 1;
+        for (uint32_t r = 1; r <= 9; r++) {
+            uint32_t sq = (file - 1) * 9 + (r - 1);
+            int32_t pt = PscPieceTypeAtSquare(sfenBefore, sq);
+            if (pt != 1) continue;
+            // Determine whether that pawn belongs to the moving side.
+            // PscPieceTypeAtSquare strips colour, so we re-read the SFEN
+            // letter at this square. We can shortcut by reading the
+            // SFEN board and inspecting the letter's case.
+            // Reuse PscPieceTypeAtSquare's parser via a tiny helper.
+            NSArray<NSString *> *parts = [sfenBefore componentsSeparatedByString:@" "];
+            if (parts.count < 1) break;
+            NSArray<NSString *> *ranks = [parts[0] componentsSeparatedByString:@"/"];
+            if (ranks.count != 9) break;
+            uint32_t rIdx = r - 1;
+            NSString *rankStr = ranks[rIdx];
+            uint32_t cursorFile = 9;
+            BOOL pendingPromote = NO;
+            BOOL hit = NO;
+            BOOL ourPawn = NO;
+            for (NSUInteger i = 0; i < rankStr.length; i++) {
+                unichar ch = [rankStr characterAtIndex:i];
+                if (ch == '+') { pendingPromote = YES; continue; }
+                if (ch >= '1' && ch <= '9') {
+                    cursorFile -= (uint32_t)(ch - '0');
+                    pendingPromote = NO;
+                    continue;
+                }
+                if (cursorFile == file) {
+                    BOOL isBlack = (ch >= 'A' && ch <= 'Z');
+                    BOOL isPawn = (ch == 'P' || ch == 'p');
+                    hit = YES;
+                    if (isPawn && !pendingPromote) {
+                        ourPawn = (isBlack == (playerSide == 0));
+                    }
+                    break;
+                }
+                cursorFile--;
+                pendingPromote = NO;
+                if (cursorFile < 1) break;
+            }
+            if (hit && ourPawn) return "nifu";
+        }
+    }
+    return NULL;
+}
+
+const char *ValidateCsaMove(NSString *sfenBefore,
+                            uint32_t fromSquare,
+                            uint32_t toSquare,
+                            int32_t pscPieceType,
+                            BOOL promote,
+                            int32_t playerSide) {
+    (void)promote;  // promotion legality (entering enemy camp) deferred
+    if (sfenBefore.length == 0) return NULL;
+    if (fromSquare > 80) return "from_oob";
+    if (toSquare > 80) return "to_oob";
+    if (pscPieceType < 1 || pscPieceType > 14) return "bad_piece";
+    if (playerSide != 0 && playerSide != 1) return "bad_side";
+
+    int32_t fromPiece = PscPieceTypeAtSquare(sfenBefore, fromSquare);
+    if (fromPiece < 0) return "from_empty";
+
+    // The CSA piece mnemonic on the wire is the moving piece's *current*
+    // type (post-promotion if applicable). Allow it to match either the
+    // raw on-board piece or its promoted form, since promote=true means
+    // the piece is being upgraded as part of this move.
+    if (fromPiece != pscPieceType) {
+        // Allow promotion-in-move case: from-square holds the unpromoted
+        // form, CSA names the promoted form, and the promote flag is set.
+        if (!promote || fromPiece > 8) return "from_piece_mismatch";
+        int32_t expectedPromoted = (fromPiece >= 1 && fromPiece <= 6)
+            ? fromPiece + 8 : 0;
+        if (expectedPromoted != pscPieceType) return "from_piece_mismatch";
+    }
+
+    // Can't capture your own piece.
+    NSArray<NSString *> *parts = [sfenBefore componentsSeparatedByString:@" "];
+    if (parts.count >= 1) {
+        NSArray<NSString *> *ranks = [parts[0] componentsSeparatedByString:@"/"];
+        if (ranks.count == 9) {
+            uint32_t toFile = (toSquare / 9) + 1;
+            uint32_t toRank = (toSquare % 9) + 1;
+            NSString *rankStr = ranks[toRank - 1];
+            uint32_t cursorFile = 9;
+            for (NSUInteger i = 0; i < rankStr.length; i++) {
+                unichar ch = [rankStr characterAtIndex:i];
+                if (ch == '+') continue;  // promotion marker — colour-neutral
+                if (ch >= '1' && ch <= '9') {
+                    cursorFile -= (uint32_t)(ch - '0');
+                    continue;
+                }
+                if (cursorFile == toFile) {
+                    BOOL isBlack = (ch >= 'A' && ch <= 'Z');
+                    if (isBlack == (playerSide == 0)) {
+                        return "to_own_piece";
+                    }
+                    break;
+                }
+                cursorFile--;
+                if (cursorFile < 1) break;
+            }
+        }
+    }
+    return NULL;
+}
+
 NSString *CsaTextAppendingTime(NSString *csaMove, int32_t seconds) {
     if (seconds < 0 || csaMove.length == 0) return csaMove;
     if ([csaMove rangeOfString:@",T"].location != NSNotFound) {

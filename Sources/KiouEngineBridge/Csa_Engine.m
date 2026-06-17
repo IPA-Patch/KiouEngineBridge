@@ -436,6 +436,31 @@ static void csa_handle_move_from_engine(NSString *line) {
         return;
     }
 
+    // Cheap legality pre-checks against the cached pre-move SFEN. The
+    // primary goal is to keep blatantly illegal moves (drop on occupied,
+    // move from empty, nifu, dead-end drops, etc) from reaching
+    // inject_apply, because KIOU's GameController silently bounces those
+    // back and leaves both the board and the engine's view inconsistent.
+    // Validators return NULL on success or a short reason string on
+    // rejection.
+    if (g_csaPrevSfen.length > 0) {
+        const char *reason = drop
+            ? ValidateCsaDrop(g_csaPrevSfen, to, pieceType, playerSide)
+            : ValidateCsaMove(g_csaPrevSfen, from, to, pieceType,
+                              promote ? YES : NO, playerSide);
+        if (reason) {
+            file_log([NSString stringWithFormat:
+                      @"[CSA-ENG] rejecting illegal move (reason=%s): %@",
+                      reason, line]);
+            // CSA spec lets the server emit `#ILLEGAL_MOVE` on the engine's
+            // submission but the existing match continues. Send the marker
+            // so the engine knows its move was discarded; keep PLAYING so
+            // the engine can submit a different move.
+            CsaEngineSendLine(@"#ILLEGAL_MOVE");
+            return;
+        }
+    }
+
     NSString *usi;
     if (drop) {
         NSString *letter = csa_pieceToUsiDropLetter(pieceType);
