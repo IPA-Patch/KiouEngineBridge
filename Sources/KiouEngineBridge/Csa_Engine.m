@@ -638,7 +638,18 @@ void CsaEngineOnMatchStart(int32_t local_player) {
     // a second Game_Summary here — that would race with the LOGIN dispatch
     // and cause a PLAYING→LOGIN→PLAYING flip-flop.
     if (s == CSA_STATE_LOGIN || s == CSA_STATE_GAME_OVER) {
-        csa_send_game_summary(local_player);
+        // Defer Game_Summary by ~500ms so scene-create / GameController
+        // initialization finishes first. SfenFromGameController inside
+        // csa_send_game_summary can otherwise block on il2cpp locks
+        // during scene transition, triggering 0x8badf00d watchdog kill.
+        int32_t lpCap = local_player;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 500 * NSEC_PER_MSEC),
+                       dispatch_get_main_queue(), ^{
+            int now = atomic_load(&g_csaState);
+            if (now == CSA_STATE_LOGIN || now == CSA_STATE_GAME_OVER) {
+                csa_send_game_summary(lpCap);
+            }
+        });
     }
 }
 
