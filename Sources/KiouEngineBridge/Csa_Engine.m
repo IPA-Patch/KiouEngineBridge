@@ -1,6 +1,7 @@
 #import "Internal.h"
 #import "Csa_Engine.h"
 
+#import <mach/mach_time.h>
 #import <stdatomic.h>
 
 // ===========================================================================
@@ -66,6 +67,27 @@ static NSString *volatile g_csaLastGameID = nil;
 // declined to surface a clock for that side this match).
 static float volatile g_csaLastBlackRemainSec = NAN;
 static float volatile g_csaLastWhiteRemainSec = NAN;
+
+// Wall-clock fallback. When KIOU's per-side clock is unavailable (VsAI's
+// CPU side reports 86400s "no limit," NaN on the very first move, etc.)
+// we measure think time the boring way: how long ago did the *opponent*
+// finish their move? That delta IS this side's think time.
+//
+// Indexed by player side (0=Black, 1=White). Mach absolute ticks; zero
+// means "no baseline yet — wait for one more move before T<n> can be
+// computed via the fallback path."
+static uint64_t volatile g_csaLastMoveMachTicks[2] = {0, 0};
+
+static uint32_t csa_machTicksToSec(uint64_t ticks) {
+    static mach_timebase_info_data_t s_tb = {0, 0};
+    if (s_tb.denom == 0) mach_timebase_info(&s_tb);
+    if (s_tb.denom == 0) return 0;
+    // ticks * numer / denom -> ns; / 1e9 -> s.
+    uint64_t ns = (s_tb.numer == s_tb.denom)
+        ? ticks
+        : (ticks * s_tb.numer) / s_tb.denom;
+    return (uint32_t)(ns / 1000000000ULL);
+}
 
 // ---------------------------------------------------------------------------
 // Helpers.
@@ -417,6 +439,13 @@ void CsaEngineOnMatchStart(int32_t local_player) {
     // delta isn't computed against a stale previous-match value.
     g_csaLastBlackRemainSec = NAN;
     g_csaLastWhiteRemainSec = NAN;
+    // Bootstrap the wall-clock baseline so the first move's T<n> falls
+    // back to "match-start → first move" wall-time when the live clock is
+    // unavailable. We seed the BLACK side because the very first move is
+    // always Black's (CSA's spec, and KIOU follows it).
+    uint64_t startMach = mach_absolute_time();
+    g_csaLastMoveMachTicks[0] = startMach;
+    g_csaLastMoveMachTicks[1] = startMach;
 
     int s = atomic_load(&g_csaState);
     file_log([NSString stringWithFormat:
@@ -490,24 +519,54 @@ void CsaEngineOnMoveObserved(uint32_t move,
         pscPieceType = pscPieceType - 8;
     }
 
-    // Compute the seconds spent on THIS side's just-played move from the
-    // post-move clock delta. The caller (HookNotifyPieceMoved) already
-    // pre-filtered the VsAI "no time limit" sentinel (86400s) to -1.0f
-    // so any non-negative value can be trusted.
+    // Compute T<n> in seconds for this move. Two paths feed it:
+    //
+    //   (a) KIOU surfaces a live per-side clock (Online + the user's side
+    //       in VsAI / Local) — we cache the post-move remaining-time and
+    //       subtract the previous cached value on the next move.
+    //
+    //   (b) KIOU does NOT surface a live clock (VsAI's CPU side reports
+    //       86400.0f "no limit," NaN on the first move) — we fall back to
+    //       a wall-clock measurement: the time since the *opponent*
+    //       finished their move. That delta IS this side's think time,
+    //       because by the time NotifyPieceMoved fires for this move,
+    //       only this side has been thinking.
+    //
+    // Path (a) wins when both are available because KIOU's internal clock
+    // accounts for the animation / commit latency we don't see from
+    // wall-clock alone. Path (b) is bootstrapped from the previous
+    // observed move (any side) so the very first move of the match gets
+    // T<n> based on the OnMatchStart-to-first-move delta.
     int32_t timeSpent = -1;
     float remain = (playerSide == 0) ? blackTimeRemainSec : whiteTimeRemainSec;
     float volatile *cacheSlot = (playerSide == 0)
         ? &g_csaLastBlackRemainSec
         : &g_csaLastWhiteRemainSec;
+
+    uint64_t nowMach = mach_absolute_time();
+    int32_t opponentSide = (playerSide == 0) ? 1 : 0;
+    uint64_t opponentLastMach = g_csaLastMoveMachTicks[opponentSide];
+
     if (remain >= 0.0f) {
+        // Path (a): live clock available.
         float last = *cacheSlot;
         if (!isnan(last) && last >= remain) {
             float delta = last - remain;
-            // Round down — CSA T values are integer seconds.
-            timeSpent = (int32_t)delta;
+            timeSpent = (int32_t)delta;  // round down
         }
         *cacheSlot = remain;
     }
+    if (timeSpent < 0 && opponentLastMach > 0 && nowMach > opponentLastMach) {
+        // Path (b): wall-clock fallback. Used either when KIOU doesn't
+        // surface a live clock for this side (VsAI's CPU sentinel), or
+        // when path (a) couldn't compute a delta (this side's first move
+        // of the match — no previous cached value to subtract from).
+        timeSpent = (int32_t)csa_machTicksToSec(nowMach - opponentLastMach);
+    }
+
+    // Always update the wall-clock baseline for this side so the *next*
+    // side's move (typically the opponent) can compute its think time.
+    g_csaLastMoveMachTicks[playerSide] = nowMach;
 
     NSString *csa = CsaTextFromMoveBits(move, pscPieceType, playerSide,
                                         timeSpent);
