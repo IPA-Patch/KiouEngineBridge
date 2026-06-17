@@ -50,14 +50,23 @@ void CsaEngineOnMatchStart(int32_t local_player);
 void CsaEngineOnMatchEnd(usi_match_result_t result);
 
 // Per-move observation, fired from Hook_GameStateStoreObserve.m's
-// NotifyPieceMoved hook. `move` is the KIOU Move bits, `playerSide` is
-// the side that just moved (0=Black, 1=White), and `sfenAfter` is the
-// post-move SFEN read off the GameController (used to recover the
-// (promoted) piece type sitting on the destination square — the upper-16
-// bits of the Move struct hold this but their layout is still under RE).
+// NotifyPieceMoved hook.
+//   `move`        : KIOU Move bits
+//   `playerSide`  : the side that just moved (0=Black, 1=White)
+//   `sfenAfter`   : post-move SFEN read off the GameController (used to
+//                   recover the (promoted) piece type sitting on the
+//                   destination square — the upper-16 bits of the Move
+//                   struct hold this but their layout is still under RE)
+//   `blackTimeRemainSec` / `whiteTimeRemainSec`: post-move remaining clock
+//                   values from GameStateStore (+0x80 / +0x90 + 0x20).
+//                   Pass -1.0f when no live clock is available for that
+//                   side (VsAI's CPU sentinel 86400s, open-seat modes,
+//                   etc).
 void CsaEngineOnMoveObserved(uint32_t move,
                              int32_t playerSide,
-                             NSString *sfenAfter);
+                             NSString *sfenAfter,
+                             float blackTimeRemainSec,
+                             float whiteTimeRemainSec);
 
 // Convenience: read the current state for debug / log filtering.
 csa_state_t CsaEngineCurrentState(void);
