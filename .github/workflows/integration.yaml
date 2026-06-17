@@ -1,11 +1,5 @@
 name: integration
 
-# CI: build both the rootless .deb (MobileSubstrate path) and the jailed
-# .dylib (Dobby-static path) on every push to master/develop and on every
-# PR targeting either. Fails fast if the dylib accidentally picks up an
-# external hook-engine dependency, since that would brick Sideloadly
-# installs.
-
 on:
   push:
     branches: [master, develop]
@@ -20,6 +14,8 @@ concurrency:
 env:
   THEOS: ${{ github.workspace }}/theos
   IOS_SDK_VERSION: "16.5"
+  LDID_VERSION: "v2.1.5-procursus7"
+  LDID_SHA256: "4b8862b2fefa2cd7fa8f88cb0310779619aeaa8c72d6aff22f019b470f2fa99a"
 
 jobs:
   commitlint:
@@ -28,21 +24,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v5
         with:
-          # commitlint walks --from <head>~<commits>, so we need the PR
-          # commit history available locally. The default fetch-depth: 1
-          # leaves the parent revision out of the working tree and
-          # `git rev-parse` fails with ambiguous argument.
           fetch-depth: 0
       - name: Bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
       - name: Install commitlint
-        # .commitlintrc.yaml extends "@commitlint/config-conventional",
-        # which is a separate package from commitlint itself. Without it
-        # commitlint exits 1 with "Cannot find module".
         run: |
           bun install conventional-changelog-conventionalcommits
           bun install @commitlint/config-conventional@latest
@@ -53,6 +42,7 @@ jobs:
       - name: Validate PR commits with commitlint
         if: github.event_name == 'pull_request'
         run: bunx commitlint --from ${{ github.event.pull_request.head.sha }}~${{ github.event.pull_request.commits }} --to ${{ github.event.pull_request.head.sha }} --verbose
+
   build:
     name: build (${{ matrix.flavor }})
     runs-on: ubuntu-latest
@@ -68,22 +58,19 @@ jobs:
             make_args: "jailed"
             artifact_name: kiouenginebridge-jailed-dylib
             artifact_path: packages/jailed/KiouEngineBridge.dylib
+          - flavor: binpatch
+            make_args: "binpatch"
+            artifact_name: kiouenginebridge-binpatch-dylib
+            artifact_path: packages/binpatch/KiouEngineBridge.dylib
 
     steps:
       - name: Checkout source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v5
         with:
-          # Sources/Common is a submodule and the build references files
-          # inside it (logging.m, binpatch.m, ...). The default
-          # submodules: false leaves that path empty and the build fails
-          # at the very first preprocessing pass.
           submodules: recursive
 
       - name: Install host build tools
         run: |
-          # Mirrors KiouKifExporter's CI: ldid is NOT in the noble apt
-          # repos and is installed separately below. libtinfo6 / libncurses6
-          # are the runtime deps the Procursus ldid binary links against.
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
               build-essential curl git make perl xz-utils \
@@ -91,12 +78,6 @@ jobs:
               libtinfo6 libncurses6
 
       - name: Install ldid
-        # apt has no ldid on Ubuntu noble (24.04), so pull the prebuilt
-        # Linux x86_64 binary from the ProcursusTeam release. SHA256
-        # pinned so a release-asset swap can't silently swap our signer.
-        env:
-          LDID_VERSION: "v2.1.5-procursus7"
-          LDID_SHA256: "4b8862b2fefa2cd7fa8f88cb0310779619aeaa8c72d6aff22f019b470f2fa99a"
         run: |
           curl -L -o /tmp/ldid \
               "https://github.com/ProcursusTeam/ldid/releases/download/${LDID_VERSION}/ldid_linux_x86_64"
@@ -108,28 +89,19 @@ jobs:
         id: theos-cache
         uses: actions/cache@v5
         with:
-          path: |
-            theos
-          # Bump on toolchain layout changes (see Install Theos comment).
+          path: theos
           key: theos-linux-${{ env.IOS_SDK_VERSION }}-v3
 
       - name: Install Theos
         if: steps.theos-cache.outputs.cache-hit != 'true'
         run: |
-          # Mirrors KiouKifExporter's working CI.
-          # Theos itself.
           git clone --recursive https://github.com/theos/theos.git "$THEOS"
 
-          # iOS cross-toolchain from L1ghtmann/llvm-project. The tarball
-          # already lays out the linux/iphone/ directory under
-          # $THEOS/toolchain, which is what Theos's makefiles expect --
-          # no rename needed.
           ARCH=$(uname -m)
           curl -fsSL \
               "https://github.com/L1ghtmann/llvm-project/releases/latest/download/iOSToolchain-${ARCH}.tar.xz" \
             | tar xJ -C "$THEOS/toolchain"
 
-          # iOS SDK matching IOS_SDK_VERSION.
           mkdir -p "$THEOS/sdks"
           curl -L -o /tmp/sdk.tar.gz \
               "https://github.com/theos/sdks/archive/master.tar.gz"
@@ -139,9 +111,8 @@ jobs:
 
       - name: Verify Theos
         run: |
-          ls "$THEOS"
-          ls "$THEOS/sdks"
           test -d "$THEOS/sdks/iPhoneOS${IOS_SDK_VERSION}.sdk"
+          test -x "$THEOS/toolchain/linux/iphone/bin/clang"
 
       - name: Build (${{ matrix.flavor }})
         run: |
@@ -154,26 +125,25 @@ jobs:
           make package
           ls -la packages/
 
-      - name: Sanity check jailed dylib (no external hook engine)
-        if: matrix.flavor == 'jailed'
+      - name: Sanity check dylib (no external hook engine)
+        if: matrix.flavor == 'jailed' || matrix.flavor == 'binpatch'
         run: |
-          DYLIB=packages/jailed/KiouEngineBridge.dylib
+          DYLIB=packages/${{ matrix.flavor }}/KiouEngineBridge.dylib
           test -f "$DYLIB"
-          # otool may be unavailable on Linux; fall back to nm-style scan.
           if command -v otool >/dev/null 2>&1; then
               otool -L "$DYLIB"
               if otool -L "$DYLIB" | grep -E "libsubstrate|libdobby"; then
-                  echo "::error::Jailed dylib leaks an external hook-engine dependency"
+                  echo "::error::$DYLIB leaks an external hook-engine dependency"
                   exit 1
               fi
           else
               strings "$DYLIB" | grep -E "libsubstrate|libdobby\.dylib" \
-                  && { echo "::error::Jailed dylib leaks an external hook-engine dependency"; exit 1; } \
-                  || echo "no external hook-engine references found"
+                  && { echo "::error::$DYLIB leaks an external hook-engine dependency"; exit 1; } \
+                  || echo "$DYLIB: no external hook-engine references found"
           fi
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
           path: ${{ matrix.artifact_path }}
