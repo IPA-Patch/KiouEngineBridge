@@ -392,6 +392,11 @@ _BRIDGE_SITES: list[tuple[int, str, str, str]] = [
     (0x5A0CBD0, "ff0302d1", "KIOU_BR_HOOK_ONLINE_HANDLE_RESULT",      "OnlinePvPMode.HandleMoveResult"),
     (0x59EB0E0, "e923bc6d", "KIOU_BR_HOOK_CPUSTREAM_UPDATE_SNAPSHOT", "CPUStreamMode.UpdateAuthoritativeSnapshot"),
     (0x5944E84, "ff4302d1", "KIOU_BR_HOOK_GAMEORCH_ACTIVATE",         "GameOrchestrator.ActivateAsync"),
+
+    # GameStateStore hooks — move observation (CSA) + player identity (Online)
+    (0x5A2CB64, "f44fbea9", "KIOU_BR_HOOK_GSTATE_SET_BLACK_PLAYER_INFO", "GameStateStore.SetBlackPlayerInfo"),
+    (0x5A2CBA0, "f44fbea9", "KIOU_BR_HOOK_GSTATE_SET_WHITE_PLAYER_INFO", "GameStateStore.SetWhitePlayerInfo"),
+    (0x5A2CD24, "ff4301d1", "KIOU_BR_HOOK_GSTATE_NOTIFY_PIECE_MOVED",    "GameStateStore.NotifyPieceMoved"),
 ]
 
 
