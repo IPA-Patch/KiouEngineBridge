@@ -118,11 +118,37 @@ static void HookNotifyPieceMoved(void *self,
               @"[GSTATE-MOVE] NotifyPieceMoved self=%p moved_side=%d "
               @"usi=\"%@\" sfen=\"%@\"",
               self, (int)playerSide, usi ?: @"", sfen ?: @""]);
+
+    // GameStateStore (dump.cs:1422268) keeps two ReactiveProperty<float>
+    // clocks at offset 0x80 / 0x90. The underlying R3 / UniRx box stores
+    // the current value at +0x20 (verified live with a probe sweep, see
+    // commit history). Online matches keep these in sync with the server;
+    // VsAI / Local matches use them for the on-screen clock too.
+    //
+    // Sanity check: VsAI emits 86400.0 (= 24 h) as the CPU side's clock to
+    // mean "no time limit." Treat anything ≥ 86400 - 60 as "no clock" so we
+    // don't ship bogus large T values.
+    float blackRemain = -1.0f;
+    float whiteRemain = -1.0f;
+    {
+        void *bRP = readPtr(self, 0x80);
+        void *wRP = readPtr(self, 0x90);
+        if (bRP) {
+            float v = *(const float *)((const uint8_t *)bRP + 0x20);
+            if (v > 0.0f && v < 86340.0f) blackRemain = v;
+        }
+        if (wRP) {
+            float v = *(const float *)((const uint8_t *)wRP + 0x20);
+            if (v > 0.0f && v < 86340.0f) whiteRemain = v;
+        }
+    }
+
     MetaEmitMove(usi, sfen, nextSide);
     // CSA engine driver wants the raw Move bits + post-move SFEN so it can
     // reconstruct the piece type at the destination square and ship a
     // `+7776FU,T10`-style notification.
-    CsaEngineOnMoveObserved((uint32_t)move, playerSide, sfen);
+    CsaEngineOnMoveObserved((uint32_t)move, playerSide, sfen,
+                            blackRemain, whiteRemain);
 }
 
 // ---------------------------------------------------------------------------

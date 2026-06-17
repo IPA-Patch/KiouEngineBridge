@@ -377,12 +377,20 @@ void CsaEngineInstall(void);
 void CsaEngineOnMatchStart(int32_t local_player);
 void CsaEngineOnMatchEnd(usi_match_result_t result);
 
-// Per-move notification, fired from Hook_GameStateStoreObserve.m. `move`
-// is the KIOU Move bits, `playerSide` is the side that just moved
-// (0=Black, 1=White), and `sfenAfter` is the post-move SFEN snapshot.
+// Per-move notification, fired from Hook_GameStateStoreObserve.m.
+//   `move`        : KIOU Move bits
+//   `playerSide`  : the side that just moved (0=Black, 1=White)
+//   `sfenAfter`   : post-move SFEN snapshot
+//   `blackTimeRemainSec` / `whiteTimeRemainSec`: post-move remaining
+//     clock values read straight off GameStateStore (+0x80 / +0x90 +
+//     0x20). Pass -1.0f when no live clock is available for that side
+//     (VsAI's CPU side uses 86400s sentinel, open-seat modes don't
+//     surface clocks, etc).
 void CsaEngineOnMoveObserved(uint32_t move,
                              int32_t playerSide,
-                             NSString *sfenAfter);
+                             NSString *sfenAfter,
+                             float blackTimeRemainSec,
+                             float whiteTimeRemainSec);
 
 // ---------------------------------------------------------------------------
 // Csa_GameInfo.m — MatchConfig / PlayerInfo readers + CSA Game_Summary /

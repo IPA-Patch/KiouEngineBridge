@@ -57,11 +57,15 @@ static _Atomic int g_csaLocalPlayer = -1;
 static NSString *volatile g_csaLastGameSummary = nil;
 static NSString *volatile g_csaLastGameID = nil;
 
-// Per-snapshot black/white remaining-time cache, used to derive the `T<n>`
-// field on per-move notifications. Both default to -1 (= no snapshot yet),
-// which translates to "omit the ,T suffix" in CsaTextFromMoveBits.
-static _Atomic int g_csaLastBlackTimeSec = -1;
-static _Atomic int g_csaLastWhiteTimeSec = -1;
+// Per-move remaining-time cache, used to derive the `,T<n>` suffix on the
+// next move notification. Values are post-move remaining seconds (float)
+// pulled straight off GameStateStore (+0x80 / +0x90 + 0x20) — see
+// Hook_GameStateStoreObserve::HookNotifyPieceMoved for the read site.
+//
+// NaN means "no value cached yet" (first move of the match, or KIOU
+// declined to surface a clock for that side this match).
+static float volatile g_csaLastBlackRemainSec = NAN;
+static float volatile g_csaLastWhiteRemainSec = NAN;
 
 // ---------------------------------------------------------------------------
 // Helpers.
@@ -344,13 +348,16 @@ static void csa_handle_move_from_engine(NSString *line) {
     }
 
     int32_t lp = atomic_load(&g_csaLocalPlayer);
-    int32_t enginePlayer = (lp == 0) ? 1 : (lp == 1) ? 0 : -1;
+    // The connected CSA engine stands in for KIOU's local human player —
+    // it occupies the same seat (Your_Turn maps directly to lp). On
+    // open-seat modes (lp == -1) we accept whatever side the engine
+    // claims.
+    int32_t enginePlayer = lp;
     if (enginePlayer != -1 && playerSide != enginePlayer) {
         file_log([NSString stringWithFormat:
-                  @"[CSA-ENG] move side mismatch: engine=%d got=%d",
+                  @"[CSA-ENG] move side mismatch: engine=%d got=%d "
+                  @"(applying anyway)",
                   enginePlayer, playerSide]);
-        // Still try to apply it — the engine knows its side better than we
-        // do in open-seat modes.
     }
 
     // Build USI for the inject pipeline. The "from" / "to" bits already
@@ -406,8 +413,10 @@ static void csa_handle_move_from_engine(NSString *line) {
 
 void CsaEngineOnMatchStart(int32_t local_player) {
     atomic_store(&g_csaLocalPlayer, local_player);
-    atomic_store(&g_csaLastBlackTimeSec, -1);
-    atomic_store(&g_csaLastWhiteTimeSec, -1);
+    // Reset the per-side post-move clock cache so the first move's `,T<n>`
+    // delta isn't computed against a stale previous-match value.
+    g_csaLastBlackRemainSec = NAN;
+    g_csaLastWhiteRemainSec = NAN;
 
     int s = atomic_load(&g_csaState);
     file_log([NSString stringWithFormat:
@@ -446,7 +455,9 @@ void CsaEngineOnMatchEnd(usi_match_result_t result) {
 
 void CsaEngineOnMoveObserved(uint32_t move,
                              int32_t playerSide,
-                             NSString *sfenAfter) {
+                             NSString *sfenAfter,
+                             float blackTimeRemainSec,
+                             float whiteTimeRemainSec) {
     int s = atomic_load(&g_csaState);
     if (s != CSA_STATE_PLAYING && s != CSA_STATE_AGREE_WAIT) {
         // Outside the per-move window — don't surface moves to the engine.
@@ -479,18 +490,23 @@ void CsaEngineOnMoveObserved(uint32_t move,
         pscPieceType = pscPieceType - 8;
     }
 
-    // Compute the seconds spent on this move from the snapshot delta.
+    // Compute the seconds spent on THIS side's just-played move from the
+    // post-move clock delta. The caller (HookNotifyPieceMoved) already
+    // pre-filtered the VsAI "no time limit" sentinel (86400s) to -1.0f
+    // so any non-negative value can be trusted.
     int32_t timeSpent = -1;
-    if (playerSide == 0) {
-        int last = atomic_load(&g_csaLastBlackTimeSec);
-        int now  = (int)g_latestBlackTimeSec;
-        if (last >= 0 && now >= 0 && last >= now) timeSpent = last - now;
-        if (now > 0) atomic_store(&g_csaLastBlackTimeSec, now);
-    } else if (playerSide == 1) {
-        int last = atomic_load(&g_csaLastWhiteTimeSec);
-        int now  = (int)g_latestWhiteTimeSec;
-        if (last >= 0 && now >= 0 && last >= now) timeSpent = last - now;
-        if (now > 0) atomic_store(&g_csaLastWhiteTimeSec, now);
+    float remain = (playerSide == 0) ? blackTimeRemainSec : whiteTimeRemainSec;
+    float volatile *cacheSlot = (playerSide == 0)
+        ? &g_csaLastBlackRemainSec
+        : &g_csaLastWhiteRemainSec;
+    if (remain >= 0.0f) {
+        float last = *cacheSlot;
+        if (!isnan(last) && last >= remain) {
+            float delta = last - remain;
+            // Round down — CSA T values are integer seconds.
+            timeSpent = (int32_t)delta;
+        }
+        *cacheSlot = remain;
     }
 
     NSString *csa = CsaTextFromMoveBits(move, pscPieceType, playerSide,
