@@ -336,19 +336,18 @@ static void csa_handle_special(NSString *line) {
 
     int32_t lp = atomic_load(&g_csaLocalPlayer);
     if ([line isEqualToString:@"%TORYO"]) {
-        // The CSA engine resigns — meaning the local KIOU side wins.
-        // Convert that to a KIOU-side resign call against the engine's
-        // seat (= the opposite of the local player).
-        int32_t enginePlayer = (lp == 0) ? 1 : (lp == 1) ? 0 : -1;
-        InjectResign(enginePlayer);
+        // The CSA engine resigns — the engine IS the local KIOU player,
+        // so the local seat surrenders. RequestSurrender always resigns the
+        // local player; the outcome from the engine's view is #LOSE.
+        InjectResign(lp);
         CsaEngineSendLine(@"#RESIGN");
-        CsaEngineSendLine(@"#WIN");
+        CsaEngineSendLine(@"#LOSE");
         csa_set_state(CSA_STATE_GAME_OVER);
         return;
     }
     if ([line isEqualToString:@"%KACHI"]) {
-        int32_t enginePlayer = (lp == 0) ? 1 : (lp == 1) ? 0 : -1;
-        InjectNyugyokuDeclaration(enginePlayer);
+        // The engine declares nyugyoku for the local seat — local wins.
+        InjectNyugyokuDeclaration(lp);
         CsaEngineSendLine(@"#JISHOGI");
         CsaEngineSendLine(@"#WIN");
         csa_set_state(CSA_STATE_GAME_OVER);
@@ -659,9 +658,14 @@ void CsaEngineOnMatchEnd(usi_match_result_t result) {
               @"[CSA-ENG] match_end result=%d state=%s",
               (int)result, csa_state_name(s)]);
 
-    NSString *resultLines = CsaBuildMatchResult(result);
-    if (resultLines.length > 0) {
-        CsaEngineSendBlock(resultLines);
+    // Skip if already in GAME_OVER — %TORYO / %KACHI / %CHUDAN have already
+    // sent the result block and advanced the state; re-emitting here would
+    // send contradictory or duplicate #WIN/#LOSE lines to the engine.
+    if (s != CSA_STATE_GAME_OVER) {
+        NSString *resultLines = CsaBuildMatchResult(result);
+        if (resultLines.length > 0) {
+            CsaEngineSendBlock(resultLines);
+        }
     }
 
     atomic_store(&g_csaLocalPlayer, -1);

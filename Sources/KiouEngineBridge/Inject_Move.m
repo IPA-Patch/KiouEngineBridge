@@ -1149,11 +1149,14 @@ bool inject_apply(NSString *usi,
                           @"[INJECT-DBG] PlayMoveAnimation threw: %@", e]);
             }
         });
-        // Sleep on the WS recv queue (NOT the main thread) so the
-        // animation actually runs while we wait. usleep here is safe
-        // because inject_apply is called from the WS recv queue, not
-        // from a Unity callback.
-        usleep((useconds_t)(INJECT_ANIMATION_DELAY_SEC * 1000000.0));
+        // Sleep off the main thread so the animation can actually run.
+        // If inject_apply was called from the main thread (e.g. from
+        // the CSA recv-queue dispatch), sleeping here would block the
+        // UI entirely. Skip the delay in that case — INJECT_ANIMATION_DELAY_SEC
+        // is 0.0 anyway, so this guard is a safety net for future increases.
+        if (![NSThread isMainThread]) {
+            usleep((useconds_t)(INJECT_ANIMATION_DELAY_SEC * 1000000.0));
+        }
     } else {
         IPALog(@"[INJECT-DBG] PlayMoveAnimation skipped: "
                  @"fn or orch cache missing");
