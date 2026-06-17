@@ -108,13 +108,14 @@ static const char *csa_state_name(int s) {
     }
 }
 
-static void csa_set_state(int newState) {
+static void csa_set_state_impl(int newState, const char *caller) {
     int old = atomic_exchange(&g_csaState, newState);
     if (old != newState) {
-        file_log([NSString stringWithFormat:@"[CSA-ENG] state %s -> %s",
-                  csa_state_name(old), csa_state_name(newState)]);
+        file_log([NSString stringWithFormat:@"[CSA-ENG] state %s -> %s (from %s)",
+                  csa_state_name(old), csa_state_name(newState), caller]);
     }
 }
+#define csa_set_state(s) csa_set_state_impl((s), __FUNCTION__)
 
 // ---------------------------------------------------------------------------
 // Outbound funnel — every line that goes on the wire passes through
