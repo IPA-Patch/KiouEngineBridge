@@ -640,6 +640,9 @@ UniTaskRet HookGameOrchActivateAsync(void *self, void *setup,
 void HookGStateSetBlackPlayerInfo(void *self, void *playerInfo);
 void HookGStateSetWhitePlayerInfo(void *self, void *playerInfo);
 void HookGStateNotifyPieceMoved(void *self, uint32_t move, int32_t playerSide);
+void HookGStateNotifyStateSyncedForCurrentPosition(void);
+void ResolveGameStateStoreNotifyStateSynced(uintptr_t unityBase);
+void HookGStateRememberStore(void *self);
 
 // ---------------------------------------------------------------------------
 // SfMove + low-level helpers, exported so observation hooks living in other

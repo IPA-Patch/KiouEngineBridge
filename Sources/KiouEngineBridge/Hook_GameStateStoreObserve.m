@@ -6,16 +6,44 @@
 #define RVA_GAMESTATESTORE_SET_BLACK_PLAYER_INFO 0x5A2CB64
 #define RVA_GAMESTATESTORE_SET_WHITE_PLAYER_INFO 0x5A2CBA0
 #define RVA_GAMESTATESTORE_NOTIFY_PIECE_MOVED    0x5A2CD24
+#define RVA_GAMESTATESTORE_NOTIFY_STATE_SYNCED   0x5A2CE64
 
 // ---------------------------------------------------------------------------
-// Trampoline pointer types — declared here so they can be used in the shared
-// hook bodies below. The definitions (and their initialisers) live in the
-// JB-only #else block; on binpatch the cave handles orig-chaining, so
-// these pointers are never needed and not defined.
+// Trampoline pointer types.
 // ---------------------------------------------------------------------------
 typedef void (*SetPlayerInfo_t)(void *self, void *playerInfo);
 typedef void (*GState_NotifyPieceMoved_t)(void *self, uint32_t move,
                                           int32_t playerSide);
+typedef void (*GState_NotifyStateSynced_t)(void *self, void *position);
+
+static void *g_lastGameStateStore = NULL;
+static GState_NotifyStateSynced_t g_GameStateStore_NotifyStateSynced = NULL;
+
+void HookGStateRememberStore(void *self) {
+    if (self) g_lastGameStateStore = self;
+}
+
+void ResolveGameStateStoreNotifyStateSynced(uintptr_t unityBase) {
+    g_GameStateStore_NotifyStateSynced =
+        (GState_NotifyStateSynced_t)(void *)(unityBase + RVA_GAMESTATESTORE_NOTIFY_STATE_SYNCED);
+}
+
+void HookGStateNotifyStateSyncedForCurrentPosition(void) {
+    if (!g_lastGameStateStore || !g_GameStateStore_NotifyStateSynced || !g_gameCtrlCache) {
+        return;
+    }
+    void *list = readPtr(g_gameCtrlCache, 0x10);
+    if (!list) return;
+    void *items = readPtr(list, 0x10);
+    int32_t size = readI32(list, 0x18);
+    if (size <= 0 || size > 4096 || !ptrLooksValid(items)) return;
+    void *pos = readPtr(items, 0x20 + (size - 1) * 8);
+    if (!pos) return;
+    g_GameStateStore_NotifyStateSynced(g_lastGameStateStore, pos);
+    IPALog([NSString stringWithFormat:
+              @"[GSTATE-SYNC] NotifyStateSynced store=%p pos=%p",
+              g_lastGameStateStore, pos]);
+}
 
 #if !KIOU_BINPATCH
 // Defined (zero-initialised) in the JB installer section below.
@@ -35,6 +63,7 @@ extern GState_NotifyPieceMoved_t orig_NotifyPieceMoved;
 // ===========================================================================
 
 void HookGStateSetBlackPlayerInfo(void *self, void *playerInfo) {
+    HookGStateRememberStore(self);
     MetaOnPlayerInfoSet(/*side=*/0, playerInfo);
     CsaOnPlayerInfoSet(/*side=*/0, playerInfo);
 #if !KIOU_BINPATCH
@@ -45,6 +74,7 @@ void HookGStateSetBlackPlayerInfo(void *self, void *playerInfo) {
 }
 
 void HookGStateSetWhitePlayerInfo(void *self, void *playerInfo) {
+    HookGStateRememberStore(self);
     MetaOnPlayerInfoSet(/*side=*/1, playerInfo);
     CsaOnPlayerInfoSet(/*side=*/1, playerInfo);
 #if !KIOU_BINPATCH
@@ -72,6 +102,7 @@ void HookGStateSetWhitePlayerInfo(void *self, void *playerInfo) {
 // On binpatch: the cave runs the displaced prologue (which is the orig
 // instruction) before calling the dispatcher, so the same ordering holds.
 void HookGStateNotifyPieceMoved(void *self, uint32_t move, int32_t playerSide) {
+    if (self) g_lastGameStateStore = self;
 #if !KIOU_BINPATCH
     if (orig_NotifyPieceMoved) orig_NotifyPieceMoved(self, move, playerSide);
 #endif
@@ -123,7 +154,9 @@ void HookGStateNotifyPieceMoved(void *self, uint32_t move, int32_t playerSide) {
 // Cave dispatcher wires HookGState* at patch time; no runtime installation
 // needed. MetaOnPlayerInfoSet is a no-op because Meta_Emitter is dropped on
 // the binpatch build.
-void InstallGameStateStoreObserveHook(uintptr_t unityBase) { (void)unityBase; }
+void InstallGameStateStoreObserveHook(uintptr_t unityBase) {
+    ResolveGameStateStoreNotifyStateSynced(unityBase);
+}
 void MetaOnPlayerInfoSet(int32_t side, void *playerInfo) {
     (void)side; (void)playerInfo;
 }
@@ -135,6 +168,7 @@ SetPlayerInfo_t orig_SetWhitePlayerInfo = NULL;
 GState_NotifyPieceMoved_t orig_NotifyPieceMoved = NULL;
 
 void InstallGameStateStoreObserveHook(uintptr_t unityBase) {
+    ResolveGameStateStoreNotifyStateSynced(unityBase);
     {
         uintptr_t addr = unityBase + RVA_GAMESTATESTORE_SET_BLACK_PLAYER_INFO;
         MSHookFunction((void *)addr,
