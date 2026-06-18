@@ -70,3 +70,10 @@ void CsaEngineOnMoveObserved(uint32_t move,
 
 // Convenience: read the current state for debug / log filtering.
 csa_state_t CsaEngineCurrentState(void);
+
+// Latest post-move remaining time (seconds) per side, updated on every
+// CsaEngineOnMoveObserved call. NaN means "no value yet" (start of match or
+// side's clock not available). Read by Csa_GameInfo to populate
+// Remaining_Time+/- in the reconnect Game_Summary.
+extern float volatile g_csaLastBlackRemainSec;
+extern float volatile g_csaLastWhiteRemainSec;

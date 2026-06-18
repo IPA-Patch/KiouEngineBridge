@@ -1,4 +1,5 @@
 #import "Internal.h"
+#import "Settings_Persistence.h"
 #import <mach-o/dyld.h>
 #import <string.h>
 
@@ -115,6 +116,7 @@ static void retryInstallHooks(void) {
 __attribute__((constructor)) static void init(void) {
     IPALoggingInit("com.neconome.shogi.kiouenginebridge");
     IPALog(@"=== KiouEngineBridge loaded ===");
+
     // Build identity so a stray log file can be matched back to the exact
     // dylib that wrote it. Flavor distinguishes JB (libsubstrate) / jailed
     // (Dobby-static) / binpatch (static cave + SLOT dispatcher).
@@ -130,13 +132,21 @@ __attribute__((constructor)) static void init(void) {
               KIOU_ENGINE_BRIDGE_COMMIT, kBuildFlavor,
               __DATE__, __TIME__]);
 
-    // CSA migration Task 3: bind the CSA TCP server on 0.0.0.0:4081 as
-    // early as possible. Without a client attached, every KEBCsaServerPush
-    // call below is a silent no-op. The Csa_Engine state machine (Task 4)
-    // installs its line handler against KEBCsaServerSetLineHandler so
-    // inbound LOGIN / AGREE / move / %TORYO lines route through to the
-    // driver as soon as the engine connects.
-    KEBCsaServerStart(4081);
+    // CSA migration Task 3: bind the CSA TCP server as early as possible.
+    // Port is read from NSUserDefaults — dispatch to the main queue so
+    // cfprefs / sandbox are fully initialised before the first read.
+    // The 0.5s head-start is well before any engine could connect anyway.
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        uint16_t csaPort = KEBCsaPort();
+        IPALog([NSString stringWithFormat:@"[SETTINGS] CSA server port=%u",
+                  (unsigned)csaPort]);
+        KEBCsaServerStart(csaPort);
+    });
+
+    // Settings panel (right-edge swipe). Dispatches to main queue internally
+    // and retries until the key window is available — safe to call here.
+    KEBSettingsInstall();
 
     // UnityFramework is almost certainly not mapped yet at constructor time.
     installUnityHooks();

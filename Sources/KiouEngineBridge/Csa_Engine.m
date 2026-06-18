@@ -65,8 +65,8 @@ static NSString *volatile g_csaLastGameID = nil;
 //
 // NaN means "no value cached yet" (first move of the match, or KIOU
 // declined to surface a clock for that side this match).
-static float volatile g_csaLastBlackRemainSec = NAN;
-static float volatile g_csaLastWhiteRemainSec = NAN;
+float volatile g_csaLastBlackRemainSec = NAN;
+float volatile g_csaLastWhiteRemainSec = NAN;
 
 // Previous-move SFEN. Used to detect drops by hand-delta against the
 // post-move SFEN (the KIOU Move bits don't encode the dropped piece type

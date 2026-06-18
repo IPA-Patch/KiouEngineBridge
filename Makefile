@@ -43,8 +43,17 @@ $(TWEAK_NAME)_FILES      += Sources/Chinlan/logserver.m
 
 BUILD_COMMIT             ?= $(shell git rev-parse --short=7 HEAD 2>/dev/null || echo unknown)
 
+_CONTROL_VERSION         := $(shell grep '^Version:' control | awk '{print $$2}')
+# Theos sets DEBUG=1 by default; FINALPACKAGE=1 clears it for release builds.
+ifneq ($(FINALPACKAGE),1)
+PACKAGE_VERSION          ?= $(_CONTROL_VERSION)-dbg
+else
+PACKAGE_VERSION          ?= $(_CONTROL_VERSION)
+endif
+
 $(TWEAK_NAME)_CFLAGS     := -fobjc-arc -Wno-unused-function \
                             -D$(BUILD_COMMIT_DEFINE)=\"$(BUILD_COMMIT)\" \
+                            -DKIOU_ENGINE_BRIDGE_VERSION=\"$(PACKAGE_VERSION)\" \
                             -ISources/Chinlan
 ifdef FINAL_RELEASE
 $(TWEAK_NAME)_CFLAGS     += -DFINAL_RELEASE=1
@@ -53,7 +62,7 @@ endif
 # Chinlan shared utilities are always compiled in. FINAL_RELEASE only turns
 # debug-only helpers (like the localhost log stream) into empty stubs.
 $(TWEAK_NAME)_FILES      +=
-$(TWEAK_NAME)_FRAMEWORKS := Foundation
+$(TWEAK_NAME)_FRAMEWORKS := Foundation UIKit
 
 # ---------------------------------------------------------------------------
 # Hook engine selection.

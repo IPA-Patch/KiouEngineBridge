@@ -1,4 +1,5 @@
 #import "Internal.h"
+#import "Settings_Persistence.h"
 
 #import <mach/mach_time.h>
 #import <UIKit/UIKit.h>
@@ -458,18 +459,29 @@ static void scheduleAutoRematch(const char *modeTag) {
         IPALog(@"[REMATCH] skipped: mode opts out");
         return;
     }
+
+    // Respect the user's auto-rematch toggle.
+    if (!KEBAutoRematchEnabled()) {
+        IPALog(@"[REMATCH] skipped: auto_rematch disabled by user");
+        return;
+    }
+
     bool isOnline = (strcmp(modeTag, "online") == 0);
 
-    IPALog([NSString stringWithFormat:
-              @"[REMATCH] scheduling auto-rematch mode=%s orch=%p",
-              modeTag, g_gameOrchestratorCache]);
+    float step1Sec = KEBRematchStep1Sec();
+    float step2Sec = KEBRematchStep2Sec();
 
-    // Step 1 (+3.5s): close the result overlay by tapping the same path
+    IPALog([NSString stringWithFormat:
+              @"[REMATCH] scheduling auto-rematch mode=%s orch=%p "
+              @"step1=%.1fs step2=%.1fs",
+              modeTag, g_gameOrchestratorCache, step1Sec, step2Sec]);
+
+    // Step 1 (+step1Sec): close the result overlay by tapping the same path
     // the player's "back" button would. GameOrchestrator.OnEndSequenceCompleted
     // is private but call-compatible from C — disassembly shows it just
     // walks the exit flow.
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
-                                 (int64_t)(3.5 * NSEC_PER_SEC)),
+                                 (int64_t)(step1Sec * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
         void *orch = g_gameOrchestratorCache;
         if (!orch || g_unityBase == 0) {
@@ -490,11 +502,11 @@ static void scheduleAutoRematch(const char *modeTag) {
         }
     });
 
-    // Step 2 (+5.5s): kick the next match. CPU path reads the previous
-    // strength off the cached GameOrchestrator → GameSetup → GameParams
-    // chain so the rematch matches what the player started.
+    // Step 2 (+step1Sec+step2Sec): kick the next match. CPU path reads the
+    // previous strength off the cached GameOrchestrator → GameSetup →
+    // GameParams chain so the rematch matches what the player started.
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
-                                 (int64_t)(5.5 * NSEC_PER_SEC)),
+                                 (int64_t)((step1Sec + step2Sec) * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
         if (g_unityBase == 0) {
             IPALog(@"[REMATCH] step2 skipped: no unityBase");

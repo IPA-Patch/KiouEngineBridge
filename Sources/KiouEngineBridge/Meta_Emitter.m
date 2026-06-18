@@ -299,9 +299,7 @@ static void meta_emit_dict(NSDictionary *payload) {
         IPALog(@"[META] serialize: utf-8 decode failed");
         return;
     }
-    NSString *line = [NSString stringWithFormat:@"meta %@\n", body];
     IPALog([NSString stringWithFormat:@"[META>] %@", body]);
-    KEBCsaServerPush(line);
 }
 
 // ---------------------------------------------------------------------------

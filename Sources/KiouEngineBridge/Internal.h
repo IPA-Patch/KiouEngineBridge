@@ -42,6 +42,10 @@
 #define KIOU_ENGINE_BRIDGE_COMMIT "unknown"
 #endif
 
+#ifndef KIOU_ENGINE_BRIDGE_VERSION
+#define KIOU_ENGINE_BRIDGE_VERSION "0.0.0"
+#endif
+
 // ---------------------------------------------------------------------------
 // orig() invocation policy.
 //
@@ -87,6 +91,11 @@ void InstallMatchModeObserveHook(uintptr_t unityBase);
 void InstallInjectHook(uintptr_t unityBase);
 void InstallAfkSuppressHook(uintptr_t unityBase);
 void InstallGameOrchestratorObserveHook(uintptr_t unityBase);
+
+// Settings panel (Settings_UI.m). Installs the left-edge swipe gesture on
+// the key window; retries automatically if the window is not yet available.
+// Call once from the constructor after the log sink is initialized.
+void KEBSettingsInstall(void);
 
 // UnityFramework base address captured at install time. Exposed so the
 // match-end auto-rematch path can resolve static il2cpp methods
