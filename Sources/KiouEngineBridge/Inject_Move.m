@@ -580,24 +580,24 @@ static const char *inject_routeName(kiou_route_t r) {
 // we try to dispatch on a stale pointer. That's why we still prefer the
 // freshest observed timestamp when multiple mode caches are populated —
 // it's an ordering hint, not a gate. Branch F reconstructs per-site bypass
-// trampolines from the fixed cave geometry, so binpatch injection can call
+// trampolines from the fixed cave geometry, so chinlan injection can call
 // OPM / Adapter without re-entering the dispatcher cave.
 static kiou_route_t inject_pickRoute(void) {
     // Pick the mode whose OPM observation timestamp is the newest, treating
     // "never observed" (ts == 0) as infinitely old. The actual route call
-    // only requires a live cached receiver; on binpatch the callable can be
+    // only requires a live cached receiver; on chinlan the callable can be
     // the reconstructed cave-bypass entry even when orig_* is NULL.
     struct { void *cache; bool callable; uint64_t ts;
              kiou_route_t route; bool gated; } modes[] = {
-        { g_aiMatchModeCache,      KIOU_BR_BINPATCH_AI_OPM_CALLABLE() != NULL,
+        { g_aiMatchModeCache,      KIOU_BR_CHINLAN_AI_OPM_CALLABLE() != NULL,
           g_lastAiMatchEvtUs,       KIOU_ROUTE_AI_OPM,        false },
-        { g_localPvPModeCache,     KIOU_BR_BINPATCH_LOCAL_OPM_CALLABLE() != NULL,
+        { g_localPvPModeCache,     KIOU_BR_CHINLAN_LOCAL_OPM_CALLABLE() != NULL,
           g_lastLocalPvPEvtUs,      KIOU_ROUTE_LOCAL_OPM,     false },
-        { g_cpuStreamModeCache,    KIOU_BR_BINPATCH_CPUSTREAM_OPM_CALLABLE() != NULL,
+        { g_cpuStreamModeCache,    KIOU_BR_CHINLAN_CPUSTREAM_OPM_CALLABLE() != NULL,
           g_lastCpuStreamEvtUs,     KIOU_ROUTE_CPUSTREAM_OPM, false },
-        { g_recordReplayModeCache, KIOU_BR_BINPATCH_REPLAY_OPM_CALLABLE() != NULL,
+        { g_recordReplayModeCache, KIOU_BR_CHINLAN_REPLAY_OPM_CALLABLE() != NULL,
           g_lastRecordReplayEvtUs,  KIOU_ROUTE_REPLAY_OPM,    false },
-        { g_onlineModeCache,       KIOU_BR_BINPATCH_ONLINE_OPM_CALLABLE() != NULL,
+        { g_onlineModeCache,       KIOU_BR_CHINLAN_ONLINE_OPM_CALLABLE() != NULL,
           g_lastOnlineEvtUs,        KIOU_ROUTE_ONLINE_OPM,
           !g_onlineServerSendAllowed },
     };
@@ -615,8 +615,8 @@ static kiou_route_t inject_pickRoute(void) {
 
     // No OPM cache live — fall back to headless engine writes so the
     // bridge can at least drive the SFEN forward. GameCtrl stays JB-only:
-    // binpatch does not publish a bypass entry for it.
-    if (g_adapterCache && KIOU_BR_BINPATCH_ADAPTER_CALLABLE()) {
+    // chinlan does not publish a bypass entry for it.
+    if (g_adapterCache && KIOU_BR_CHINLAN_ADAPTER_CALLABLE()) {
         return KIOU_ROUTE_ADAPTER;
     }
     if (g_gameCtrlCache && orig_GameCtrlTryMakeMove) return KIOU_ROUTE_GAMECTRL;
@@ -783,17 +783,17 @@ static void inject_runOnMain(const char *usi, uint32_t move,
             /* Locally apply the same move so the headless engine and */  \
             /* GameStateStore advance — disasm confirms OPM alone won't */\
             /* do it (it forwards to the server stream and waits for */   \
-            /* HandleMoveResult). On binpatch orig_AdapterTryMakeMoveOut */\
+            /* HandleMoveResult). On chinlan orig_AdapterTryMakeMoveOut */\
             /* stays NULL by design (see Hook_MatchModeObserve.m's */     \
-            /* binpatch installer) and the cave-bypass entry has to be */ \
-            /* used instead. KIOU_BR_BINPATCH_ADAPTER_CALLABLE() returns */ \
-            /* orig_* on JB and g_inject_entry[ADAPTER] on binpatch. */   \
+            /* chinlan installer) and the cave-bypass entry has to be */ \
+            /* used instead. KIOU_BR_CHINLAN_ADAPTER_CALLABLE() returns */ \
+            /* orig_* on JB and g_inject_entry[ADAPTER] on chinlan. */   \
             /* Failures here are benign (the move might already have */   \
             /* been applied by an earlier HandleMoveResult) — we keep */  \
             /* ok=true because the OPM call already succeeded. */         \
             {                                                             \
                 Adapter_TryMakeMove_Out_t adapterFn =                     \
-                    KIOU_BR_BINPATCH_ADAPTER_CALLABLE();                  \
+                    KIOU_BR_CHINLAN_ADAPTER_CALLABLE();                  \
                 if (g_adapterCache && adapterFn) {                        \
                     uint32_t outMv = 0;                                   \
                     bool tryOk = adapterFn(                               \
@@ -877,32 +877,32 @@ static void inject_runOnMain(const char *usi, uint32_t move,
 
     switch (route) {
         case KIOU_ROUTE_AI_OPM:
-            CALL_OPM(g_aiMatchModeCache, KIOU_BR_BINPATCH_AI_OPM_CALLABLE(),
+            CALL_OPM(g_aiMatchModeCache, KIOU_BR_CHINLAN_AI_OPM_CALLABLE(),
                      OFF_AI_STATESTORE, g_aiLocalPlayer);
             break;
         case KIOU_ROUTE_CPUSTREAM_OPM:
-            CALL_OPM(g_cpuStreamModeCache, KIOU_BR_BINPATCH_CPUSTREAM_OPM_CALLABLE(),
+            CALL_OPM(g_cpuStreamModeCache, KIOU_BR_CHINLAN_CPUSTREAM_OPM_CALLABLE(),
                      OFF_CPUSTREAM_STATESTORE, g_cpuStreamLocalPlayer);
             break;
         case KIOU_ROUTE_LOCAL_OPM:
             // LocalPvP has no fixed seat — pass -1 to suppress the
             // NotifyPieceMoved call (we can't tell which side this
             // injection represents).
-            CALL_OPM(g_localPvPModeCache, KIOU_BR_BINPATCH_LOCAL_OPM_CALLABLE(),
+            CALL_OPM(g_localPvPModeCache, KIOU_BR_CHINLAN_LOCAL_OPM_CALLABLE(),
                      OFF_LOCAL_STATESTORE, -1);
             break;
         case KIOU_ROUTE_ONLINE_OPM:
-            CALL_OPM(g_onlineModeCache, KIOU_BR_BINPATCH_ONLINE_OPM_CALLABLE(),
+            CALL_OPM(g_onlineModeCache, KIOU_BR_CHINLAN_ONLINE_OPM_CALLABLE(),
                      OFF_ONLINE_STATESTORE, g_onlineLocalPlayer);
             break;
         case KIOU_ROUTE_REPLAY_OPM:
             // RecordReplay also has no fixed seat — same treatment.
-            CALL_OPM(g_recordReplayModeCache, KIOU_BR_BINPATCH_REPLAY_OPM_CALLABLE(),
+            CALL_OPM(g_recordReplayModeCache, KIOU_BR_CHINLAN_REPLAY_OPM_CALLABLE(),
                      OFF_REPLAY_STATESTORE, -1);
             break;
         case KIOU_ROUTE_ADAPTER: {
             void *self = g_adapterCache;
-            Adapter_TryMakeMove_Out_t fn = KIOU_BR_BINPATCH_ADAPTER_CALLABLE();
+            Adapter_TryMakeMove_Out_t fn = KIOU_BR_CHINLAN_ADAPTER_CALLABLE();
             uint32_t outMv = 0;
             if (!self || !fn) {
                 err = "no_session";

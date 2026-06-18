@@ -1,8 +1,8 @@
 #import "Internal.h"
 
-#if KIOU_BINPATCH
-// The meta sidecar is dropped on the binpatch flavour
-// (docs/plans/kiou_engine_bridge_binpatch.md § 2). Provide no-op stubs so
+#if KIOU_CHINLAN
+// The meta sidecar is dropped on the chinlan flavour
+// (docs/plans/kiou_engine_bridge_chinlan.md § 2). Provide no-op stubs so
 // the Hook_*.m / Tweak.m call sites can compile without an #if guard at
 // every reference.
 void MetaSetMatchConfig(void *cfg) { (void)cfg; }
@@ -555,4 +555,4 @@ void MetaSetMatchConfig(void *cfg) {
     }
 }
 
-#endif  // !KIOU_BINPATCH
+#endif  // !KIOU_CHINLAN

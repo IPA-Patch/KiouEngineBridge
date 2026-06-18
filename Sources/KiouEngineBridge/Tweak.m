@@ -52,19 +52,19 @@ static void installUnityHooks(void) {
               @"UnityFramework base=0x%lx (%s)",
               (unsigned long)unityBase, unityName ? unityName : "?"]);
 
-#if KIOU_BINPATCH
-    // On the binpatch build, every observation hook is wired by the static
+#if KIOU_CHINLAN
+    // On the chinlan build, every observation hook is wired by the static
     // cave at app launch (recipes/kiouenginebridge.py); all we need at
     // runtime is to publish the dispatcher pointer into the __DATA,__bss
     // SLOT so the cave's ADRP+LDR resolves to a real function pointer.
     // Inject_Move is still a symbol-only resolver (no MSHookFunction) so it
     // runs in both flavours. USI engine init must come after Inject_Move so
     // inject_apply is wired before the WS handler can reach it.
-    KEBBridgeBinpatchPublish();
+    KEBBridgeChinlanPublish();
     InstallLowLevelObserveHook(unityBase);  // symbol pointer resolves only
-    // No-op on binpatch (see Hook_MatchModeObserve.m's binpatch installer).
+    // No-op on chinlan (see Hook_MatchModeObserve.m's chinlan installer).
     // orig_*OnPlayerMoveAsync is intentionally left NULL so the route picker
-    // falls through to KIOU_BR_BINPATCH_ORIG_OR_BYPASS, which returns the
+    // falls through to KIOU_BR_CHINLAN_ORIG_OR_BYPASS, which returns the
     // per-site cave-bypass entry (cave + KIOU_BR_CAVE_BYPASS_OFFSET). The
     // inject path then calls that bypass entry — calling orig_* directly
     // would re-enter the dispatcher cave because unityBase+RVA is the
@@ -119,9 +119,9 @@ __attribute__((constructor)) static void init(void) {
 
     // Build identity so a stray log file can be matched back to the exact
     // dylib that wrote it. Flavor distinguishes JB (libsubstrate) / jailed
-    // (Dobby-static) / binpatch (static cave + SLOT dispatcher).
-#if KIOU_BINPATCH
-    static const char *const kBuildFlavor = "binpatch";
+    // (Dobby-static) / chinlan (static cave + SLOT dispatcher).
+#if KIOU_CHINLAN
+    static const char *const kBuildFlavor = "chinlan";
 #elif IPA_JAILED
     static const char *const kBuildFlavor = "jailed";
 #else

@@ -1,11 +1,11 @@
-#if KIOU_BINPATCH
+#if KIOU_CHINLAN
 
 #import "Internal.h"
 
 // ===========================================================================
-// BinpatchDispatcher — binpatch flavour only.
+// ChinlanDispatcher — chinlan flavour only.
 //
-// On the binpatch build every observation site is redirected by a static
+// On the chinlan build every observation site is redirected by a static
 // code cave to this single dispatcher. The cave preserves X0..X7, loads
 // the function pointer from the reserved __DATA,__bss slot inside
 // UnityFramework at `unityBase + KIOU_BR_HOOK_SLOT_RVA`, calls the
@@ -21,7 +21,7 @@
 //      `recipes/kiouenginebridge.py`'s ``HOOK_SLOT_RVA`` /
 //      ``_build_bridge_cave_payload``).
 //
-//   2. ``KEBBridgeBinpatchPublish`` below stores `&dispatch_one`
+//   2. ``KEBBridgeChinlanPublish`` below stores `&dispatch_one`
 //      into that same address. The slot lives in UnityFramework's
 //      __DATA,__bss — NOT in this dylib — so the publish path needs the
 //      live UnityFramework base captured in ``g_unityBase``. A previous
@@ -138,18 +138,18 @@ static void dispatch_one(void *x0, void *x1, void *x2, void *x3, void *x4,
         // the process alive instead of falling off into orig with an
         // unexpected state.
         IPALog([NSString stringWithFormat:
-                  @"[BINPATCH] unknown hook_id=%u self=%p",
+                  @"[CHINLAN] unknown hook_id=%u self=%p",
                   (unsigned)hook_id, x0]);
         break;
     }
 }
 
-void KEBBridgeBinpatchPublish(void) {
+void KEBBridgeChinlanPublish(void) {
     if (g_unityBase == 0) {
         // Tweak.m always sets g_unityBase before reaching us. Guarding
         // anyway so a mis-ordered installer call surfaces in the log
         // instead of crashing on the deref below.
-        IPALog(@"[BINPATCH] publish skipped: g_unityBase is zero");
+        IPALog(@"[CHINLAN] publish skipped: g_unityBase is zero");
         return;
     }
     // Slot lives in UnityFramework's __DATA,__bss at the RVA the recipe
@@ -165,7 +165,7 @@ void KEBBridgeBinpatchPublish(void) {
         g_inject_entry[i] = kiou_bridge_bypass_entry_for_hook(i);
     }
     IPALog([NSString stringWithFormat:
-              @"[BINPATCH] slot=%p (unityBase+0x%lx) published "
+              @"[CHINLAN] slot=%p (unityBase+0x%lx) published "
               @"dispatcher=%p inject_entry[ai_opm]=%p inject_entry[adapter]=%p "
               @"cave_start=0x%lx cave_size=%u bypass_off=0x%x count=%u",
               (void *)slot,
@@ -179,4 +179,4 @@ void KEBBridgeBinpatchPublish(void) {
               (unsigned)KIOU_BR_HOOK__COUNT]);
 }
 
-#endif  // KIOU_BINPATCH
+#endif  // KIOU_CHINLAN
