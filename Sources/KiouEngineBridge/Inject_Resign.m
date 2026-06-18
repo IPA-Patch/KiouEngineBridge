@@ -3,22 +3,35 @@
 // ===========================================================================
 // Inject_Resign — bridge CSA's %TORYO / %KACHI submissions back to KIOU.
 //
-// CSA fires %TORYO when the connected engine resigns — meaning the local
-// KIOU side wins the match. KIOU's own surrender entry point is
-// GameOrchestrator.RequestSurrender (RVA 0x594A91C, void method, no args)
-// which kicks off the same end-of-match flow the in-game "投了" button
-// triggers.
+// CSA fires %TORYO when the connected engine resigns.
 //
-// Because the CSA engine is "the other player" we can't selectively resign
-// the engine's seat — RequestSurrender always surrenders the LOCAL player.
-// That's fine for the most common case (CPU vs engine), but in OnlinePvP
-// with the user as black and an engine ghosting on the server side it
-// would surrender the wrong seat. Until the CSA path is exercised against
-// every match mode we accept that limitation; CSA's engine resignation in
-// VsAI maps cleanly to "the user wins by the engine's resignation," which
-// is what RequestSurrender produces if the user is the loser (it then ends
-// up with the right outcome from CSA's perspective because we swap WIN /
-// LOSE before sending the result block).
+// We call MatchController.SurrenderAsync(PlayerSide) (RVA 0x59DDD94) which
+// is the same internal path the game takes after the user taps "OK" on the
+// resign confirmation dialog. It bypasses the dialog entirely and records
+// the result as ShogiMatchResultReasonType.Resign (= 2) — correct and
+// unrelated to AFK.
+//
+//   RequestSurrender (RVA 0x594A91C)
+//     → shows "投了しますか？" dialog, then waits for human tap → NOT usable
+//
+//   ForceSurrenderByAfkAsync (RVA 0x594BD58)
+//     → executes immediately but records the reason as AFK → wrong reason
+//
+//   MatchController.SurrenderAsync(PlayerSide) (RVA 0x59DDD94)  ← we use this
+//     → executes immediately with Resign reason → correct
+//
+// MatchController is obtained from g_gameOrchestratorCache at field offset
+// 0xF0 (_matchController, as documented in dump.cs). The pointer is read
+// inside the dispatch_async block so it is always fresh.
+//
+// SurrenderAsync is a UniTask-returning async method. We call it
+// fire-and-forget (UniTask discarded); KIOU drives the match-end sequence.
+//
+// PlayerSide enum (dump.cs TypeDefIndex 19506): Black = 0, White = 1.
+//
+// Seat note: %TORYO means the CSA engine (= local KIOU player) resigns.
+// We pass the supplied playerSide directly. OnlinePvP ghosting is out of
+// scope; CSA vs-CPU maps cleanly.
 //
 // Nyugyoku declaration (%KACHI) has no first-class KIOU API in dump.cs
 // today; we log the request and let the CSA session terminate normally
@@ -26,34 +39,60 @@
 // declaration surface is reverse-engineered.
 // ===========================================================================
 
-#define RVA_GAME_ORCHESTRATOR_REQUEST_SURRENDER  0x594A91C
+// GameOrchestrator._matchController field offset (dump.cs line 1211401)
+#define GAMEORCH_MATCHCONTROLLER_OFFSET  0xF0
 
-typedef void (*GameOrchestratorRequestSurrender_t)(void *self);
-static GameOrchestratorRequestSurrender_t g_RequestSurrender = NULL;
+// MatchController.SurrenderAsync(PlayerSide player) -> UniTask
+// dump.cs line 1418887, RVA 0x59DDD94
+#define RVA_MATCHCTRL_SURRENDER_ASYNC  0x59DDD94
 
-static void resolve_request_surrender(void) {
-    if (g_RequestSurrender) return;
+// PlayerSide enum values (dump.cs TypeDefIndex 19506)
+#define PLAYER_SIDE_BLACK  0
+#define PLAYER_SIDE_WHITE  1
+
+// SurrenderAsync(PlayerSide) — PlayerSide is an int-backed enum, passed as
+// a plain int32 in the second argument register (x1 on arm64).
+typedef UniTaskRet (*MatchControllerSurrenderAsync_t)(void *self, int32_t player);
+static MatchControllerSurrenderAsync_t g_SurrenderAsync = NULL;
+
+static void resolve_surrender_async(void) {
+    if (g_SurrenderAsync) return;
     if (g_unityBase == 0) return;
-    g_RequestSurrender = (GameOrchestratorRequestSurrender_t)
-        (void *)(g_unityBase + RVA_GAME_ORCHESTRATOR_REQUEST_SURRENDER);
+    g_SurrenderAsync = (MatchControllerSurrenderAsync_t)
+        (void *)(g_unityBase + RVA_MATCHCTRL_SURRENDER_ASYNC);
 }
 
 void InjectResign(int32_t playerSide) {
-    resolve_request_surrender();
-    void *orch = g_gameOrchestratorCache;
-    if (!orch || !g_RequestSurrender) {
+    resolve_surrender_async();
+    if (!g_SurrenderAsync) {
         IPALog([NSString stringWithFormat:
-                  @"[RESIGN] cannot resign player=%d: orch=%p fn=%p",
-                  (int)playerSide, orch, g_RequestSurrender]);
+                  @"[RESIGN] cannot resign player=%d: fn not resolved "
+                  @"(unityBase=0x%lx)",
+                  (int)playerSide, (unsigned long)g_unityBase]);
         return;
     }
     IPALog([NSString stringWithFormat:
-              @"[RESIGN] invoking GameOrchestrator.RequestSurrender "
-              @"(player=%d, orch=%p)",
-              (int)playerSide, orch]);
+              @"[RESIGN] queueing MatchController.SurrenderAsync(player=%d)",
+              (int)playerSide]);
     dispatch_async(dispatch_get_main_queue(), ^{
+        // Read MatchController fresh — orch pointer may change between matches.
+        void *orch = g_gameOrchestratorCache;
+        if (!orch) {
+            IPALog(@"[RESIGN] orch nil on main thread — resign dropped");
+            return;
+        }
+        void *matchCtrl = *(void **)((uint8_t *)orch + GAMEORCH_MATCHCONTROLLER_OFFSET);
+        if (!matchCtrl) {
+            IPALog(@"[RESIGN] _matchController nil — resign dropped");
+            return;
+        }
+        IPALog([NSString stringWithFormat:
+                  @"[RESIGN] invoking MatchController.SurrenderAsync "
+                  @"(player=%d, matchCtrl=%p)",
+                  (int)playerSide, matchCtrl]);
         @try {
-            g_RequestSurrender(orch);
+            // UniTask は fire-and-forget で捨てる。
+            (void)g_SurrenderAsync(matchCtrl, playerSide);
         } @catch (NSException *e) {
             IPALog([NSString stringWithFormat:
                       @"[RESIGN] threw: %@", e]);
