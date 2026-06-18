@@ -38,42 +38,6 @@ float   KEBRematchStep2Sec(void);
 void    KEBSetRematchStep2Sec(float sec);
 
 // ---------------------------------------------------------------------------
-// Auto-start
-// ---------------------------------------------------------------------------
-
-// Auto-start match kind — encodes both match type and its parameter in one
-// value. KEBAutoStartKind_None (= -1) means "do not auto-start"; any other
-// value means auto-start with that match type on the first
-// GameOrchestrator.ActivateAsync after launch.
-//
-//   KEBAutoStartKind_None         = -1  do not auto-start              ← default
-//   KEBAutoStartKind_CpuEasy      =  0  CPU Easy   (CPUStrengthType=2)
-//   KEBAutoStartKind_CpuNormal    =  1  CPU Normal (CPUStrengthType=3)
-//   KEBAutoStartKind_CpuHard      =  2  CPU Hard   (CPUStrengthType=4)
-//   KEBAutoStartKind_RankBeginner =  3  Rank Beginner (RankMatchRuleType=2)
-//   KEBAutoStartKind_RankVip      =  4  Rank VIP      (RankMatchRuleType=3)
-//   KEBAutoStartKind_RankFischer  =  5  Rank Fischer  (RankMatchRuleType=4)
-//   KEBAutoStartKind_RankBullet   =  6  Rank 3min Bullet (RankMatchRuleType=5)
-//
-typedef NS_ENUM(int32_t, KEBAutoStartKind) {
-    KEBAutoStartKind_None         = -1,
-    KEBAutoStartKind_CpuEasy      =  0,
-    KEBAutoStartKind_CpuNormal    =  1,
-    KEBAutoStartKind_CpuHard      =  2,
-    KEBAutoStartKind_RankBeginner =  3,
-    KEBAutoStartKind_RankVip      =  4,
-    KEBAutoStartKind_RankFischer  =  5,
-    KEBAutoStartKind_RankBullet   =  6,
-};
-
-// Default: KEBAutoStartKind_None (no auto-start)
-KEBAutoStartKind KEBAutoStartKind_(void);
-void             KEBSetAutoStartKind(KEBAutoStartKind kind);
-
-// Convenience: returns true when KEBAutoStartKind_() != KEBAutoStartKind_None.
-bool             KEBAutoStartEnabled(void);
-
-// ---------------------------------------------------------------------------
 // CSA server
 // ---------------------------------------------------------------------------
 

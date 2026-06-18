@@ -15,7 +15,6 @@
 static NSString * const kKeyAutoRematch       = @"kiou_bridge.auto_rematch";
 static NSString * const kKeyRematchStep1      = @"kiou_bridge.rematch_step1_sec";
 static NSString * const kKeyRematchStep2      = @"kiou_bridge.rematch_step2_sec";
-static NSString * const kKeyAutoStartKind     = @"kiou_bridge.auto_start_kind";
 static NSString * const kKeyCsaPort           = @"kiou_bridge.csa_port";
 
 // ---------------------------------------------------------------------------
@@ -66,32 +65,6 @@ void KEBSetRematchStep2Sec(float sec) {
     [d setFloat:clamped forKey:kKeyRematchStep2];
     [d synchronize];
     IPALog([NSString stringWithFormat:@"[SETTINGS] rematch_step2=%.1fs", clamped]);
-}
-
-// ---------------------------------------------------------------------------
-// Auto-start kind
-// ---------------------------------------------------------------------------
-
-KEBAutoStartKind KEBAutoStartKind_(void) {
-    NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
-    id v = [d objectForKey:kKeyAutoStartKind];
-    if (!v) return KEBAutoStartKind_None;
-    int32_t val = [v intValue];
-    if (val < KEBAutoStartKind_None || val > KEBAutoStartKind_RankBullet) {
-        return KEBAutoStartKind_None;
-    }
-    return (KEBAutoStartKind)val;
-}
-
-void KEBSetAutoStartKind(KEBAutoStartKind kind) {
-    NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
-    [d setInteger:(NSInteger)kind forKey:kKeyAutoStartKind];
-    [d synchronize];
-    IPALog([NSString stringWithFormat:@"[SETTINGS] auto_start_kind=%d", (int)kind]);
-}
-
-bool KEBAutoStartEnabled(void) {
-    return KEBAutoStartKind_() != KEBAutoStartKind_None;
 }
 
 // ---------------------------------------------------------------------------

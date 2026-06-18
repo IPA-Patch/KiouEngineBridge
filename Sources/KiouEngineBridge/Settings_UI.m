@@ -19,15 +19,17 @@
 // ===========================================================================
 
 #define KEB_SECTION_MATCH   0
-#define KEB_SECTION_SERVER  1
-#define KEB_SECTION_ABOUT   2
-#define KEB_SECTION_COUNT   3
+#define KEB_SECTION_DELAY   1
+#define KEB_SECTION_SERVER  2
+#define KEB_SECTION_ABOUT   3
+#define KEB_SECTION_COUNT   4
 
-#define KEB_ROW_AUTO_REMATCH    0
-#define KEB_ROW_AUTO_START_KIND 1
-#define KEB_ROW_REMATCH_STEP1   2
-#define KEB_ROW_REMATCH_STEP2   3
-#define KEB_MATCH_ROW_COUNT     4
+#define KEB_ROW_AUTO_REMATCH 0
+#define KEB_MATCH_ROW_COUNT  1
+
+#define KEB_ROW_REMATCH_STEP1 0
+#define KEB_ROW_REMATCH_STEP2 1
+#define KEB_DELAY_ROW_COUNT   2
 
 #define KEB_ROW_CSA_PORT      0
 #define KEB_SERVER_ROW_COUNT  1
@@ -42,20 +44,6 @@ static NSString *const kAboutAuthorURL = @"https://x.com/tkgling";
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-static NSString *kebKindLabel(KEBAutoStartKind kind) {
-    switch (kind) {
-        case KEBAutoStartKind_None:         return @"None";
-        case KEBAutoStartKind_CpuEasy:      return @"CPU Easy";
-        case KEBAutoStartKind_CpuNormal:    return @"CPU Normal";
-        case KEBAutoStartKind_CpuHard:      return @"CPU Hard";
-        case KEBAutoStartKind_RankBeginner: return @"Rank Beginner";
-        case KEBAutoStartKind_RankVip:      return @"Rank VIP";
-        case KEBAutoStartKind_RankFischer:  return @"Rank Fischer";
-        case KEBAutoStartKind_RankBullet:   return @"Rank Bullet 3min";
-        default: return @"Unknown";
-    }
-}
 
 static UIWindow *kebKeyWindow(void) {
     for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
@@ -73,66 +61,6 @@ static UIViewController *kebTopmostViewController(void) {
     while (vc.presentedViewController) vc = vc.presentedViewController;
     return vc;
 }
-
-// ---------------------------------------------------------------------------
-// KEBAutoStartKindViewController — drill-down to pick one of 8 options
-// ---------------------------------------------------------------------------
-
-@interface KEBAutoStartKindViewController : UITableViewController
-@property (nonatomic, copy) void (^onSelect)(KEBAutoStartKind kind);
-@end
-
-@implementation KEBAutoStartKindViewController
-
-static const KEBAutoStartKind kAllKinds[] = {
-    KEBAutoStartKind_None,
-    KEBAutoStartKind_CpuEasy,
-    KEBAutoStartKind_CpuNormal,
-    KEBAutoStartKind_CpuHard,
-    KEBAutoStartKind_RankBeginner,
-    KEBAutoStartKind_RankVip,
-    KEBAutoStartKind_RankFischer,
-    KEBAutoStartKind_RankBullet,
-};
-static const NSInteger kKindCount = 8;
-
-- (instancetype)init {
-    self = [super initWithStyle:UITableViewStyleInsetGrouped];
-    self.title = @"Auto Start";
-    return self;
-}
-
-- (NSInteger)numberOfSectionsInTableView:(UITableView *)tv { return 1; }
-
-- (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)s {
-    return kKindCount;
-}
-
-- (UITableViewCell *)tableView:(UITableView *)tv
-         cellForRowAtIndexPath:(NSIndexPath *)ip {
-    UITableViewCell *cell = [tv dequeueReusableCellWithIdentifier:@"kind"];
-    if (!cell) {
-        cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault
-                                      reuseIdentifier:@"kind"];
-    }
-    KEBAutoStartKind k = kAllKinds[ip.row];
-    cell.textLabel.text = kebKindLabel(k);
-    cell.accessoryType = (k == KEBAutoStartKind_())
-        ? UITableViewCellAccessoryCheckmark
-        : UITableViewCellAccessoryNone;
-    return cell;
-}
-
-- (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
-    [tv deselectRowAtIndexPath:ip animated:YES];
-    KEBAutoStartKind selected = kAllKinds[ip.row];
-    KEBSetAutoStartKind(selected);
-    [tv reloadData];
-    if (self.onSelect) self.onSelect(selected);
-    [self.navigationController popViewControllerAnimated:YES];
-}
-
-@end
 
 // ---------------------------------------------------------------------------
 // KEBSettingsViewController
@@ -180,6 +108,7 @@ static const NSInteger kKindCount = 8;
 - (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)section {
     switch (section) {
         case KEB_SECTION_MATCH:  return KEB_MATCH_ROW_COUNT;
+        case KEB_SECTION_DELAY:  return KEB_DELAY_ROW_COUNT;
         case KEB_SECTION_SERVER: return KEB_SERVER_ROW_COUNT;
         case KEB_SECTION_ABOUT:  return KEB_ABOUT_ROW_COUNT;
         default: return 0;
@@ -189,6 +118,7 @@ static const NSInteger kKindCount = 8;
 - (NSString *)tableView:(UITableView *)tv titleForHeaderInSection:(NSInteger)section {
     switch (section) {
         case KEB_SECTION_MATCH:  return @"Match";
+        case KEB_SECTION_DELAY:  return @"Delay";
         case KEB_SECTION_SERVER: return @"CSA Server";
         case KEB_SECTION_ABOUT:  return @"About";
         default: return nil;
@@ -218,24 +148,15 @@ static const NSInteger kKindCount = 8;
                                           value:KEBAutoRematchEnabled()
                                          action:@selector(autoRematchChanged:)];
             }
-            if (ip.row == KEB_ROW_AUTO_START_KIND) {
-                UITableViewCell *cell =
-                    [tv dequeueReusableCellWithIdentifier:@"kind_nav"];
-                if (!cell) {
-                    cell = [[UITableViewCell alloc]
-                                initWithStyle:UITableViewCellStyleValue1
-                               reuseIdentifier:@"kind_nav"];
-                    cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-                    cell.detailTextLabel.textColor = UIColor.secondaryLabelColor;
-                }
-                cell.textLabel.text = @"Auto Start";
-                cell.detailTextLabel.text = kebKindLabel(KEBAutoStartKind_());
-                return cell;
-            }
+            break;
+        }
+
+        // -- Delay ---------------------------------------------------------
+        case KEB_SECTION_DELAY: {
             if (ip.row == KEB_ROW_REMATCH_STEP1) {
                 UITableViewCell *cell =
                     [self stepperCellWithReuseId:@"step1"
-                                          title:@"Close Result Delay"
+                                          title:@"Close Result"
                                           value:KEBRematchStep1Sec()
                                            unit:@"s"
                                             min:0.0 max:30.0 step:0.5
@@ -246,7 +167,7 @@ static const NSInteger kKindCount = 8;
             if (ip.row == KEB_ROW_REMATCH_STEP2) {
                 UITableViewCell *cell =
                     [self stepperCellWithReuseId:@"step2"
-                                          title:@"Next Match Delay"
+                                          title:@"Next Match"
                                           value:KEBRematchStep2Sec()
                                            unit:@"s"
                                             min:0.0 max:30.0 step:0.5
@@ -305,27 +226,12 @@ static const NSInteger kKindCount = 8;
 
 - (NSIndexPath *)tableView:(UITableView *)tv
   willSelectRowAtIndexPath:(NSIndexPath *)ip {
-    if (ip.section == KEB_SECTION_MATCH && ip.row == KEB_ROW_AUTO_START_KIND) return ip;
     if (ip.section == KEB_SECTION_ABOUT) return ip;
     return nil;
 }
 
 - (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
     [tv deselectRowAtIndexPath:ip animated:YES];
-    if (ip.section == KEB_SECTION_MATCH && ip.row == KEB_ROW_AUTO_START_KIND) {
-        KEBAutoStartKindViewController *vc =
-            [[KEBAutoStartKindViewController alloc] init];
-        __weak KEBSettingsViewController *weakSelf = self;
-        vc.onSelect = ^(KEBAutoStartKind kind) {
-            NSIndexPath *kindPath =
-                [NSIndexPath indexPathForRow:KEB_ROW_AUTO_START_KIND
-                                   inSection:KEB_SECTION_MATCH];
-            [weakSelf.tableView reloadRowsAtIndexPaths:@[kindPath]
-                                      withRowAnimation:UITableViewRowAnimationNone];
-        };
-        [self.navigationController pushViewController:vc animated:YES];
-        return;
-    }
     if (ip.section == KEB_SECTION_ABOUT) {
         NSString *str = (ip.row == KEB_ROW_ABOUT_REPO) ? kAboutRepoURL : kAboutAuthorURL;
         NSURL *url = [NSURL URLWithString:str];
