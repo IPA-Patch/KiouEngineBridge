@@ -7,6 +7,11 @@
 #define RVA_GAMESTATESTORE_SET_WHITE_PLAYER_INFO 0x5A2CBA0
 #define RVA_GAMESTATESTORE_NOTIFY_PIECE_MOVED    0x5A2CD24
 #define RVA_GAMESTATESTORE_NOTIFY_STATE_SYNCED   0x5A2CE64
+// SetCurrentPosition(Position) — assigns _currentPosition.Value, which is the
+// ReactiveProperty MoveCountPresenter actually subscribes to. NotifyStateSynced
+// only fires the _onStateSynced Subject, so for the move-count UI to update we
+// must drive SetCurrentPosition on every committed move.
+#define RVA_GAMESTATESTORE_SET_CURRENT_POSITION  0x5A2C06C
 
 // ---------------------------------------------------------------------------
 // Trampoline pointer types.
@@ -15,9 +20,11 @@ typedef void (*SetPlayerInfo_t)(void *self, void *playerInfo);
 typedef void (*GState_NotifyPieceMoved_t)(void *self, uint32_t move,
                                           int32_t playerSide);
 typedef void (*GState_NotifyStateSynced_t)(void *self, void *position);
+typedef void (*GState_SetCurrentPosition_t)(void *self, void *position);
 
 static void *g_lastGameStateStore = NULL;
-static GState_NotifyStateSynced_t g_GameStateStore_NotifyStateSynced = NULL;
+static GState_NotifyStateSynced_t  g_GameStateStore_NotifyStateSynced  = NULL;
+static GState_SetCurrentPosition_t g_GameStateStore_SetCurrentPosition = NULL;
 
 void HookGStateRememberStore(void *self) {
     if (self) g_lastGameStateStore = self;
@@ -26,12 +33,12 @@ void HookGStateRememberStore(void *self) {
 void ResolveGameStateStoreNotifyStateSynced(uintptr_t unityBase) {
     g_GameStateStore_NotifyStateSynced =
         (GState_NotifyStateSynced_t)(void *)(unityBase + RVA_GAMESTATESTORE_NOTIFY_STATE_SYNCED);
+    g_GameStateStore_SetCurrentPosition =
+        (GState_SetCurrentPosition_t)(void *)(unityBase + RVA_GAMESTATESTORE_SET_CURRENT_POSITION);
 }
 
 void HookGStateNotifyStateSyncedForCurrentPosition(void) {
-    if (!g_lastGameStateStore || !g_GameStateStore_NotifyStateSynced || !g_gameCtrlCache) {
-        return;
-    }
+    if (!g_lastGameStateStore || !g_gameCtrlCache) return;
     void *list = readPtr(g_gameCtrlCache, 0x10);
     if (!list) return;
     void *items = readPtr(list, 0x10);
@@ -39,9 +46,17 @@ void HookGStateNotifyStateSyncedForCurrentPosition(void) {
     if (size <= 0 || size > 4096 || !ptrLooksValid(items)) return;
     void *pos = readPtr(items, 0x20 + (size - 1) * 8);
     if (!pos) return;
-    g_GameStateStore_NotifyStateSynced(g_lastGameStateStore, pos);
+    // SetCurrentPosition first so the ReactiveProperty<Position> CurrentPosition
+    // fires (this is what MoveCountPresenter listens on). NotifyStateSynced
+    // second for any other subscriber of the _onStateSynced Subject.
+    if (g_GameStateStore_SetCurrentPosition) {
+        g_GameStateStore_SetCurrentPosition(g_lastGameStateStore, pos);
+    }
+    if (g_GameStateStore_NotifyStateSynced) {
+        g_GameStateStore_NotifyStateSynced(g_lastGameStateStore, pos);
+    }
     IPALog([NSString stringWithFormat:
-              @"[GSTATE-SYNC] NotifyStateSynced store=%p pos=%p",
+              @"[GSTATE-SYNC] SetCurrent+Notify store=%p pos=%p",
               g_lastGameStateStore, pos]);
 }
 

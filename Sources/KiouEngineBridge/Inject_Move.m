@@ -48,9 +48,19 @@
 #define RVA_GAMESTATESTORE_NOTIFY_PIECE_MOVED  0x5A2CD24  // GameStateStore.NotifyPieceMoved(Move, PlayerSide)
 #define RVA_GAMESTATESTORE_NOTIFY_STATE_SYNCED 0x5A2CE64  // GameStateStore.NotifyStateSynced(Position)
 #define RVA_BOARDPRESENTER_PLAY_MOVE_ANIMATION 0x5968894  // BoardPresenter.PlayMoveAnimationAsync(Move, CT) -> UniTask
+// MatchController.TryMakeLocalMove(Move, CancellationToken) -> UniTask<bool>.
+// This is the same entry point a real on-screen tap drives — it runs the full
+// commit pipeline including SetCurrentPosition (which the move-count UI
+// listens on via the CurrentPosition ReactiveProperty). Calling OPM directly
+// and then poking GameStateStore by hand was always a half-reproduction; this
+// is the canonical one.
+#define RVA_MATCHCTRL_TRY_MAKE_LOCAL_MOVE      0x59D7908
 
 // GameOrchestrator -> BoardPresenter field offset (dump.cs:1211404).
 #define OFF_GAMEORCH_BOARD_PRESENTER 0x108
+// GameOrchestrator -> MatchController field offset (dump.cs:1211401).
+// Same offset Inject_Resign.m uses for the resign path.
+#define OFF_GAMEORCH_MATCH_CONTROLLER 0xF0
 
 // How long to wait between firing the move animation and committing the
 // underlying TryMakeMove. The animation itself runs on the order of
@@ -137,6 +147,16 @@ static GameStateStore_NotifyPieceMoved_t g_GameStateStore_NotifyPieceMoved = NUL
 // (BoardPresenter, which listens on a different subject) updates fine.
 typedef void (*GameStateStore_NotifyStateSynced_t)(void *self, void *position);
 static GameStateStore_NotifyStateSynced_t g_GameStateStore_NotifyStateSynced = NULL;
+
+// MatchController.TryMakeLocalMove(Move, CancellationToken ct) -> UniTask<bool>.
+// Fire-and-forget — the UniTask return is left to drop because the bridge
+// doesn't need the await result. KIOU drives the post-move pipeline (commit
+// to GameController, SetCurrentPosition, NotifyPieceMoved, NotifyStateSynced,
+// timer flip, etc.) from inside this call exactly like a real on-screen tap.
+typedef UniTaskRet (*MatchController_TryMakeLocalMove_t)(void *self,
+                                                           uint32_t move,
+                                                           void *ct);
+static MatchController_TryMakeLocalMove_t g_MatchController_TryMakeLocalMove = NULL;
 
 // BoardPresenter.PlayMoveAnimationAsync(Move, CancellationToken) -> UniTask.
 // We fire this BEFORE TryMakeMove so the animation runs against the
@@ -545,6 +565,7 @@ static bool inject_buildMove(const char *usi, uint32_t *outMove,
 // ---------------------------------------------------------------------------
 typedef enum {
     KIOU_ROUTE_NONE = 0,
+    KIOU_ROUTE_MATCH_CTRL,     // MatchController.TryMakeLocalMove — tap-equivalent
     KIOU_ROUTE_AI_OPM,         // AIMatchMode.OnPlayerMoveAsync (CPU games)
     KIOU_ROUTE_CPUSTREAM_OPM,  // CPUStreamMode.OnPlayerMoveAsync (server AI)
     KIOU_ROUTE_LOCAL_OPM,      // LocalPvPMode.OnPlayerMoveAsync (hot-seat)
@@ -556,6 +577,7 @@ typedef enum {
 
 static const char *inject_routeName(kiou_route_t r) {
     switch (r) {
+        case KIOU_ROUTE_MATCH_CTRL:    return "match_ctrl";
         case KIOU_ROUTE_AI_OPM:        return "ai_opm";
         case KIOU_ROUTE_CPUSTREAM_OPM: return "cpustream_opm";
         case KIOU_ROUTE_LOCAL_OPM:     return "local_opm";
@@ -565,6 +587,17 @@ static const char *inject_routeName(kiou_route_t r) {
         case KIOU_ROUTE_GAMECTRL:      return "gamectrl";
         default:                       return "none";
     }
+}
+
+// Resolve the live MatchController instance off the GameOrchestrator cache.
+// Returns NULL when the orchestrator hasn't been captured yet, or when its
+// _matchController field is still unset.
+static void *inject_matchControllerFromOrch(void) {
+    void *orch = g_gameOrchestratorCache;
+    if (!orch) return NULL;
+    void *mc = readPtr(orch, OFF_GAMEORCH_MATCH_CONTROLLER);
+    if (!ptrLooksValid(mc)) return NULL;
+    return mc;
 }
 
 // Route selection — purely cache-based. If we have ever seen the relevant
@@ -583,6 +616,15 @@ static const char *inject_routeName(kiou_route_t r) {
 // trampolines from the fixed cave geometry, so chinlan injection can call
 // OPM / Adapter without re-entering the dispatcher cave.
 static kiou_route_t inject_pickRoute(void) {
+    // Preferred path: MatchController.TryMakeLocalMove — same entry the UI
+    // drives on a real tap. Picked when both the GameOrchestrator->
+    // MatchController link and the resolved trampoline are ready. Falls
+    // through to the per-mode OPM routes if either is missing.
+    if (g_MatchController_TryMakeLocalMove
+        && inject_matchControllerFromOrch() != NULL) {
+        return KIOU_ROUTE_MATCH_CTRL;
+    }
+
     // Pick the mode whose OPM observation timestamp is the newest, treating
     // "never observed" (ts == 0) as infinitely old. The actual route call
     // only requires a live cached receiver; on chinlan the callable can be
@@ -876,6 +918,26 @@ static void inject_runOnMain(const char *usi, uint32_t move,
         } while (0)
 
     switch (route) {
+        case KIOU_ROUTE_MATCH_CTRL: {
+            void *mc = inject_matchControllerFromOrch();
+            if (!mc || !g_MatchController_TryMakeLocalMove) {
+                err = "no_match_ctrl";
+                break;
+            }
+            IPALog([NSString stringWithFormat:
+                      @"[INJECT-DBG] route=match_ctrl mc=%p fn=%p move=0x%x",
+                      mc,
+                      (void *)g_MatchController_TryMakeLocalMove,
+                      (unsigned)move]);
+            // UniTask return value is intentionally discarded — KIOU drives
+            // the post-move pipeline (commit → SetCurrentPosition →
+            // NotifyPieceMoved/StateSynced → timer flip) from inside the
+            // call, exactly like a real on-screen tap.
+            (void)g_MatchController_TryMakeLocalMove(mc, move, NULL);
+            ok = true;
+            executed = move;
+            break;
+        }
         case KIOU_ROUTE_AI_OPM:
             CALL_OPM(g_aiMatchModeCache, KIOU_BR_CHINLAN_AI_OPM_CALLABLE(),
                      OFF_AI_STATESTORE, g_aiLocalPlayer);
@@ -1220,6 +1282,9 @@ void InstallInjectHook(uintptr_t unityBase) {
     g_BoardPresenter_PlayMoveAnimationAsync =
         (BoardPresenter_PlayMoveAnimationAsync_t)(void *)
         (unityBase + RVA_BOARDPRESENTER_PLAY_MOVE_ANIMATION);
+    g_MatchController_TryMakeLocalMove =
+        (MatchController_TryMakeLocalMove_t)(void *)
+        (unityBase + RVA_MATCHCTRL_TRY_MAKE_LOCAL_MOVE);
 
     // g_onlineServerSendAllowed is now a compile-time `true` — the env
     // var + flag-file gate was removed when online auto-play was opted
@@ -1231,7 +1296,8 @@ void InstallInjectHook(uintptr_t unityBase) {
               @"[INJECT] installed: create@0x%lx createDrop@0x%lx "
               @"getPiece@0x%lx getPieceType@0x%lx fromSFEN@0x%lx "
               @"notifyPieceMoved@0x%lx notifyStateSynced@0x%lx "
-              @"playMoveAnim@0x%lx onlineServerSendGate=%d",
+              @"playMoveAnim@0x%lx tryMakeLocalMove@0x%lx "
+              @"onlineServerSendGate=%d",
               (unsigned long)(unityBase + RVA_PSC_MOVE_CREATE),
               (unsigned long)(unityBase + RVA_PSC_MOVE_CREATE_DROP),
               (unsigned long)(unityBase + RVA_POSITION_GET_PIECE),
@@ -1240,5 +1306,6 @@ void InstallInjectHook(uintptr_t unityBase) {
               (unsigned long)(unityBase + RVA_GAMESTATESTORE_NOTIFY_PIECE_MOVED),
               (unsigned long)(unityBase + RVA_GAMESTATESTORE_NOTIFY_STATE_SYNCED),
               (unsigned long)(unityBase + RVA_BOARDPRESENTER_PLAY_MOVE_ANIMATION),
+              (unsigned long)(unityBase + RVA_MATCHCTRL_TRY_MAKE_LOCAL_MOVE),
               (int)g_onlineServerSendAllowed]);
 }

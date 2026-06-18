@@ -241,11 +241,8 @@ bool HookAdapterTryMakeMoveOut(void *self, SfMove move, void *outMove) {
                   selfCap, usi ?: @"", describeMoveBits((SfMove)mv_copy),
                   sfen ?: @""]);
 
-        // CPUStream の自然経路（特に相手側の通常進行）では
-        // NotifyPieceMoved は飛ぶが NotifyStateSynced が飛ばず、
-        // MoveCountPresenter の表示更新が止まるケースがある。
-        // 最新 Position を明示的に同期して UI を進める。
-        HookGStateNotifyStateSyncedForCurrentPosition();
+        // Move observation is handled by Hook_GameStateStoreObserve.m's
+        // NotifyPieceMoved hook, which covers both sides. Nothing to do here.
     });
 
     return ok;
