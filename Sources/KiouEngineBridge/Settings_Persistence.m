@@ -68,6 +68,26 @@ void KEBSetRematchStep2Sec(float sec) {
 }
 
 // ---------------------------------------------------------------------------
+// Resign
+// ---------------------------------------------------------------------------
+
+static NSString * const kKeyResignSkipDialog = @"kiou_bridge.resign_skip_dialog";
+
+bool KEBResignSkipDialog(void) {
+    NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+    id v = [d objectForKey:kKeyResignSkipDialog];
+    return v ? [v boolValue] : true;
+}
+
+void KEBSetResignSkipDialog(bool skip) {
+    NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+    [d setBool:skip forKey:kKeyResignSkipDialog];
+    [d synchronize];
+    IPALog([NSString stringWithFormat:@"[SETTINGS] resign_skip_dialog=%s",
+              skip ? "true" : "false"]);
+}
+
+// ---------------------------------------------------------------------------
 // CSA server port
 // ---------------------------------------------------------------------------
 

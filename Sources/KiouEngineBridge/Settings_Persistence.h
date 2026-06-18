@@ -38,6 +38,16 @@ float   KEBRematchStep2Sec(void);
 void    KEBSetRematchStep2Sec(float sec);
 
 // ---------------------------------------------------------------------------
+// Resign
+// ---------------------------------------------------------------------------
+
+// Whether %TORYO skips the "投了しますか？" confirmation dialog.
+// true  → SurrenderAsync (immediate, no dialog)   ← default
+// false → RequestSurrender (shows confirmation dialog)
+bool    KEBResignSkipDialog(void);
+void    KEBSetResignSkipDialog(bool skip);
+
+// ---------------------------------------------------------------------------
 // CSA server
 // ---------------------------------------------------------------------------
 

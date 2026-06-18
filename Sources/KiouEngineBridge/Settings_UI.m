@@ -24,8 +24,9 @@
 #define KEB_SECTION_ABOUT   3
 #define KEB_SECTION_COUNT   4
 
-#define KEB_ROW_AUTO_REMATCH 0
-#define KEB_MATCH_ROW_COUNT  1
+#define KEB_ROW_AUTO_REMATCH      0
+#define KEB_ROW_RESIGN_SKIP_DIALOG 1
+#define KEB_MATCH_ROW_COUNT        2
 
 #define KEB_ROW_REMATCH_STEP1 0
 #define KEB_ROW_REMATCH_STEP2 1
@@ -147,6 +148,12 @@ static UIViewController *kebTopmostViewController(void) {
                                             key:@"auto_rematch"
                                           value:KEBAutoRematchEnabled()
                                          action:@selector(autoRematchChanged:)];
+            }
+            if (ip.row == KEB_ROW_RESIGN_SKIP_DIALOG) {
+                return [self toggleCellWithTitle:@"Skip Resign Dialog"
+                                            key:@"resign_skip_dialog"
+                                          value:KEBResignSkipDialog()
+                                         action:@selector(resignSkipDialogChanged:)];
             }
             break;
         }
@@ -305,6 +312,10 @@ static UIViewController *kebTopmostViewController(void) {
 
 - (void)autoRematchChanged:(UISwitch *)sw {
     KEBSetAutoRematchEnabled(sw.on);
+}
+
+- (void)resignSkipDialogChanged:(UISwitch *)sw {
+    KEBSetResignSkipDialog(sw.on);
 }
 
 // ---------------------------------------------------------------------------
