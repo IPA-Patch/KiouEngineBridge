@@ -39,12 +39,20 @@ include $(THEOS)/makefiles/common.mk
 $(TWEAK_NAME)_FILES      := $(shell find $(TWEAK_SOURCES_DIR) \
     \( -name '*.m' -o -name '*.c' -o -name '*.mm' -o -name '*.cpp' \))
 $(TWEAK_NAME)_FILES      += Sources/Chinlan/logging.m
+$(TWEAK_NAME)_FILES      += Sources/Chinlan/logserver.m
 
 BUILD_COMMIT             ?= $(shell git rev-parse --short=7 HEAD 2>/dev/null || echo unknown)
 
 $(TWEAK_NAME)_CFLAGS     := -fobjc-arc -Wno-unused-function \
                             -D$(BUILD_COMMIT_DEFINE)=\"$(BUILD_COMMIT)\" \
                             -ISources/Chinlan
+ifdef FINAL_RELEASE
+$(TWEAK_NAME)_CFLAGS     += -DFINAL_RELEASE=1
+endif
+
+# Chinlan shared utilities are always compiled in. FINAL_RELEASE only turns
+# debug-only helpers (like the localhost log stream) into empty stubs.
+$(TWEAK_NAME)_FILES      +=
 $(TWEAK_NAME)_FRAMEWORKS := Foundation
 
 # ---------------------------------------------------------------------------
