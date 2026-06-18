@@ -150,29 +150,15 @@ static GameStateStore_NotifyStateSynced_t g_GameStateStore_NotifyStateSynced = N
 
 // MatchController.TryMakeLocalMove(Move, CancellationToken) -> UniTask<bool>.
 //
-// ABI note: UniTask<bool> is a generic value struct larger than 16 bytes
-// (object source + value/token + bool), so AAPCS64 lowers the return to a
-// sret pointer in x0. That shifts every other argument down by one register:
-// the C++ entry actually looks like
-//
-//     void TryMakeLocalMove(UniTaskBool *sret,
-//                           MatchController *this,
-//                           uint32_t move,
-//                           CancellationToken ct);
-//
-// Calling it as if it returned UniTaskRet (which is two pointers, x0+x1 in
-// regs) silently corrupts the args: `self` lands in x1, `move` in x2, etc.
-// The visible symptom is "the move bits don't match — promotion is dropped
-// and the moving piece's side flips," which matches the live device repro.
-//
-// The sret buffer just has to be large enough to hold the return struct so
-// the callee can write it without scribbling on neighbouring stack. 64 bytes
-// is generously larger than the real layout and keeps the signature
-// future-proof if the UniTask<bool> layout ever changes.
-typedef void (*MatchController_TryMakeLocalMove_t)(void *sret,
-                                                    void *self,
-                                                    uint32_t move,
-                                                    void *ct);
+// Fire-and-forget: the UniTask result is discarded because KIOU itself drives
+// the post-move pipeline (commit → SetCurrentPosition → NotifyPieceMoved →
+// NotifyStateSynced → timer flip). Returning UniTaskRet (two pointers in
+// x0+x1) matches the in-tree convention used by every other UniTask-returning
+// trampoline; a sret-shaped signature was tried and broke the turn flip,
+// indicating UniTask<bool> stays at <= 16 bytes on this build.
+typedef UniTaskRet (*MatchController_TryMakeLocalMove_t)(void *self,
+                                                           uint32_t move,
+                                                           void *ct);
 static MatchController_TryMakeLocalMove_t g_MatchController_TryMakeLocalMove = NULL;
 
 // BoardPresenter.PlayMoveAnimationAsync(Move, CancellationToken) -> UniTask.
@@ -946,15 +932,11 @@ static void inject_runOnMain(const char *usi, uint32_t move,
                       mc,
                       (void *)g_MatchController_TryMakeLocalMove,
                       (unsigned)move]);
-            // sret buffer for the UniTask<bool> return. AAPCS64 lowers the
-            // generic struct return to a pointer-in-x0 because its size
-            // exceeds 16 bytes, so we have to give the callee somewhere
-            // valid to write. The value itself is thrown away — KIOU drives
+            // UniTask return value is intentionally discarded — KIOU drives
             // the post-move pipeline (commit → SetCurrentPosition →
             // NotifyPieceMoved/StateSynced → timer flip) from inside the
             // call, exactly like a real on-screen tap.
-            char sret_buf[64] __attribute__((aligned(16))) = {0};
-            g_MatchController_TryMakeLocalMove(sret_buf, mc, move, NULL);
+            (void)g_MatchController_TryMakeLocalMove(mc, move, NULL);
             ok = true;
             executed = move;
             break;
@@ -1211,7 +1193,17 @@ bool inject_apply(NSString *usi,
     // sleep INJECT_ANIMATION_DELAY_SEC between the animation kick and
     // the actual mutation. Animation runs in parallel with our wait and
     // wraps up around the time we resume.
-    if (g_BoardPresenter_PlayMoveAnimationAsync && g_gameOrchestratorCache) {
+    //
+    // Exception: the match_ctrl route invokes MatchController.TryMakeLocalMove,
+    // which is the same entry the on-screen tap drives. That entry runs the
+    // animation itself on commit, so firing it again here causes a double
+    // animation — visible on device as the move appearing in the opponent's
+    // colour and the promotion bit being dropped on the second pass. Skip
+    // the external trigger for that route and let KIOU's own pipeline do it.
+    if (route == KIOU_ROUTE_MATCH_CTRL) {
+        IPALog(@"[INJECT-DBG] PlayMoveAnimation skipped: "
+                 @"route=match_ctrl drives it internally");
+    } else if (g_BoardPresenter_PlayMoveAnimationAsync && g_gameOrchestratorCache) {
         KIOU_RUN_ON_MAIN_SYNC(^{
             void *boardPresenter = readPtr((void *)g_gameOrchestratorCache,
                                            OFF_GAMEORCH_BOARD_PRESENTER);
