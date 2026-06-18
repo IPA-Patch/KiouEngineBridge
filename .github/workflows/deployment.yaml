@@ -114,15 +114,15 @@ jobs:
           make jailed FINALPACKAGE=1
           ls -la packages/jailed/
 
-      - name: Build binpatch .dylib (iOS 18, __DATA slot table)
+      - name: Build chinlan .dylib (iOS 18, __DATA slot table)
         run: |
-          make binpatch FINALPACKAGE=1
-          ls -la packages/binpatch/
+          make chinlan FINALPACKAGE=1
+          ls -la packages/chinlan/
 
       - name: Sanity-check dylibs (no external hook engine)
         run: |
           for DYLIB in packages/jailed/KiouEngineBridge.dylib \
-                       packages/binpatch/KiouEngineBridge.dylib; do
+                       packages/chinlan/KiouEngineBridge.dylib; do
               test -f "$DYLIB"
               if command -v otool >/dev/null 2>&1; then
                   otool -L "$DYLIB"
@@ -145,8 +145,8 @@ jobs:
           DEB=$(basename packages/*.deb .deb)
           cp packages/jailed/KiouEngineBridge.dylib \
              "dist/${DEB}-jailed.dylib"
-          cp packages/binpatch/KiouEngineBridge.dylib \
-             "dist/${DEB}-binpatch.dylib"
+          cp packages/chinlan/KiouEngineBridge.dylib \
+             "dist/${DEB}-chinlan.dylib"
           ls -la dist/
 
       - name: Compute SHA256 checksums
