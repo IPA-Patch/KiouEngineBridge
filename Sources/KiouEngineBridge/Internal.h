@@ -42,6 +42,10 @@
 #define KIOU_ENGINE_BRIDGE_COMMIT "unknown"
 #endif
 
+#ifndef KIOU_ENGINE_BRIDGE_VERSION
+#define KIOU_ENGINE_BRIDGE_VERSION "0.0.0"
+#endif
+
 // ---------------------------------------------------------------------------
 // orig() invocation policy.
 //
@@ -52,22 +56,22 @@
 // side effects (appending to _positionHistory, committing the move) are the
 // reason callers invoke it.
 //
-// On the binpatch build, the static cave runs the displaced prologue
+// On the chinlan build, the static cave runs the displaced prologue
 // instruction and then branches to orig + 4 verbatim — so orig is already
 // going to execute, and a second call from the hook body would double-run
 // the target. The hook must NOT call orig in that case.
 //
 // KIOU_CALL_ORIG_VOID / KIOU_CALL_ORIG_RET hide the distinction. Hook bodies
 // uniformly write `KIOU_CALL_ORIG_VOID(orig, self, ...)` / etc.; the macro
-// expands to the original call on JB and to a no-op on binpatch.
+// expands to the original call on JB and to a no-op on chinlan.
 //
 // Use the _RET variant when the original returns a value the hook (or the
-// caller) needs. `RET_T` is the return type; on binpatch the macro returns
+// caller) needs. `RET_T` is the return type; on chinlan the macro returns
 // a value-initialised RET_T (i.e. `(RET_T){0}`), which the caller never
 // actually consumes because the cave's `B orig + 4` re-enters the real
 // function and that return value is what the caller sees.
 // ---------------------------------------------------------------------------
-#if KIOU_BINPATCH
+#if KIOU_CHINLAN
 #  define KIOU_CALL_ORIG_VOID(ORIG, ...)         ((void)0)
 #  define KIOU_CALL_ORIG_RET(RET_T, ORIG, ...)   ((RET_T){0})
 #else
@@ -87,6 +91,11 @@ void InstallMatchModeObserveHook(uintptr_t unityBase);
 void InstallInjectHook(uintptr_t unityBase);
 void InstallAfkSuppressHook(uintptr_t unityBase);
 void InstallGameOrchestratorObserveHook(uintptr_t unityBase);
+
+// Settings panel (Settings_UI.m). Installs the right-edge swipe gesture on
+// the key window; retries automatically if the window is not yet available.
+// Call once from the constructor after the log sink is initialized.
+void KEBSettingsInstall(void);
 
 // UnityFramework base address captured at install time. Exposed so the
 // match-end auto-rematch path can resolve static il2cpp methods
@@ -400,9 +409,9 @@ void MetaOnPlayerInfoSet(int32_t side, void *playerInfo);
 void InstallGameStateStoreObserveHook(uintptr_t unityBase);
 
 // ---------------------------------------------------------------------------
-// Static binpatch dispatcher (binpatch build only).
+// Static chinlan dispatcher (chinlan build only).
 //
-// In the binpatch flavour, every hook site is redirected by a code cave to a
+// In the chinlan flavour, every hook site is redirected by a code cave to a
 // single dispatcher function published into a reserved __DATA,__bss SLOT
 // inside UnityFramework. The cave preserves X0-X7, materialises the slot
 // address from `unityBase + KIOU_BR_HOOK_SLOT_RVA`, loads the function
@@ -417,7 +426,7 @@ void InstallGameStateStoreObserveHook(uintptr_t unityBase);
 //
 // Hook function bodies live unchanged in their respective Hook_*.m files —
 // the dispatcher just maps hook_id back to the right hook_<foo>(self, ...)
-// call. See docs/plans/kiou_engine_bridge_binpatch.md § 5 for the contract.
+// call. See docs/plans/kiou_engine_bridge_chinlan.md § 5 for the contract.
 // ---------------------------------------------------------------------------
 
 // RVA of the 8-byte slot the recipe reserves inside UnityFramework's
@@ -432,7 +441,7 @@ void InstallGameStateStoreObserveHook(uintptr_t unityBase);
 // reservation stays visible on both sides.
 #define KIOU_BR_INJECT_ENTRY_TABLE_RVA 0x8F90C00
 
-// Binpatch cave geometry. MUST mirror recipes/kiouenginebridge.py.
+// Chinlan cave geometry. MUST mirror recipes/kiouenginebridge.py.
 // Every cave is a fixed 84-byte payload allocated contiguously from the
 // CAVE_REGION start in declaration order. The cave layout ends with:
 //   cave+0x48: LDP X29, X30, [SP], #0x90   (epilogue's stack restore)
@@ -488,13 +497,13 @@ enum kiou_bridge_hook_id {
     KIOU_BR_HOOK__COUNT,
 };
 
-// g_inject_entry is binpatch-only — it's populated by
-// KEBBridgeBinpatchPublish() with per-site cave-bypass entry pointers,
-// so injection on binpatch can call the original OPM body without
+// g_inject_entry is chinlan-only — it's populated by
+// KEBBridgeChinlanPublish() with per-site cave-bypass entry pointers,
+// so injection on chinlan can call the original OPM body without
 // re-entering the dispatcher cave. On JB the trampolines installed by
 // MSHookFunction already provide that bypass via `orig_*`, so the array
 // is not defined and the helper macros short-circuit to `(ORIG)`.
-#if KIOU_BINPATCH
+#if KIOU_CHINLAN
 extern void * volatile g_inject_entry[KIOU_BR_HOOK__COUNT];
 
 // Return the fixed-allocation-order cave-bypass entry for one hook id.
@@ -507,10 +516,10 @@ static inline void *kiou_bridge_bypass_entry_for_hook(uint32_t hook_id) {
                     KIOU_BR_CAVE_BYPASS_OFFSET);
 }
 
-#define KIOU_BR_BINPATCH_ORIG_OR_BYPASS(ORIG, HOOK_ID, TYPE) \
+#define KIOU_BR_CHINLAN_ORIG_OR_BYPASS(ORIG, HOOK_ID, TYPE) \
     ((ORIG) ? (ORIG) : (TYPE)g_inject_entry[(HOOK_ID)])
 
-#define KIOU_BR_BINPATCH_INJECT_CALLABLES_READY() \
+#define KIOU_BR_CHINLAN_INJECT_CALLABLES_READY() \
     (g_inject_entry[KIOU_BR_HOOK_AI_OPM] && \
      g_inject_entry[KIOU_BR_HOOK_CPUSTREAM_OPM] && \
      g_inject_entry[KIOU_BR_HOOK_LOCAL_OPM] && \
@@ -519,45 +528,45 @@ static inline void *kiou_bridge_bypass_entry_for_hook(uint32_t hook_id) {
      g_inject_entry[KIOU_BR_HOOK_ADAPTER_TRY_MAKE_MOVE_OUT])
 #else
 // On JB the only callable is the trampoline that MSHookFunction wrote into
-// `orig_*`. The bypass-entry path is binpatch-only, so the helper macros
+// `orig_*`. The bypass-entry path is chinlan-only, so the helper macros
 // collapse to `(ORIG)`.
-#define KIOU_BR_BINPATCH_ORIG_OR_BYPASS(ORIG, HOOK_ID, TYPE) (ORIG)
-#define KIOU_BR_BINPATCH_INJECT_CALLABLES_READY()  1
+#define KIOU_BR_CHINLAN_ORIG_OR_BYPASS(ORIG, HOOK_ID, TYPE) (ORIG)
+#define KIOU_BR_CHINLAN_INJECT_CALLABLES_READY()  1
 #endif
 
-#define KIOU_BR_BINPATCH_ADAPTER_CALLABLE() \
-    KIOU_BR_BINPATCH_ORIG_OR_BYPASS(orig_AdapterTryMakeMoveOut, \
+#define KIOU_BR_CHINLAN_ADAPTER_CALLABLE() \
+    KIOU_BR_CHINLAN_ORIG_OR_BYPASS(orig_AdapterTryMakeMoveOut, \
                                     KIOU_BR_HOOK_ADAPTER_TRY_MAKE_MOVE_OUT, \
                                     Adapter_TryMakeMove_Out_t)
 
-#define KIOU_BR_BINPATCH_AI_OPM_CALLABLE() \
-    KIOU_BR_BINPATCH_ORIG_OR_BYPASS(orig_AIMatchMode_OnPlayerMoveAsync, \
+#define KIOU_BR_CHINLAN_AI_OPM_CALLABLE() \
+    KIOU_BR_CHINLAN_ORIG_OR_BYPASS(orig_AIMatchMode_OnPlayerMoveAsync, \
                                     KIOU_BR_HOOK_AI_OPM, \
                                     OnPlayerMoveAsync_t)
 
-#define KIOU_BR_BINPATCH_CPUSTREAM_OPM_CALLABLE() \
-    KIOU_BR_BINPATCH_ORIG_OR_BYPASS(orig_CPUStreamMode_OnPlayerMoveAsync, \
+#define KIOU_BR_CHINLAN_CPUSTREAM_OPM_CALLABLE() \
+    KIOU_BR_CHINLAN_ORIG_OR_BYPASS(orig_CPUStreamMode_OnPlayerMoveAsync, \
                                     KIOU_BR_HOOK_CPUSTREAM_OPM, \
                                     OnPlayerMoveAsync_t)
 
-#define KIOU_BR_BINPATCH_LOCAL_OPM_CALLABLE() \
-    KIOU_BR_BINPATCH_ORIG_OR_BYPASS(orig_LocalPvPMode_OnPlayerMoveAsync, \
+#define KIOU_BR_CHINLAN_LOCAL_OPM_CALLABLE() \
+    KIOU_BR_CHINLAN_ORIG_OR_BYPASS(orig_LocalPvPMode_OnPlayerMoveAsync, \
                                     KIOU_BR_HOOK_LOCAL_OPM, \
                                     OnPlayerMoveAsync_t)
 
-#define KIOU_BR_BINPATCH_ONLINE_OPM_CALLABLE() \
-    KIOU_BR_BINPATCH_ORIG_OR_BYPASS(orig_OnlinePvPMode_OnPlayerMoveAsync, \
+#define KIOU_BR_CHINLAN_ONLINE_OPM_CALLABLE() \
+    KIOU_BR_CHINLAN_ORIG_OR_BYPASS(orig_OnlinePvPMode_OnPlayerMoveAsync, \
                                     KIOU_BR_HOOK_ONLINE_OPM, \
                                     OnPlayerMoveAsync_t)
 
-#define KIOU_BR_BINPATCH_REPLAY_OPM_CALLABLE() \
-    KIOU_BR_BINPATCH_ORIG_OR_BYPASS(orig_RecordReplayMode_OnPlayerMoveAsync, \
+#define KIOU_BR_CHINLAN_REPLAY_OPM_CALLABLE() \
+    KIOU_BR_CHINLAN_ORIG_OR_BYPASS(orig_RecordReplayMode_OnPlayerMoveAsync, \
                                     KIOU_BR_HOOK_REPLAY_OPM, \
                                     OnPlayerMoveAsync_t)
 
 #define KIOU_BR_EXPECTED_CAVE_COUNT KIOU_BR_HOOK__COUNT
 
-#if KIOU_BINPATCH
+#if KIOU_CHINLAN
 _Static_assert(KIOU_BR_CAVE_SIZE == 84, "Branch F assumes 84-byte caves");
 _Static_assert(KIOU_BR_CAVE_BYPASS_OFFSET == 0x4C,
                "Branch F assumes bypass entry at cave+0x4C "
@@ -574,22 +583,22 @@ typedef void (*kiou_bridge_dispatcher_t)(void *x0, void *x1, void *x2,
                                          void *x3, void *x4, void *x5,
                                          uint32_t hook_id, void *x7);
 
-// Constructor helper. binpatch Tweak.m calls this exactly once after
+// Constructor helper. chinlan Tweak.m calls this exactly once after
 // UnityFramework is mapped, in place of all install_*_hook calls.
 // Publishes the dispatcher pointer into the slot at
 // `g_unityBase + KIOU_BR_HOOK_SLOT_RVA` inside UnityFramework's
 // __DATA,__bss. The dylib does NOT host its own copy of the slot — the
 // cave reads from the framework's __bss, so the dispatcher pointer must
 // live there.
-void KEBBridgeBinpatchPublish(void);
+void KEBBridgeChinlanPublish(void);
 
 // ---------------------------------------------------------------------------
-// Hook function bodies reached from the binpatch dispatcher. Defined in
+// Hook function bodies reached from the chinlan dispatcher. Defined in
 // their respective Hook_*.m files; the dispatcher forwards each cave call
 // to the matching body. Declared here so the dispatcher TU sees them.
 //
 // The bodies are written for the JB build (they call orig via
-// KIOU_CALL_ORIG_*); on binpatch KIOU_CALL_ORIG_* expands to a no-op and
+// KIOU_CALL_ORIG_*); on chinlan KIOU_CALL_ORIG_* expands to a no-op and
 // orig runs via the cave's displaced prologue + `B orig+4` after the
 // dispatcher returns.
 // ---------------------------------------------------------------------------
@@ -631,6 +640,9 @@ UniTaskRet HookGameOrchActivateAsync(void *self, void *setup,
 void HookGStateSetBlackPlayerInfo(void *self, void *playerInfo);
 void HookGStateSetWhitePlayerInfo(void *self, void *playerInfo);
 void HookGStateNotifyPieceMoved(void *self, uint32_t move, int32_t playerSide);
+void HookGStateNotifyStateSyncedForCurrentPosition(void);
+void ResolveGameStateStoreNotifyStateSynced(uintptr_t unityBase);
+void HookGStateRememberStore(void *self);
 
 // ---------------------------------------------------------------------------
 // SfMove + low-level helpers, exported so observation hooks living in other

@@ -1,4 +1,5 @@
 #import "Internal.h"
+#import "Settings_Persistence.h"
 
 // ===========================================================================
 // Hook_GameOrchestratorObserve — capture the live GameOrchestrator instance.
@@ -70,9 +71,6 @@ UniTaskRet HookGameOrchActivateAsync(void *self, void *setup,
                                        void *assetLoader, void *ct) {
     if (g_gameOrchestratorCache != self) g_gameOrchestratorCache = self;
     uint32_t n = ++g_orchSeen;
-    // Match the seen-counter cadence used by the OPM hooks: log the first
-    // three, then every 30th. Activation only happens at scene transitions
-    // so we'll almost never spam, but the cap is cheap insurance.
     if (n <= 3 || (n % 30) == 0) {
         IPALog([NSString stringWithFormat:
                   @"[GAMEORCH] ActivateAsync call#%u self=%p setup=%p",
@@ -87,7 +85,7 @@ UniTaskRet HookGameOrchActivateAsync(void *self, void *setup,
 // ---------------------------------------------------------------------------
 // Installer. Called once from Tweak.m::installUnityHooks().
 // ---------------------------------------------------------------------------
-#if !KIOU_BINPATCH
+#if !KIOU_CHINLAN
 void InstallGameOrchestratorObserveHook(uintptr_t unityBase) {
     uintptr_t addr = unityBase + RVA_GAMEORCH_ACTIVATE;
     MSHookFunction((void *)addr, (void *)HookGameOrchActivateAsync,
@@ -97,8 +95,8 @@ void InstallGameOrchestratorObserveHook(uintptr_t unityBase) {
               @"(base+0x%lx)",
               (unsigned long)addr, (unsigned long)RVA_GAMEORCH_ACTIVATE]);
 }
-#endif  // !KIOU_BINPATCH
-// On the binpatch build, the static cave routes GameOrchestrator.ActivateAsync
+#endif  // !KIOU_CHINLAN
+// On the chinlan build, the static cave routes GameOrchestrator.ActivateAsync
 // through the SLOT-published dispatcher (see recipes/kiouenginebridge.py
 // CAVE_PATCHES entry KIOU_BR_HOOK_GAMEORCH_ACTIVATE). The dispatcher will
 // invoke HookGameOrchActivateAsync once Phase E wires it up.

@@ -65,8 +65,8 @@ static NSString *volatile g_csaLastGameID = nil;
 //
 // NaN means "no value cached yet" (first move of the match, or KIOU
 // declined to surface a clock for that side this match).
-static float volatile g_csaLastBlackRemainSec = NAN;
-static float volatile g_csaLastWhiteRemainSec = NAN;
+_Atomic float g_csaLastBlackRemainSec = NAN;
+_Atomic float g_csaLastWhiteRemainSec = NAN;
 
 // Previous-move SFEN. Used to detect drops by hand-delta against the
 // post-move SFEN (the KIOU Move bits don't encode the dropped piece type
@@ -764,7 +764,7 @@ void CsaEngineOnMoveObserved(uint32_t move,
     // T<n> based on the OnMatchStart-to-first-move delta.
     int32_t timeSpent = -1;
     float remain = (playerSide == 0) ? blackTimeRemainSec : whiteTimeRemainSec;
-    float volatile *cacheSlot = (playerSide == 0)
+    _Atomic float *cacheSlot = (playerSide == 0)
         ? &g_csaLastBlackRemainSec
         : &g_csaLastWhiteRemainSec;
 

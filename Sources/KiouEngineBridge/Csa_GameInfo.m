@@ -1,6 +1,8 @@
 #import "Internal.h"
 #import "Csa_Convert.h"
+#import "Csa_Engine.h"
 
+#import <math.h>
 #import <mach/mach_time.h>
 
 // ===========================================================================
@@ -256,6 +258,19 @@ NSString *CsaBuildGameSummary(int32_t local_player,
     }
     if (tc.increment > 0) {
         [out appendFormat:@"Increment:%d\n", tc.increment];
+    }
+    // Remaining_Time+/- — the actual remaining clock at the moment the
+    // engine reconnects. Populated from g_csaLastBlack/WhiteRemainSec which
+    // is updated on every observed move. NaN means no move has been played
+    // yet (or KIOU declined to surface a clock for that side), in which case
+    // we omit the field so the engine falls back to Total_Time.
+    float blackRemain = g_csaLastBlackRemainSec;
+    float whiteRemain = g_csaLastWhiteRemainSec;
+    if (!isnan(blackRemain) && blackRemain >= 0.0f) {
+        [out appendFormat:@"Remaining_Time+:%d\n", (int32_t)blackRemain];
+    }
+    if (!isnan(whiteRemain) && whiteRemain >= 0.0f) {
+        [out appendFormat:@"Remaining_Time-:%d\n", (int32_t)whiteRemain];
     }
     [out appendString:@"END Time\n"];
 
