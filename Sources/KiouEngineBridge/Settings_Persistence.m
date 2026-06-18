@@ -17,7 +17,6 @@ static NSString * const kKeyRematchStep1      = @"kiou_bridge.rematch_step1_sec"
 static NSString * const kKeyRematchStep2      = @"kiou_bridge.rematch_step2_sec";
 static NSString * const kKeyAutoStartKind     = @"kiou_bridge.auto_start_kind";
 static NSString * const kKeyCsaPort           = @"kiou_bridge.csa_port";
-static NSString * const kKeyEvalOverlay       = @"kiou_bridge.eval_overlay";
 
 // ---------------------------------------------------------------------------
 // Auto-rematch
@@ -117,20 +116,3 @@ void KEBSetCsaPort(uint16_t port) {
               @"(effective on next launch)", (unsigned)clamped]);
 }
 
-// ---------------------------------------------------------------------------
-// Eval overlay
-// ---------------------------------------------------------------------------
-
-bool KEBEvalOverlayEnabled(void) {
-    NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
-    id v = [d objectForKey:kKeyEvalOverlay];
-    return v ? [v boolValue] : false;
-}
-
-void KEBSetEvalOverlayEnabled(bool enabled) {
-    NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
-    [d setBool:enabled forKey:kKeyEvalOverlay];
-    [d synchronize];
-    IPALog([NSString stringWithFormat:@"[SETTINGS] eval_overlay=%s",
-              enabled ? "true" : "false"]);
-}

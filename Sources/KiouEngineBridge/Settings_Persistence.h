@@ -83,13 +83,3 @@ bool             KEBAutoStartEnabled(void);
 uint16_t KEBCsaPort(void);
 void     KEBSetCsaPort(uint16_t port);
 
-// ---------------------------------------------------------------------------
-// Display overlay
-// ---------------------------------------------------------------------------
-
-// Whether to show an evaluation score overlay on the game screen.
-// The overlay itself is not yet implemented; this flag is a placeholder so
-// the setting can be toggled in preparation for the feature.
-// Default: false
-bool    KEBEvalOverlayEnabled(void);
-void    KEBSetEvalOverlayEnabled(bool enabled);

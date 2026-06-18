@@ -20,9 +20,8 @@
 
 #define KEB_SECTION_MATCH   0
 #define KEB_SECTION_SERVER  1
-#define KEB_SECTION_DISPLAY 2
-#define KEB_SECTION_ABOUT   3
-#define KEB_SECTION_COUNT   4
+#define KEB_SECTION_ABOUT   2
+#define KEB_SECTION_COUNT   3
 
 #define KEB_ROW_AUTO_REMATCH    0
 #define KEB_ROW_AUTO_START_KIND 1
@@ -32,9 +31,6 @@
 
 #define KEB_ROW_CSA_PORT      0
 #define KEB_SERVER_ROW_COUNT  1
-
-#define KEB_ROW_EVAL_OVERLAY  0
-#define KEB_DISPLAY_ROW_COUNT 1
 
 #define KEB_ROW_ABOUT_REPO    0
 #define KEB_ROW_ABOUT_AUTHOR  1
@@ -183,20 +179,18 @@ static const NSInteger kKindCount = 8;
 
 - (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)section {
     switch (section) {
-        case KEB_SECTION_MATCH:   return KEB_MATCH_ROW_COUNT;
-        case KEB_SECTION_SERVER:  return KEB_SERVER_ROW_COUNT;
-        case KEB_SECTION_DISPLAY: return KEB_DISPLAY_ROW_COUNT;
-        case KEB_SECTION_ABOUT:   return KEB_ABOUT_ROW_COUNT;
+        case KEB_SECTION_MATCH:  return KEB_MATCH_ROW_COUNT;
+        case KEB_SECTION_SERVER: return KEB_SERVER_ROW_COUNT;
+        case KEB_SECTION_ABOUT:  return KEB_ABOUT_ROW_COUNT;
         default: return 0;
     }
 }
 
 - (NSString *)tableView:(UITableView *)tv titleForHeaderInSection:(NSInteger)section {
     switch (section) {
-        case KEB_SECTION_MATCH:   return @"Match";
-        case KEB_SECTION_SERVER:  return @"CSA Server";
-        case KEB_SECTION_DISPLAY: return @"Display";
-        case KEB_SECTION_ABOUT:   return @"About";
+        case KEB_SECTION_MATCH:  return @"Match";
+        case KEB_SECTION_SERVER: return @"CSA Server";
+        case KEB_SECTION_ABOUT:  return @"About";
         default: return nil;
     }
 }
@@ -204,9 +198,6 @@ static const NSInteger kKindCount = 8;
 - (NSString *)tableView:(UITableView *)tv titleForFooterInSection:(NSInteger)section {
     if (section == KEB_SECTION_SERVER) {
         return @"Port change takes effect after restarting the app.";
-    }
-    if (section == KEB_SECTION_DISPLAY) {
-        return @"Eval overlay is not yet implemented; enabling this has no visible effect.";
     }
     if (section == KEB_SECTION_ABOUT) {
         return [NSString stringWithFormat:@"%s (%s)",
@@ -278,17 +269,6 @@ static const NSInteger kKindCount = 8;
                                          action:@selector(csaPortChanged:)];
                 self.portValueLabel = cell.detailTextLabel;
                 return cell;
-            }
-            break;
-        }
-
-        // -- Display -------------------------------------------------------
-        case KEB_SECTION_DISPLAY: {
-            if (ip.row == KEB_ROW_EVAL_OVERLAY) {
-                return [self toggleCellWithTitle:@"Eval Overlay"
-                                            key:@"eval_overlay"
-                                          value:KEBEvalOverlayEnabled()
-                                         action:@selector(evalOverlayChanged:)];
             }
             break;
         }
@@ -419,10 +399,6 @@ static const NSInteger kKindCount = 8;
 
 - (void)autoRematchChanged:(UISwitch *)sw {
     KEBSetAutoRematchEnabled(sw.on);
-}
-
-- (void)evalOverlayChanged:(UISwitch *)sw {
-    KEBSetEvalOverlayEnabled(sw.on);
 }
 
 // ---------------------------------------------------------------------------

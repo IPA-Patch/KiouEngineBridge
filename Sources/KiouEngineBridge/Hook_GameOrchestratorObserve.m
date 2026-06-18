@@ -1,4 +1,5 @@
 #import "Internal.h"
+#import "Settings_Persistence.h"
 
 // ===========================================================================
 // Hook_GameOrchestratorObserve — capture the live GameOrchestrator instance.
@@ -64,24 +65,98 @@ static GameOrch_ActivateAsync_t orig_GameOrch_ActivateAsync = NULL;
 // created each time, the old one is destroyed; pointer reuse is fine
 // either way since Boehm GC is non-moving).
 // ---------------------------------------------------------------------------
+// RVAs reused from Hook_MatchModeObserve.m's rematch path.
+#define RVA_AUTO_CPU_MATCH_START  0x5D02FE8
+#define RVA_AUTO_RANK_MATCH_START 0x5D0478C
+
+typedef UniTaskRet (*AutoStart_CpuFreeMatch_t)(int32_t strength,
+                                               bool beginnerSupport, void *ct);
+typedef UniTaskRet (*AutoStart_RankMatching_t)(int32_t ruleType,
+                                               bool beginnerSupport, void *ct);
+
+// CPUStrengthType: Easy=2, Normal=3, Hard=4
+static int32_t cpuStrengthForKind(KEBAutoStartKind kind) {
+    switch (kind) {
+        case KEBAutoStartKind_CpuEasy:   return 2;
+        case KEBAutoStartKind_CpuHard:   return 4;
+        default:                         return 3; // Normal
+    }
+}
+
+// RankMatchRuleType: Beginner=2, VIP=3, Fischer=4, Bullet3Min=5
+static int32_t rankRuleForKind(KEBAutoStartKind kind) {
+    switch (kind) {
+        case KEBAutoStartKind_RankBeginner: return 2;
+        case KEBAutoStartKind_RankVip:      return 3;
+        case KEBAutoStartKind_RankFischer:  return 4;
+        default:                            return 5; // Bullet
+    }
+}
+
+static BOOL g_autoStartFired = NO;
 static uint32_t g_orchSeen = 0;
 
 UniTaskRet HookGameOrchActivateAsync(void *self, void *setup,
                                        void *assetLoader, void *ct) {
     if (g_gameOrchestratorCache != self) g_gameOrchestratorCache = self;
     uint32_t n = ++g_orchSeen;
-    // Match the seen-counter cadence used by the OPM hooks: log the first
-    // three, then every 30th. Activation only happens at scene transitions
-    // so we'll almost never spam, but the cap is cheap insurance.
     if (n <= 3 || (n % 30) == 0) {
         IPALog([NSString stringWithFormat:
                   @"[GAMEORCH] ActivateAsync call#%u self=%p setup=%p",
                   n, self, setup]);
     }
+    UniTaskRet ret = (UniTaskRet){ NULL, NULL };
     if (orig_GameOrch_ActivateAsync) {
-        return orig_GameOrch_ActivateAsync(self, setup, assetLoader, ct);
+        ret = orig_GameOrch_ActivateAsync(self, setup, assetLoader, ct);
     }
-    return (UniTaskRet){ NULL, NULL };
+
+    // Auto-start: fire once on the very first ActivateAsync (= app launch
+    // reaching the match scene). Subsequent activations are rematch cycles
+    // which already handle their own restart via scheduleAutoRematch().
+    if (!g_autoStartFired && KEBAutoStartEnabled()) {
+        g_autoStartFired = YES;
+        KEBAutoStartKind kind = KEBAutoStartKind_();
+        uintptr_t base = g_unityBase;
+        IPALog([NSString stringWithFormat:
+                  @"[GAMEORCH] auto-start kind=%d — scheduling in 1.0s", (int)kind]);
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
+                                     (int64_t)(1.0 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{
+            if (base == 0) {
+                IPALog(@"[GAMEORCH] auto-start: no unityBase — skipped");
+                return;
+            }
+            BOOL isCpu = (kind <= KEBAutoStartKind_CpuHard);
+            if (isCpu) {
+                int32_t strength = cpuStrengthForKind(kind);
+                AutoStart_CpuFreeMatch_t fn = (AutoStart_CpuFreeMatch_t)(void *)
+                    (base + RVA_AUTO_CPU_MATCH_START);
+                @try {
+                    (void)fn(strength, false, NULL);
+                    IPALog([NSString stringWithFormat:
+                              @"[GAMEORCH] auto-start: StartCpuFreeMatchAsync "
+                              @"strength=%d", (int)strength]);
+                } @catch (NSException *e) {
+                    IPALog([NSString stringWithFormat:
+                              @"[GAMEORCH] auto-start (cpu) threw: %@", e]);
+                }
+            } else {
+                int32_t rule = rankRuleForKind(kind);
+                AutoStart_RankMatching_t fn = (AutoStart_RankMatching_t)(void *)
+                    (base + RVA_AUTO_RANK_MATCH_START);
+                @try {
+                    (void)fn(rule, false, NULL);
+                    IPALog([NSString stringWithFormat:
+                              @"[GAMEORCH] auto-start: StartRankMatchingAsync "
+                              @"rule=%d", (int)rule]);
+                } @catch (NSException *e) {
+                    IPALog([NSString stringWithFormat:
+                              @"[GAMEORCH] auto-start (rank) threw: %@", e]);
+                }
+            }
+        });
+    }
+    return ret;
 }
 
 // ---------------------------------------------------------------------------
