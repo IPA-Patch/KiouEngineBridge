@@ -1,6 +1,7 @@
 #pragma once
 
 #import <Foundation/Foundation.h>
+#import <stdatomic.h>
 #import <stdint.h>
 
 #import "Csa_Convert.h"
@@ -75,5 +76,10 @@ csa_state_t CsaEngineCurrentState(void);
 // CsaEngineOnMoveObserved call. NaN means "no value yet" (start of match or
 // side's clock not available). Read by Csa_GameInfo to populate
 // Remaining_Time+/- in the reconnect Game_Summary.
-extern float volatile g_csaLastBlackRemainSec;
-extern float volatile g_csaLastWhiteRemainSec;
+//
+// _Atomic because the writer runs on the Unity main thread (the move
+// observation hook) while the reader can run on the CSA accept queue (the
+// reconnect Game_Summary path). `volatile` is not enough for cross-module
+// cross-thread access — atomics give us a defined memory model.
+extern _Atomic float g_csaLastBlackRemainSec;
+extern _Atomic float g_csaLastWhiteRemainSec;

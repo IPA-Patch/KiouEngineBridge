@@ -92,7 +92,7 @@ void InstallInjectHook(uintptr_t unityBase);
 void InstallAfkSuppressHook(uintptr_t unityBase);
 void InstallGameOrchestratorObserveHook(uintptr_t unityBase);
 
-// Settings panel (Settings_UI.m). Installs the left-edge swipe gesture on
+// Settings panel (Settings_UI.m). Installs the right-edge swipe gesture on
 // the key window; retries automatically if the window is not yet available.
 // Call once from the constructor after the log sink is initialized.
 void KEBSettingsInstall(void);

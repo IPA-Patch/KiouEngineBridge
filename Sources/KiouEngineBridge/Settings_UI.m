@@ -47,10 +47,11 @@ static NSString *const kAboutAuthorURL = @"https://x.com/tkgling";
 // ---------------------------------------------------------------------------
 
 static UIWindow *kebKeyWindow(void) {
-    for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
+    for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
         if (![scene isKindOfClass:[UIWindowScene class]]) continue;
-        if (scene.activationState != UISceneActivationStateForegroundActive) continue;
-        for (UIWindow *window in scene.windows) {
+        UIWindowScene *windowScene = (UIWindowScene *)scene;
+        if (windowScene.activationState != UISceneActivationStateForegroundActive) continue;
+        for (UIWindow *window in windowScene.windows) {
             if (window.isKeyWindow) return window;
         }
     }

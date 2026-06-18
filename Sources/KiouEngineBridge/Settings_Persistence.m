@@ -5,8 +5,11 @@
 // Settings_Persistence.m — NSUserDefaults backing for KiouEngineBridge
 // settings.
 //
-// Key naming: "kiou_bridge.<group>.<name>"
-// All writes call -synchronize so values survive an immediate app kill.
+// Key naming: "kiou_bridge.<name>" (flat namespace under the kiou_bridge.
+// prefix). Writes do NOT call -synchronize: the method has been deprecated
+// for years and is not guaranteed to flush to disk, and the system performs
+// its own flush at app-quit / background-transition which is more than
+// enough for tweak-side preferences.
 // ===========================================================================
 
 // ---------------------------------------------------------------------------
@@ -30,7 +33,6 @@ bool KEBAutoRematchEnabled(void) {
 void KEBSetAutoRematchEnabled(bool enabled) {
     NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
     [d setBool:enabled forKey:kKeyAutoRematch];
-    [d synchronize];
     IPALog([NSString stringWithFormat:@"[SETTINGS] auto_rematch=%s",
               enabled ? "true" : "false"]);
 }
@@ -47,7 +49,6 @@ void KEBSetRematchStep1Sec(float sec) {
     float clamped = (sec < 0.0f) ? 0.0f : (sec > 30.0f) ? 30.0f : sec;
     NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
     [d setFloat:clamped forKey:kKeyRematchStep1];
-    [d synchronize];
     IPALog([NSString stringWithFormat:@"[SETTINGS] rematch_step1=%.1fs", clamped]);
 }
 
@@ -63,7 +64,6 @@ void KEBSetRematchStep2Sec(float sec) {
     float clamped = (sec < 0.0f) ? 0.0f : (sec > 30.0f) ? 30.0f : sec;
     NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
     [d setFloat:clamped forKey:kKeyRematchStep2];
-    [d synchronize];
     IPALog([NSString stringWithFormat:@"[SETTINGS] rematch_step2=%.1fs", clamped]);
 }
 
@@ -82,7 +82,6 @@ bool KEBResignSkipDialog(void) {
 void KEBSetResignSkipDialog(bool skip) {
     NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
     [d setBool:skip forKey:kKeyResignSkipDialog];
-    [d synchronize];
     IPALog([NSString stringWithFormat:@"[SETTINGS] resign_skip_dialog=%s",
               skip ? "true" : "false"]);
 }
@@ -104,7 +103,6 @@ void KEBSetCsaPort(uint16_t port) {
     uint16_t clamped = (port < 1024) ? 1024 : port;
     NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
     [d setInteger:clamped forKey:kKeyCsaPort];
-    [d synchronize];
     IPALog([NSString stringWithFormat:@"[SETTINGS] csa_port=%u "
               @"(effective on next launch)", (unsigned)clamped]);
 }
