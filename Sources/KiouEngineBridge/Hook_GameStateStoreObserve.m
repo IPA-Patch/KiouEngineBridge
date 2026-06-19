@@ -27,7 +27,10 @@ static GState_NotifyStateSynced_t  g_GameStateStore_NotifyStateSynced  = NULL;
 static GState_SetCurrentPosition_t g_GameStateStore_SetCurrentPosition = NULL;
 
 void HookGStateRememberStore(void *self) {
-    if (self) g_lastGameStateStore = self;
+    if (self) {
+        g_lastGameStateStore = self;
+        CsaSetGameStateStore(self);
+    }
 }
 
 void ResolveGameStateStoreNotifyStateSynced(uintptr_t unityBase) {
