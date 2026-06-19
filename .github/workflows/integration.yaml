@@ -58,10 +58,10 @@ jobs:
             make_args: "jailed"
             artifact_name: kiouenginebridge-jailed-dylib
             artifact_path: packages/jailed/KiouEngineBridge.dylib
-          - flavor: binpatch
-            make_args: "binpatch"
-            artifact_name: kiouenginebridge-binpatch-dylib
-            artifact_path: packages/binpatch/KiouEngineBridge.dylib
+          - flavor: chinlan
+            make_args: "chinlan"
+            artifact_name: kiouenginebridge-chinlan-dylib
+            artifact_path: packages/chinlan/KiouEngineBridge.dylib
 
     steps:
       - name: Checkout source
@@ -126,7 +126,7 @@ jobs:
           ls -la packages/
 
       - name: Sanity check dylib (no external hook engine)
-        if: matrix.flavor == 'jailed' || matrix.flavor == 'binpatch'
+        if: matrix.flavor == 'jailed' || matrix.flavor == 'chinlan'
         run: |
           DYLIB=packages/${{ matrix.flavor }}/KiouEngineBridge.dylib
           test -f "$DYLIB"

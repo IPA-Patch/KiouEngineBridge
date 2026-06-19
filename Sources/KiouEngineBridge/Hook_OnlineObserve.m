@@ -179,7 +179,7 @@ void HookCpuStreamUpdateSnapshot(void *self,
 // ---------------------------------------------------------------------------
 // Installer.
 // ---------------------------------------------------------------------------
-#if !KIOU_BINPATCH
+#if !KIOU_CHINLAN
 void InstallOnlineObserveHook(uintptr_t unityBase) {
     uintptr_t addrSnap = unityBase + RVA_ONLINE_UPDATE_SNAPSHOT;
     MSHookFunction((void *)addrSnap,
@@ -211,8 +211,8 @@ void InstallOnlineObserveHook(uintptr_t unityBase) {
               (unsigned long)addrCpuSnap,
               (unsigned)RVA_CPUSTREAM_UPDATE_SNAPSHOT]);
 }
-#endif  // !KIOU_BINPATCH
-// On the binpatch build, the three Online/CPUStream observation sites are
+#endif  // !KIOU_CHINLAN
+// On the chinlan build, the three Online/CPUStream observation sites are
 // routed via the static cave + SLOT dispatcher
 // (KIOU_BR_HOOK_ONLINE_UPDATE_SNAPSHOT / _ONLINE_HANDLE_RESULT /
 // _CPUSTREAM_UPDATE_SNAPSHOT in recipes/kiouenginebridge.py).

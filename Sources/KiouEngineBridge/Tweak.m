@@ -1,4 +1,5 @@
 #import "Internal.h"
+#import "Settings_Persistence.h"
 #import <mach-o/dyld.h>
 #import <string.h>
 
@@ -51,19 +52,19 @@ static void installUnityHooks(void) {
               @"UnityFramework base=0x%lx (%s)",
               (unsigned long)unityBase, unityName ? unityName : "?"]);
 
-#if KIOU_BINPATCH
-    // On the binpatch build, every observation hook is wired by the static
+#if KIOU_CHINLAN
+    // On the chinlan build, every observation hook is wired by the static
     // cave at app launch (recipes/kiouenginebridge.py); all we need at
     // runtime is to publish the dispatcher pointer into the __DATA,__bss
     // SLOT so the cave's ADRP+LDR resolves to a real function pointer.
     // Inject_Move is still a symbol-only resolver (no MSHookFunction) so it
     // runs in both flavours. USI engine init must come after Inject_Move so
     // inject_apply is wired before the WS handler can reach it.
-    KEBBridgeBinpatchPublish();
+    KEBBridgeChinlanPublish();
     InstallLowLevelObserveHook(unityBase);  // symbol pointer resolves only
-    // No-op on binpatch (see Hook_MatchModeObserve.m's binpatch installer).
+    // No-op on chinlan (see Hook_MatchModeObserve.m's chinlan installer).
     // orig_*OnPlayerMoveAsync is intentionally left NULL so the route picker
-    // falls through to KIOU_BR_BINPATCH_ORIG_OR_BYPASS, which returns the
+    // falls through to KIOU_BR_CHINLAN_ORIG_OR_BYPASS, which returns the
     // per-site cave-bypass entry (cave + KIOU_BR_CAVE_BYPASS_OFFSET). The
     // inject path then calls that bypass entry — calling orig_* directly
     // would re-enter the dispatcher cave because unityBase+RVA is the
@@ -115,11 +116,12 @@ static void retryInstallHooks(void) {
 __attribute__((constructor)) static void init(void) {
     IPALoggingInit("com.neconome.shogi.kiouenginebridge");
     IPALog(@"=== KiouEngineBridge loaded ===");
+
     // Build identity so a stray log file can be matched back to the exact
     // dylib that wrote it. Flavor distinguishes JB (libsubstrate) / jailed
-    // (Dobby-static) / binpatch (static cave + SLOT dispatcher).
-#if KIOU_BINPATCH
-    static const char *const kBuildFlavor = "binpatch";
+    // (Dobby-static) / chinlan (static cave + SLOT dispatcher).
+#if KIOU_CHINLAN
+    static const char *const kBuildFlavor = "chinlan";
 #elif IPA_JAILED
     static const char *const kBuildFlavor = "jailed";
 #else
@@ -130,13 +132,21 @@ __attribute__((constructor)) static void init(void) {
               KIOU_ENGINE_BRIDGE_COMMIT, kBuildFlavor,
               __DATE__, __TIME__]);
 
-    // CSA migration Task 3: bind the CSA TCP server on 0.0.0.0:4081 as
-    // early as possible. Without a client attached, every KEBCsaServerPush
-    // call below is a silent no-op. The Csa_Engine state machine (Task 4)
-    // installs its line handler against KEBCsaServerSetLineHandler so
-    // inbound LOGIN / AGREE / move / %TORYO lines route through to the
-    // driver as soon as the engine connects.
-    KEBCsaServerStart(4081);
+    // CSA migration Task 3: bind the CSA TCP server as early as possible.
+    // Port is read from NSUserDefaults — dispatch to the main queue so
+    // cfprefs / sandbox are fully initialised before the first read.
+    // The 0.5s head-start is well before any engine could connect anyway.
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        uint16_t csaPort = KEBCsaPort();
+        IPALog([NSString stringWithFormat:@"[SETTINGS] CSA server port=%u",
+                  (unsigned)csaPort]);
+        KEBCsaServerStart(csaPort);
+    });
+
+    // Settings panel (right-edge swipe). Dispatches to main queue internally
+    // and retries until the key window is available — safe to call here.
+    KEBSettingsInstall();
 
     // UnityFramework is almost certainly not mapped yet at constructor time.
     installUnityHooks();
