@@ -276,13 +276,15 @@ static NSString *csa_timeBlockString(void) {
     float whiteRemainSec = atomic_load(&g_csaLastWhiteRemainSec);
     int32_t byoyomiMs = atomic_load(&g_csaByoyomiMs);
 
-    // NaN means KIOU's clock for that side has never been observed in range
-    // (VsAI CPU side reports 86400.0f which the hook filters out, leaving NaN
-    // in the cache). Treat NaN the same as the no-limit sentinel: 86400000ms.
-    int64_t blackMs = (isnan(blackRemainSec) || blackRemainSec < 0.0f)
-        ? 86400000 : (int64_t)llroundf(blackRemainSec * 1000.0f);
-    int64_t whiteMs = (isnan(whiteRemainSec) || whiteRemainSec < 0.0f)
-        ? 86400000 : (int64_t)llroundf(whiteRemainSec * 1000.0f);
+    int64_t totalMs = atomic_load(&g_csaTotalTimeMs);
+    // NaN = no clock observed yet for this side → fall back to initial total time.
+    // < 0 = no-limit sentinel (-1.0f from the hook) → 86400000ms.
+    int64_t blackMs = isnan(blackRemainSec) ? totalMs
+        : (blackRemainSec < 0.0f ? 86400000LL
+        : (int64_t)llroundf(blackRemainSec * 1000.0f));
+    int64_t whiteMs = isnan(whiteRemainSec) ? totalMs
+        : (whiteRemainSec < 0.0f ? 86400000LL
+        : (int64_t)llroundf(whiteRemainSec * 1000.0f));
 
     NSMutableString *out = [NSMutableString stringWithString:@"BEGIN Time\n"];
     [out appendFormat:@"Remaining_Time_Ms+:%lld\n", blackMs];
