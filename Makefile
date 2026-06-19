@@ -1,5 +1,5 @@
 # ===========================================================================
-# KiouEngineBridge — IPA-Patch tweak Makefile.
+# WarsEngineBridge — IPA-Patch tweak Makefile.
 #
 # Targets:
 #   make            — JB rootless .deb (MSHookFunction via libsubstrate)
@@ -13,17 +13,17 @@
 # ---------------------------------------------------------------------------
 # PROJECT VARIABLES
 # ---------------------------------------------------------------------------
-TWEAK_NAME               := KiouEngineBridge
+TWEAK_NAME               := WarsEngineBridge
 TWEAK_SOURCES_DIR        := Sources/$(TWEAK_NAME)
 
-TARGET_PROCESS           := KIOU
-TARGET_BUNDLE_ID         := com.neconome.shogi
+TARGET_PROCESS           := ShogiWars
+TARGET_BUNDLE_ID         := jp.co.heroz.ShogiWars
 
-DECRYPTED_IPA            ?= $(CURDIR)/assets/Kiou-1.0.1.ipa
-IPA_RECIPE               := recipes.kiouenginebridge
+DECRYPTED_IPA            ?= $(CURDIR)/assets/ShogiWars-11.0.1.ipa
+IPA_RECIPE               := recipes.warsenginebridge
 IPA_FRAMEWORK            := UnityFramework
 
-BUILD_COMMIT_DEFINE      := KIOU_ENGINE_BRIDGE_COMMIT
+BUILD_COMMIT_DEFINE      := WARS_ENGINE_BRIDGE_COMMIT
 
 # ---------------------------------------------------------------------------
 # Theos boilerplate.
@@ -53,7 +53,7 @@ endif
 
 $(TWEAK_NAME)_CFLAGS     := -fobjc-arc -Wno-unused-function \
                             -D$(BUILD_COMMIT_DEFINE)=\"$(BUILD_COMMIT)\" \
-                            -DKIOU_ENGINE_BRIDGE_VERSION=\"$(PACKAGE_VERSION)\" \
+                            -DWARS_ENGINE_BRIDGE_VERSION=\"$(PACKAGE_VERSION)\" \
                             -ISources/Chinlan
 ifdef FINAL_RELEASE
 $(TWEAK_NAME)_CFLAGS     += -DFINAL_RELEASE=1
@@ -79,7 +79,7 @@ $(TWEAK_NAME)_FRAMEWORKS := Foundation UIKit
 # ---------------------------------------------------------------------------
 ifeq ($(CHINLAN),1)
     JAILED                   := 1
-    $(TWEAK_NAME)_CFLAGS     += -DKIOU_CHINLAN=1 -DIPA_LOG_TO_DOCUMENTS=1
+    $(TWEAK_NAME)_CFLAGS     += -DWARS_CHINLAN=1 -DIPA_LOG_TO_DOCUMENTS=1
 endif
 
 ifeq ($(JAILED),1)
@@ -97,6 +97,7 @@ include $(THEOS_MAKE_PATH)/tweak.mk
 after-install::
 	install.exec "chmod 755 /var/jb/Library/MobileSubstrate/DynamicLibraries/$(TWEAK_NAME).dylib"
 	install.exec "sleep 1; (open $(TARGET_BUNDLE_ID) 2>/dev/null || uiopen $(TARGET_BUNDLE_ID):// 2>/dev/null || echo 'no launcher tool; start $(TARGET_PROCESS) manually')"
+
 
 jailed::
 	$(MAKE) JAILED=1 clean

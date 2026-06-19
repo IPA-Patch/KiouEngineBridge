@@ -1,8 +1,8 @@
-Package: work.tkgstrator.kiouenginebridge
-Name: KiouEngineBridge
-Version: 0.1.2
+Package: work.tkgstrator.warsenginebridge
+Name: WarsEngineBridge
+Version: 0.1.0
 Architecture: iphoneos-arm64
-Description: KIOU (Shogi) USI engine bridge tweak. Observes the in-game board state (SFEN) and committed moves (USI) and exposes them over a local WebSocket so a host-side bridge can drive a desktop USI engine (YaneuraOu et al.) against the live position; the engine's bestmove is replayed back into the game. Companion tweak to KiouEditor and KiouKifExporter; all three can coexist. For authorized testing only.
+Description: ShogiWars CSA engine bridge tweak. Embeds a CSA TCP server (port 4081) inside the ShogiWars process so any CSA-protocol engine on the same LAN can play against or observe the live board. Companion to KiouEngineBridge. For authorized testing only.
 Maintainer: NEVER KNOWS BEST
 Author: tkgstrator
 Section: Tweaks

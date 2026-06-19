@@ -1,45 +1,45 @@
-# KiouEngineBridge CSA protocol
+# WarsEngineBridge CSA protocol
 
-KiouEngineBridge (KEB) is the iOS-side dylib that turns KIOU into a **CSA
-match server** — embedded inside the KIOU process rather than running as a
+WarsEngineBridge (WEB) is the iOS-side dylib that turns ShogiWars into a **CSA
+match server** — embedded inside the ShogiWars process rather than running as a
 standalone service, but speaking the same TCP/IP protocol Floodgate and
 shogi-server use. A CSA engine connects, plays one or more matches against
-the KIOU side, and disconnects when finished.
+the ShogiWars side, and disconnects when finished.
 
 Mental model:
 
 ```
-KIOU  (authoritative board state and clocks)
+ShogiWars  (authoritative board state and clocks)
   ↕  in-process hooks
- KEB  (CSA match server on TCP :4081)
+ WEB  (CSA match server on TCP :4081)
   ↕  CSA protocol v1.2 over plain TCP
  CSA engine  (Floodgate-grade or anything that speaks the CSA wire format)
 ```
 
-KIOU decides the match conditions (time control, handicap, opponent
-identity). KEB reads those conditions via observation hooks and announces
+ShogiWars decides the match conditions (time control, handicap, opponent
+identity). WEB reads those conditions via observation hooks and announces
 them through the standard CSA `Game_Summary` block. The engine returns
 `AGREE`, plays the match through the per-move exchange (`+7776FU,T10` from
-KEB, `+7776FU` or `%TORYO` from the engine), and learns the result via
+WEB, `+7776FU` or `%TORYO` from the engine), and learns the result via
 `#WIN` / `#LOSE` / `#DRAW`.
 
-This document is the wire-level contract between KEB and the connecting
+This document is the wire-level contract between WEB and the connecting
 engine. The authoritative spec for everything not extended here is the CSA
 server protocol v1.2.1: <http://www2.computer-shogi.org/protocol/tcp_ip_server_121.html>.
 
 Source of truth pointers:
 
-- `Sources/KiouEngineBridge/Server_CSA.m` — TCP transport.
-- `Sources/KiouEngineBridge/Csa_Engine.m` — protocol state machine.
-- `Sources/KiouEngineBridge/Csa_GameInfo.m` — `Game_Summary` / result builder.
-- `Sources/KiouEngineBridge/Csa_Convert.m` — coordinate / piece / move /
+- `Sources/WarsEngineBridge/Server_CSA.m` — TCP transport.
+- `Sources/WarsEngineBridge/Csa_Engine.m` — protocol state machine.
+- `Sources/WarsEngineBridge/Csa_GameInfo.m` — `Game_Summary` / result builder.
+- `Sources/WarsEngineBridge/Csa_Convert.m` — coordinate / piece / move /
   position conversion. Pinned regression tests in
   `tests/test_csa_convert_expectations.py`.
 
 ## Transport
 
 - **TCP, plaintext, port 4081.** Bound to `0.0.0.0` from
-  `Sources/KiouEngineBridge/Tweak.m::init` via `KEBCsaServerStart(4081)`.
+  `Sources/WarsEngineBridge/Tweak.m::init` via `WEBCsaServerStart(4081)`.
   No TLS, no Bonjour. CSA's wire protocol is unencrypted by design; the
   model is "tweak and engine live on the same trusted network."
 - **One client at a time.** A second incoming connection preempts the
@@ -56,76 +56,69 @@ Source of truth pointers:
 
 ## Protocol state machine
 
-KEB's state machine sits in `Sources/KiouEngineBridge/Csa_Engine.m`:
+WEB's state machine sits in `Sources/WarsEngineBridge/Csa_Engine.m`:
 
 ```
 BOOT
   ↓  TCP accept
 LOGIN
-  ↓  inbound "LOGIN <name> <pass>"        →  send "LOGIN:<name> OK"
-  ↓  (if KIOU match already in progress)  →  send "BEGIN Game_Summary ..."
-                                              + "START:<Game_ID>"
-                                              (KIOU does not wait for AGREE)
+  ↓  inbound "LOGIN <name> <pass>"              →  send "LOGIN:<name> OK"
+  ↓  (if ShogiWars match already in progress)  →  send "BEGIN Game_Summary ..."
+                                                   + "START:<Game_ID>"
 PLAYING
-  ↓  inbound move "+7776FU"               →  inject into KIOU
-  ↓  KIOU move observed                   →  send "+7776FU,T10"
-  ↓  inbound "%TORYO"                     →  GameOrchestrator.RequestSurrender
-  ↓  KIOU match end                       →  send "#REASON" + "#WIN/LOSE/DRAW"
+  ↓  inbound move "+7776FU"                     →  inject into ShogiWars
+  ↓  ShogiWars move observed                    →  send "+7776FU,T10"
+  ↓  inbound "%TORYO"                           →  ShowResignAlertDialog
+  ↓  ShogiWars match end                        →  send "#REASON" + "#WIN/LOSE/DRAW"
 GAME_OVER
-  ↓  inbound "LOGIN ..." (next match)     →  back to LOGIN
-  ↓  inbound "LOGOUT"                     →  send "LOGOUT:completed", close
+  ↓  inbound "LOGIN ..." (next match)           →  back to LOGIN
+  ↓  inbound "LOGOUT"                           →  send "LOGOUT:completed", close
 ```
 
-**Important deviation from the CSA spec.** KIOU's match-start event fires
-its in-game CPU immediately; KEB has no way to pause KIOU until the
-engine has replied with `AGREE`. To prevent the CPU's first moves from
-being dropped while we sit in `AGREE_WAIT`, KEB emits `START:<Game_ID>`
-*together with* `Game_Summary` and advances straight to `PLAYING`. A
-later inbound `AGREE` from the engine is logged and silently dropped —
-the engine sees `START:` arrive without an explicit acknowledgement of
-its `AGREE`, which most CSA clients accept without complaint.
-
-The `AGREE_WAIT` state still exists in the enum but is now reserved for
-future use (e.g. a build flavour that does pause KIOU during the
-handshake); in the live path the state machine goes `LOGIN → PLAYING`
-directly.
+**Note on AGREE.** WEB emits `START:<Game_ID>` together with `Game_Summary`
+and advances straight to `PLAYING`, because ShogiWars's match-start event
+fires immediately with no way to pause it from outside. A later inbound
+`AGREE` from the engine is logged and silently dropped — most CSA clients
+accept `START:` arriving without an explicit acknowledgement of their
+`AGREE`.
 
 ## CSA commands handled
 
-### KEB → engine (outbound)
+### WEB → engine (outbound)
 
 | Line | When | Notes |
 |---|---|---|
 | `LOGIN:<name> OK` | inbound `LOGIN` | Any credentials are accepted. |
-| `LOGOUT:completed` | inbound `LOGOUT` | KEB then closes the TCP socket. |
+| `LOGOUT:completed` | inbound `LOGOUT` | WEB then closes the TCP socket. |
 | `BEGIN Game_Summary ... END Game_Summary` | match start | See `Game_Summary` schema below. |
-| `START:<Game_ID>` | inbound `AGREE` after Game_Summary | |
+| `START:<Game_ID>` | immediately after `Game_Summary` | |
 | `REJECT:<Game_ID> by engine` | inbound `REJECT` | Session stays open; engine may issue another LOGIN. |
-| `<sign><from><to><PIECE>,T<n>` | KIOU NotifyPieceMoved fires | Both colors are echoed (sign + black, − white). `T<n>` is computed from the snapshot delta and is omitted in modes without authoritative clocks. |
-| `#RESIGN`, `#TIME_UP`, `#ILLEGAL_MOVE`, `#SENNICHITE`, `#OUTE_SENNICHITE`, `#JISHOGI`, `#MAX_MOVES`, `#CHUDAN` | match end | KEB picks the reason marker that best matches the inferred outcome (currently `#RESIGN` for win/lose and `#SENNICHITE` for draw — see `CsaBuildMatchResult` in Csa_GameInfo.m). |
-| `#WIN` / `#LOSE` / `#DRAW` / `#CENSORED` | match end | Outcome from the engine's seat perspective. |
+| `<sign><from><to><PIECE>,T<n>` | ShogiWars move observed | Both colors are echoed. `T<n>` sourced from `MoveData.time`. |
+| `#RESIGN` / `#TIME_UP` / `#TSUMI` / `#SENNICHITE` / `#OUTE_SENNICHITE` / `#JISHOGI` / `#MAX_MOVES` / `#CHUDAN` | match end | Mapped from `ReceiveCommand.FinishGame.Reason` — see `csa_compatibility.md`. |
+| `#WIN` / `#LOSE` / `#DRAW` | match end | Outcome from the engine's seat perspective. |
 
-### engine → KEB (inbound)
+### engine → WEB (inbound)
 
 | Line | Action |
 |---|---|
-| `LOGIN <name> [<pass>]` | Reply with `LOGIN:<name> OK`. Advance to LOGIN. Push Game_Summary immediately if KIOU is mid-match. |
+| `LOGIN <name> [<pass>]` | Reply with `LOGIN:<name> OK`. Push Game_Summary immediately if ShogiWars is mid-match. |
 | `LOGOUT` | Reply with `LOGOUT:completed`, close socket, return to BOOT. |
-| `AGREE [<Game_ID>]` | While in AGREE_WAIT: send `START:<Game_ID>` and advance to PLAYING. Otherwise log + drop. |
-| `REJECT [<Game_ID>]` | Log; reply with `REJECT:<Game_ID> by engine`; return to LOGIN. KIOU side is not affected. |
-| `<sign><from><to><PIECE>[,T<n>]` | Parse via `Csa_Convert::MoveBitsFromCsaText` → translate to USI → call `inject_apply`. The `,T<n>` suffix is logged but otherwise unused (KIOU runs its own clock). |
-| `%TORYO` | Send `#RESIGN` + `#WIN`, advance to GAME_OVER, schedule `GameOrchestrator.RequestSurrender` on the main thread (see `Inject_Resign.m`). |
-| `%KACHI` | Send `#JISHOGI` + `#WIN`, advance to GAME_OVER. No corresponding KIOU declaration API has been surfaced yet — see Task 7 of the migration plan. |
-| `%CHUDAN` | Send `#CHUDAN`, advance to GAME_OVER. KIOU is not notified. |
+| `AGREE [<Game_ID>]` | Logged and dropped (WEB is already PLAYING by this point). |
+| `REJECT [<Game_ID>]` | Reply with `REJECT:<Game_ID> by engine`; return to LOGIN. ShogiWars side is not affected. |
+| `<sign><from><to><PIECE>[,T<n>]` | Parse via `Csa_Convert::MoveBitsFromCsaText` → translate to USI → inject. The `,T<n>` suffix is logged but otherwise unused (ShogiWars runs its own clock). |
+| `%TORYO` | Send `#RESIGN` + `#LOSE`, advance to GAME_OVER, call `ShowResignAlertDialog` on the main thread. |
+| `%KACHI` | Send `#JISHOGI` + `#WIN`, advance to GAME_OVER. ShogiWars side is not signalled. |
+| `%CHUDAN` | Send `#CHUDAN`, advance to GAME_OVER. ShogiWars is not notified. |
+| `%%TIME` | Reply with `BEGIN Time … END Time` block containing `Remaining_Time_Ms+`, `Remaining_Time_Ms-`, `Byoyomi_Ms`. Only valid while PLAYING; returns an error line otherwise. |
 | bare `\n` (CSA liveness ping) | No-op; TCP keepalive handles dead-peer detection separately. |
 | anything else | Logged as `[CSA-ENG] ignoring unrecognised line: ...`, otherwise dropped. |
 
 ## `Game_Summary` schema
 
-KEB emits the block right after a KIOU match starts (or right after the
-LOGIN reply if the engine connects mid-match). All standard CSA fields are
-written; KIOU-specific extensions live between the position block and
-`END Game_Summary` so a strict CSA parser ignores them.
+WEB emits the block right after a ShogiWars match starts (or right after
+the LOGIN reply if the engine connects mid-match). All standard CSA fields
+are written; ShogiWars-specific extensions live between the position block
+and `END Game_Summary` so a strict CSA parser ignores them.
 
 ```
 BEGIN Game_Summary
@@ -133,15 +126,15 @@ Protocol_Version:1.2
 Protocol_Mode:Server
 Format:Shogi 1.0
 Declaration:Jishogi 1.1
-Game_ID:20260616T093003-VsAI
-Name+:プレイヤー
-Name-:KIOU CPU (Normal)
+Game_ID:20260616T093003-Online
+Name+:プレイヤーA
+Name-:プレイヤーB
 Your_Turn:+
 To_Move:+
 BEGIN Time
 Time_Unit:1sec
-Total_Time:600
-Byoyomi:30
+Total_Time:300
+Byoyomi:10
 END Time
 BEGIN Position
 P1-KY-KE-GI-KI-OU-KI-GI-KE-KY
@@ -157,64 +150,69 @@ P+
 P-
 +
 END Position
-KIOU_Mode:VsAI
-KIOU_StartPosition:Standard
-KIOU_Rank+:六段
-KIOU_Rate+:1832
-KIOU_UserId+:abc123
-KIOU_StartedAt:2026-06-16T09:30:03Z
+WARS_Mode:Online
+WARS_Dan+:3
+WARS_Dan-:4
+WARS_Points+:1450
+WARS_Points-:1832
+WARS_Favsenpou+:居飛車
+WARS_Favsenpou-:振り飛車
+WARS_StartedAt:2026-06-16T09:30:03Z
 END Game_Summary
 ```
 
-### KIOU_* extension lines
+### WARS_* extension lines
 
-KEB ships data CSA has no equivalent for as `KIOU_<key>:<value>` lines.
-Engines should ignore any unknown `KIOU_*` key. Defined keys:
+WEB ships data CSA has no equivalent for as `WARS_<key>:<value>` lines.
+Engines should ignore any unknown `WARS_*` key. Defined keys:
 
 | Key | Value | Notes |
 |---|---|---|
-| `KIOU_Mode` | `VsAI` \| `LocalPvP` \| `OnlinePvP` \| `RecordReplay` \| `Spectate` \| `Unknown(<n>)` | KIOU match mode (`MatchMode` enum). |
-| `KIOU_StartPosition` | `Standard` \| `HandicapLance` \| ... \| `TsumeShogi` | Initial position type. |
-| `KIOU_Rank+` / `KIOU_Rank-` | string | Player rank if surfaced (Online matches usually have it). |
-| `KIOU_Rate+` / `KIOU_Rate-` | integer | Player rate. Omitted when zero / unknown. |
-| `KIOU_UserId+` / `KIOU_UserId-` | string | Player user id. Omitted when blank. |
-| `KIOU_StartedAt` | ISO 8601 UTC | KEB wall-clock at match start. |
+| `WARS_Mode` | `Online` \| `Practice` | Derived from `GameStartJson.opponent_type`. |
+| `WARS_Dan+` / `WARS_Dan-` | integer | `GamePlayerJson.game_record.dan`. |
+| `WARS_Points+` / `WARS_Points-` | integer | `GamePlayerJson.points`. Omitted when zero. |
+| `WARS_Favsenpou+` / `WARS_Favsenpou-` | string | `GamePlayerJson.favsenpou`. Omitted when blank. |
+| `WARS_StartedAt` | ISO 8601 UTC | WEB wall-clock at match start. |
 
 Fields that have no value are omitted entirely rather than written as
 empty strings, so a parser can rely on "key present → value valid."
 
 ### Time control
 
-CSA's `BEGIN Time` block carries only the fields KIOU actually exposes
-(`Total_Time`, `Byoyomi`, `Increment`). `Delay`, `Least_Time_Per_Move`, and
-`Time_Roundup` are never written. KEB does not currently honour
-`Time_Unit:1msec` either — KIOU works in seconds and that's what we ship.
+CSA's `BEGIN Time` block carries only the fields ShogiWars actually
+exposes. `sente_time_limit` / `gote_time_limit` map to `Total_Time`, and
+`sente_byoyomi` / `gote_byoyomi` map to `Byoyomi` for the engine's seat.
+`Increment`, `Delay`, `Least_Time_Per_Move`, and `Time_Roundup` are never
+written.
 
-The `,T<n>` field on move lines is computed from the difference between
-consecutive authoritative snapshots (`Hook_OnlineObserve::g_latestBlackTimeSec` /
-`g_latestWhiteTimeSec`). VsAI and LocalPvP modes do not surface
-authoritative clocks, so the suffix is omitted in those modes.
+The `,T<n>` field on move lines is sourced from `MoveData.time`, which
+ShogiWars populates for all game modes.
 
 ## End-of-match
 
-KEB sends a `#REASON` line followed by `#WIN` / `#LOSE` / `#DRAW` whenever
-KIOU's match-end hook fires with a resolved outcome:
+WEB sends a `#REASON` line followed by `#WIN` / `#LOSE` / `#DRAW` whenever
+ShogiWars's match-end hook fires. The reason marker is mapped directly from
+`ReceiveCommand.FinishGame.Reason`:
 
-| Inferred outcome | `#REASON` | Outcome |
+| Reason | `#REASON` | Outcome |
 |---|---|---|
-| Local seat wins (engine resigns or times out) | `#RESIGN` | `#WIN` |
-| Local seat loses | `#RESIGN` | `#LOSE` |
-| Draw (sennichite or similar) | `#SENNICHITE` | `#DRAW` |
-| Unknown (open-seat modes) | — | (no result block sent) |
+| `TORYO` / `DISCONNECT` | `#RESIGN` | `#WIN` / `#LOSE` |
+| `CHECKMATE` | `#TSUMI` | `#WIN` / `#LOSE` |
+| `TIMEOUT` | `#TIME_UP` | `#WIN` / `#LOSE` |
+| `SENNICHI` | `#SENNICHITE` | `#DRAW` |
+| `OUTE_SENNICHI` | `#OUTE_SENNICHITE` | `#LOSE` |
+| `ENTERINGKING` | `#JISHOGI` | `#WIN` / `#LOSE` |
+| `PLY_LIMIT` | `#MAX_MOVES` | `#DRAW` |
+| `MAINTENANCE` | `#CHUDAN` | (no outcome line) |
 
-After the block KEB transitions to `GAME_OVER`. The TCP session stays
-open; a fresh LOGIN advances back to `LOGIN` and the next KIOU match's
-`Game_Summary` will roll the engine into another game.
+After the block WEB transitions to `GAME_OVER`. The TCP session stays
+open; a fresh LOGIN advances back to `LOGIN` and the next ShogiWars
+match's `Game_Summary` will roll the engine into another game.
 
-## Example session (VsAI)
+## Example session (Online match)
 
 Engine perspective, from connect through one move to match end. `>` is
-engine→KEB, `<` is KEB→engine. Trailing `\n`s are shown for clarity.
+engine→WEB, `<` is WEB→engine. Trailing `\n`s are shown for clarity.
 
 ```
 > LOGIN test pass\n
@@ -224,15 +222,15 @@ engine→KEB, `<` is KEB→engine. Trailing `\n`s are shown for clarity.
 < Protocol_Mode:Server\n
 < Format:Shogi 1.0\n
 < Declaration:Jishogi 1.1\n
-< Game_ID:20260616T093003-VsAI\n
-< Name+:プレイヤー\n
-< Name-:KIOU CPU (Normal)\n
+< Game_ID:20260616T093003-Online\n
+< Name+:プレイヤーA\n
+< Name-:プレイヤーB\n
 < Your_Turn:+\n
 < To_Move:+\n
 < BEGIN Time\n
 < Time_Unit:1sec\n
-< Total_Time:600\n
-< Byoyomi:30\n
+< Total_Time:300\n
+< Byoyomi:10\n
 < END Time\n
 < BEGIN Position\n
 < P1-KY-KE-GI-KI-OU-KI-GI-KE-KY\n
@@ -248,21 +246,22 @@ engine→KEB, `<` is KEB→engine. Trailing `\n`s are shown for clarity.
 < P-\n
 < +\n
 < END Position\n
-< KIOU_Mode:VsAI\n
-< KIOU_StartPosition:Standard\n
-< KIOU_StartedAt:2026-06-16T09:30:03Z\n
+< WARS_Mode:Online\n
+< WARS_Dan+:3\n
+< WARS_Dan-:4\n
+< WARS_StartedAt:2026-06-16T09:30:03Z\n
 < END Game_Summary\n
+< START:20260616T093003-Online\n
 > AGREE\n
-< START:20260616T093003-VsAI\n
 > +7776FU\n
-< +7776FU\n
-< -3334FU\n
+< +7776FU,T5\n
+< -3334FU,T3\n
 > +2726FU\n
-< +2726FU\n
+< +2726FU,T8\n
 ...
 > %TORYO\n
 < #RESIGN\n
-< #WIN\n
+< #LOSE\n
 > LOGOUT\n
 < LOGOUT:completed\n
 ```
@@ -275,15 +274,10 @@ flavours. Time control / result inference is uniform too.
 | Build | Distribution | Notes |
 |---|---|---|
 | `make` (JB / rootless) | jailbroken iOS 15.0 – 16.5 | MobileSubstrate hooks. |
-| `make JAILED=1` | sideloaded iOS 15.0 – 17.x via Sideloadly | Dobby static link. |
-| `make BINPATCH=1` | iOS 15.0 – 18.x via Sideloadly / TrollStore | Static binary patch + `__DATA,__bss` SLOT dispatcher, survives iOS 18 CSM. |
+| `make JAILED=1` | TrollStore-injected, iOS 15.0 – 17.x | Dobby static link. |
+| `make chinlan FINALPACKAGE=1` | iOS 15.0 – 18.x via Sideloadly / AltStore | Static binary patch, survives iOS 18 CSM. |
 
 ## Related documents
 
-- `docs/csa_compatibility.md` — full table of CSA commands KEB supports vs
-  ignores vs cannot map to KIOU.
-- `docs/plans/kiou_engine_bridge_csa_migration.md` — the migration plan
-  that produced this protocol surface.
-- `docs/plans/kiou_engine_bridge_binpatch.md` — binpatch build mechanics.
-- `docs/archive/usi_bridge_protocol.md` — the legacy USI WebSocket
-  protocol KEB spoke before this migration.
+- `docs/csa_compatibility.md` — full table of CSA commands WEB supports vs
+  ignores vs cannot map to ShogiWars.
