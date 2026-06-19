@@ -32,6 +32,7 @@
 static void *volatile g_csaMatchConfig = NULL;
 static void *volatile g_csaLatestBlackPlayerInfo = NULL;
 static void *volatile g_csaLatestWhitePlayerInfo = NULL;
+static void *volatile g_csaGameStateStore = NULL;
 
 // ---------------------------------------------------------------------------
 // Field offsets — kept in sync with Meta_Emitter.m's META_OFF_* defines.
@@ -115,6 +116,10 @@ static NSString *csa_compactTimestamp(void) {
 // Hook_GameStateStoreObserve.m. These mirror the MetaSetMatchConfig /
 // MetaOnPlayerInfoSet API surface but feed Csa_GameInfo's own state cache.
 // ---------------------------------------------------------------------------
+void CsaSetGameStateStore(void *gss) {
+    g_csaGameStateStore = gss;
+}
+
 void CsaSetMatchConfig(void *cfg) {
     g_csaMatchConfig = cfg;
     if (!cfg) {
@@ -181,6 +186,8 @@ static csa_time_control_t csa_readTimeControl(void *tcc) {
     out.main_seconds = (int32_t)main;
     out.byoyomi      = (int32_t)byo;
     out.increment    = (int32_t)inc;
+    atomic_store(&g_csaByoyomiMs, (out.byoyomi >= 0) ? out.byoyomi * 1000 : -1);
+    atomic_store(&g_csaTotalTimeMs, (out.main_seconds >= 0) ? (int64_t)out.main_seconds * 1000 : -1);
     return out;
 }
 
@@ -266,12 +273,32 @@ NSString *CsaBuildGameSummary(int32_t local_player,
     // we omit the field so the engine falls back to Total_Time.
     float blackRemain = g_csaLastBlackRemainSec;
     float whiteRemain = g_csaLastWhiteRemainSec;
-    if (!isnan(blackRemain) && blackRemain >= 0.0f) {
-        [out appendFormat:@"Remaining_Time+:%d\n", (int32_t)blackRemain];
+    // When the cache is NaN (no move observed yet for that side), try reading
+    // the live clock directly from GameStateStore (offsets 0x80/0x90 + 0x20),
+    // which is valid even before the first move fires NotifyPieceMoved.
+    // If that also comes back out-of-range (VsAI CPU ≥ 86340s), treat as no-limit.
+    // < 0 in the move-observer cache = no-limit sentinel → 86400s.
+    void *gss = g_csaGameStateStore;
+    if (isnan(blackRemain) && gss) {
+        void *bRP = readPtr(gss, 0x80);
+        if (bRP) {
+            float v = *(const float *)((const uint8_t *)bRP + 0x20);
+            blackRemain = (v > 0.0f && v < 86340.0f) ? v : -1.0f;
+        }
     }
-    if (!isnan(whiteRemain) && whiteRemain >= 0.0f) {
-        [out appendFormat:@"Remaining_Time-:%d\n", (int32_t)whiteRemain];
+    if (isnan(whiteRemain) && gss) {
+        void *wRP = readPtr(gss, 0x90);
+        if (wRP) {
+            float v = *(const float *)((const uint8_t *)wRP + 0x20);
+            whiteRemain = (v > 0.0f && v < 86340.0f) ? v : -1.0f;
+        }
     }
+    int32_t blackRemainSec = isnan(blackRemain) ? tc.main_seconds
+        : (blackRemain < 0.0f ? 86400 : (int32_t)blackRemain);
+    int32_t whiteRemainSec = isnan(whiteRemain) ? tc.main_seconds
+        : (whiteRemain < 0.0f ? 86400 : (int32_t)whiteRemain);
+    [out appendFormat:@"Remaining_Time+:%d\n", blackRemainSec];
+    [out appendFormat:@"Remaining_Time-:%d\n", whiteRemainSec];
     [out appendString:@"END Time\n"];
 
     [out appendString:@"BEGIN Position\n"];
