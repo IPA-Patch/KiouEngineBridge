@@ -211,7 +211,7 @@ bool HookAdapterTryMakeMoveOut(void *self, SfMove move, void *outMove) {
     if (gcSeen && g_gameCtrlCache != gcSeen) g_gameCtrlCache = gcSeen;
     g_lastAdapterEvtUs = mach_absolute_time();
 
-    // Run the original synchronously on the JB build (no-op on binpatch
+    // Run the original synchronously on the JB build (no-op on chinlan
     // because the cave handles orig via the displaced prologue + B orig+4).
     // The return value flows back to the caller verbatim — KIOU's caller
     // checks it to know whether the move actually committed.
@@ -219,7 +219,7 @@ bool HookAdapterTryMakeMoveOut(void *self, SfMove move, void *outMove) {
                                  self, move, outMove);
 
     // orig has completed by this point on JB (synchronous call above) and
-    // will complete on binpatch before the deferred block fires (the cave's
+    // will complete on chinlan before the deferred block fires (the cave's
     // `B orig+4` lands inside the current main-runloop iteration). Either
     // way the dispatched block observes the post-move PositionHistory.
     //
@@ -275,7 +275,7 @@ static bool HookGameCtrlTryMakeMove(void *self, SfMove move) {
 // Installer. Resolves NativeFunction-style trampolines (ToSFEN / GetUSIText /
 // Move.ToStringSFEN) — needed by BOTH builds, because Inject_Move and the
 // observation hooks both call them as function pointers. Then, on the JB
-// build only, installs the two MSHookFunction site hooks; on the binpatch
+// build only, installs the two MSHookFunction site hooks; on the chinlan
 // build the symbol-pointer resolves remain but the hook wires are
 // orchestrated by the static cave + SLOT dispatcher.
 // ---------------------------------------------------------------------------
@@ -287,7 +287,7 @@ void InstallLowLevelObserveHook(uintptr_t unityBase) {
     g_Move_ToStringSFEN =
         (Move_ToStringSFEN_t)(void *)(unityBase + RVA_SUNFISH_MOVE_TO_STRING_SFEN);
 
-#if !KIOU_BINPATCH
+#if !KIOU_CHINLAN
     {
         uintptr_t addr = unityBase + RVA_ADAPTER_TRY_MAKE_MOVE_OUT;
         MSHookFunction((void *)addr,
@@ -310,16 +310,16 @@ void InstallLowLevelObserveHook(uintptr_t unityBase) {
                   (unsigned long)addr, (unsigned)RVA_GAMECTRL_TRY_MAKE_MOVE]);
     }
 #else
-    // On binpatch:
+    // On chinlan:
     //   ShogiGameAdapter.TryMakeMove(Move,out) → routed via cave entry
     //     KIOU_BR_HOOK_ADAPTER_TRY_MAKE_MOVE_OUT in
     //     recipes/kiouenginebridge.py.
     //   GameController.TryMakeMove(Move) → NOT in CAVE_PATCHES. It was a
     //     log-only hook on the JB build, and its observation is fully
     //     covered by HookAdapterTryMakeMoveOut for every move that
-    //     reaches the board. Dropping it on binpatch saves a cave and
+    //     reaches the board. Dropping it on chinlan saves a cave and
     //     keeps the hook surface tight.
-    IPALog(@"[LOWLEVEL] binpatch build — site hooks driven by cave/SLOT, "
+    IPALog(@"[LOWLEVEL] chinlan build — site hooks driven by cave/SLOT, "
              @"symbol pointers resolved.");
-#endif  // !KIOU_BINPATCH
+#endif  // !KIOU_CHINLAN
 }
