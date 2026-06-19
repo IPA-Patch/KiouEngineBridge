@@ -67,6 +67,7 @@ static NSString *volatile g_csaLastGameID = nil;
 // declined to surface a clock for that side this match).
 _Atomic float g_csaLastBlackRemainSec = NAN;
 _Atomic float g_csaLastWhiteRemainSec = NAN;
+_Atomic int32_t g_csaByoyomiMs = -1;
 
 // Previous-move SFEN. Used to detect drops by hand-delta against the
 // post-move SFEN (the KIOU Move bits don't encode the dropped piece type
@@ -269,6 +270,50 @@ static void csa_handle_reject(NSString *line) {
     csa_set_state(CSA_STATE_LOGIN);
 }
 
+static NSString *csa_timeBlockString(void) {
+    float blackRemainSec = atomic_load(&g_csaLastBlackRemainSec);
+    float whiteRemainSec = atomic_load(&g_csaLastWhiteRemainSec);
+    int32_t byoyomiMs = atomic_load(&g_csaByoyomiMs);
+
+    if (isnan(blackRemainSec) || isnan(whiteRemainSec)) return nil;
+
+    int64_t blackRemainMs = (int64_t)llroundf(blackRemainSec * 1000.0f);
+    int64_t whiteRemainMs = (int64_t)llroundf(whiteRemainSec * 1000.0f);
+    if (blackRemainMs < 0 || whiteRemainMs < 0) return nil;
+
+    NSMutableString *out = [NSMutableString stringWithString:@"BEGIN Time\n"];
+    [out appendFormat:@"Remaining_Time_Ms+:%lld\n", blackRemainMs];
+    [out appendFormat:@"Remaining_Time_Ms-:%lld\n", whiteRemainMs];
+    if (byoyomiMs >= 0) {
+        [out appendFormat:@"Byoyomi_Ms:%d\n", byoyomiMs];
+    }
+    [out appendString:@"END Time"];
+    return out;
+}
+
+static void csa_handle_extension(NSString *line) {
+    int s = atomic_load(&g_csaState);
+    if (s != CSA_STATE_PLAYING) {
+        IPALog([NSString stringWithFormat:
+                  @"[CSA-ENG] extension %@ in state %s — ignoring",
+                  line, csa_state_name(s)]);
+        return;
+    }
+
+    if ([line isEqualToString:@"%%TIME"]) {
+        NSString *timeBlock = csa_timeBlockString();
+        if (timeBlock.length == 0) {
+            IPALog(@"[CSA-ENG] %%TIME requested before both remain clocks were known");
+            return;
+        }
+        CsaEngineSendBlock(timeBlock);
+        return;
+    }
+
+    IPALog([NSString stringWithFormat:
+              @"[CSA-ENG] unknown extension: %@", line]);
+}
+
 // Forward decl — implemented later in this file.
 static void csa_handle_move_from_engine(NSString *line);
 static void csa_handle_special(NSString *line);
@@ -302,6 +347,10 @@ static void csa_handle_line(NSString *line) {
     }
     if ([trimmed hasPrefix:@"REJECT"]) {
         csa_handle_reject(trimmed);
+        return;
+    }
+    if ([trimmed hasPrefix:@"%%"]) {
+        csa_handle_extension(trimmed);
         return;
     }
     if ([trimmed hasPrefix:@"%"]) {
@@ -610,6 +659,7 @@ void CsaEngineOnMatchStart(int32_t local_player) {
     // delta isn't computed against a stale previous-match value.
     g_csaLastBlackRemainSec = NAN;
     g_csaLastWhiteRemainSec = NAN;
+    atomic_store(&g_csaByoyomiMs, -1);
     // Drop the previous match's SFEN so hand-delta drop detection and
     // pre-move piece lookup don't carry across matches.
     g_csaPrevSfen = nil;

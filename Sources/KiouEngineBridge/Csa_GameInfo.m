@@ -181,6 +181,7 @@ static csa_time_control_t csa_readTimeControl(void *tcc) {
     out.main_seconds = (int32_t)main;
     out.byoyomi      = (int32_t)byo;
     out.increment    = (int32_t)inc;
+    atomic_store(&g_csaByoyomiMs, (out.byoyomi >= 0) ? out.byoyomi * 1000 : -1);
     return out;
 }
 
