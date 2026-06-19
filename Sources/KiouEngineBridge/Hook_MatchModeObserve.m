@@ -1,4 +1,5 @@
 #import "Internal.h"
+#import "Settings_Persistence.h"
 
 #import <mach/mach_time.h>
 #import <UIKit/UIKit.h>
@@ -114,7 +115,7 @@ OnPlayerMoveAsync_t orig_RecordReplayMode_OnPlayerMoveAsync = NULL;
 // convention doesn't matter.
 typedef UniTaskRet (*InitializeAsync_t)(void *self, void *cfg, void *stateStore,
                                        void *gameAdapter, void *ct);
-// `__attribute__((unused))` suppresses -Wunused-variable on the binpatch
+// `__attribute__((unused))` suppresses -Wunused-variable on the chinlan
 // build where KIOU_CALL_ORIG_RET expands to ((UniTaskRet){0}) and never
 // evaluates the pointer argument.
 static InitializeAsync_t orig_AI_Init        __attribute__((unused)) = NULL;
@@ -134,13 +135,13 @@ static OnMatchEndAsync_t orig_Replay_End    __attribute__((unused)) = NULL;
 
 // OnMatchStart() -> void. Truly synchronous; no UniTask gymnastics.
 //
-// __attribute__((unused)) is needed because on the binpatch build the
+// __attribute__((unused)) is needed because on the chinlan build the
 // KIOU_CALL_ORIG_VOID(ORIG_VAR, self) inside DEFINE_START_HOOK expands to
 // ((void)0), leaving these five `orig_*_Start` storage slots unreferenced.
 // MSHookFunction's installer writes through their addresses on the JB
 // build (the `(void **)&orig_..._Start` argument in the entries[] table),
 // so they're not actually unused at runtime in that flavour — and on
-// binpatch they're simply spare slots. `((unused))` tells -Werror to stay
+// chinlan they're simply spare slots. `((unused))` tells -Werror to stay
 // quiet for both shapes without forcing us to gate the declarations
 // themselves with #if.
 typedef void (*OnMatchStart_t)(void *self);
@@ -179,10 +180,10 @@ static inline BOOL shouldLog(uint32_t n) {
                       @"[MMODE] " MODE_TAG " OPM call#%u self=%p move=0x%x",       \
                       n, self, (unsigned)mv]);                                      \
         }                                                                           \
-        /* On binpatch KIOU_CALL_ORIG_RET is a no-op: the cave runs orig via  */   \
+        /* On chinlan KIOU_CALL_ORIG_RET is a no-op: the cave runs orig via  */   \
         /* the displaced prologue + `B orig+4` after the dispatcher returns.  */   \
         /* On JB the trampoline installed by MSHookFunction is in ORIG_VAR.   */   \
-        /* Never call ORIG_VAR directly on binpatch: it points at the patched */   \
+        /* Never call ORIG_VAR directly on chinlan: it points at the patched */   \
         /* instruction (now `B <cave>`), which would recurse infinitely.      */   \
         return KIOU_CALL_ORIG_RET(UniTaskRet, ORIG_VAR, self, mv, ct);             \
     }
@@ -242,7 +243,7 @@ DEFINE_OPM_HOOK(Replay,    "RecordReplayMode", g_recordReplayModeCache,
         /* modes). */                                                                  \
         MetaSetMatchConfig(cfg);                                                     \
         CsaSetMatchConfig(cfg);                                                       \
-        /* On binpatch KIOU_CALL_ORIG_RET is a no-op (cave handles orig). */ \
+        /* On chinlan KIOU_CALL_ORIG_RET is a no-op (cave handles orig). */ \
         UniTaskRet ret =                                                                \
             KIOU_CALL_ORIG_RET(UniTaskRet, ORIG_VAR, self, cfg, store, adapter, ct);   \
         IPALog([NSString stringWithFormat:                                            \
@@ -282,7 +283,7 @@ DEFINE_INIT_HOOK(Replay,    "RecordReplayMode", g_recordReplayModeCache,
 // The hook body uses KIOU_CALL_ORIG_VOID to run orig before the deferred
 // block — on the JB build that drives the real OnMatchStart synchronously
 // (without it, MSHookFunction would replace the function wholesale); on the
-// binpatch build it expands to (void)0 because the cave already runs the
+// chinlan build it expands to (void)0 because the cave already runs the
 // displaced prologue + `B orig+4` outside this function. Either way orig is
 // guaranteed to have run by the time the dispatched block fires on the next
 // main-runloop spin, so `_localPlayer` is populated when the block reads it.
@@ -458,18 +459,29 @@ static void scheduleAutoRematch(const char *modeTag) {
         IPALog(@"[REMATCH] skipped: mode opts out");
         return;
     }
+
+    // Respect the user's auto-rematch toggle.
+    if (!KEBAutoRematchEnabled()) {
+        IPALog(@"[REMATCH] skipped: auto_rematch disabled by user");
+        return;
+    }
+
     bool isOnline = (strcmp(modeTag, "online") == 0);
 
-    IPALog([NSString stringWithFormat:
-              @"[REMATCH] scheduling auto-rematch mode=%s orch=%p",
-              modeTag, g_gameOrchestratorCache]);
+    float step1Sec = KEBRematchStep1Sec();
+    float step2Sec = KEBRematchStep2Sec();
 
-    // Step 1 (+3.5s): close the result overlay by tapping the same path
+    IPALog([NSString stringWithFormat:
+              @"[REMATCH] scheduling auto-rematch mode=%s orch=%p "
+              @"step1=%.1fs step2=%.1fs",
+              modeTag, g_gameOrchestratorCache, step1Sec, step2Sec]);
+
+    // Step 1 (+step1Sec): close the result overlay by tapping the same path
     // the player's "back" button would. GameOrchestrator.OnEndSequenceCompleted
     // is private but call-compatible from C — disassembly shows it just
     // walks the exit flow.
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
-                                 (int64_t)(3.5 * NSEC_PER_SEC)),
+                                 (int64_t)(step1Sec * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
         void *orch = g_gameOrchestratorCache;
         if (!orch || g_unityBase == 0) {
@@ -490,11 +502,11 @@ static void scheduleAutoRematch(const char *modeTag) {
         }
     });
 
-    // Step 2 (+5.5s): kick the next match. CPU path reads the previous
-    // strength off the cached GameOrchestrator → GameSetup → GameParams
-    // chain so the rematch matches what the player started.
+    // Step 2 (+step1Sec+step2Sec): kick the next match. CPU path reads the
+    // previous strength off the cached GameOrchestrator → GameSetup →
+    // GameParams chain so the rematch matches what the player started.
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
-                                 (int64_t)(5.5 * NSEC_PER_SEC)),
+                                 (int64_t)((step1Sec + step2Sec) * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
         if (g_unityBase == 0) {
             IPALog(@"[REMATCH] step2 skipped: no unityBase");
@@ -572,7 +584,7 @@ static void scheduleAutoRematch(const char *modeTag) {
         dispatch_async(dispatch_get_main_queue(), ^{                              \
             [UIApplication sharedApplication].idleTimerDisabled = NO;            \
         });                                                                        \
-        /* On binpatch KIOU_CALL_ORIG_RET is a no-op (cave handles orig). */ \
+        /* On chinlan KIOU_CALL_ORIG_RET is a no-op (cave handles orig). */ \
         return KIOU_CALL_ORIG_RET(UniTaskRet, ORIG_VAR, self, ct);                \
     }
 
@@ -591,11 +603,11 @@ DEFINE_END_HOOK(Replay,    "RecordReplayMode", g_recordReplayModeCache,
 
 // ---------------------------------------------------------------------------
 // Installer. Wires up all 20 hooks (5 modes × {Init / Start / OPM / End}).
-// On the binpatch build all 20 sites are routed by the static cave + SLOT
+// On the chinlan build all 20 sites are routed by the static cave + SLOT
 // dispatcher (KIOU_BR_HOOK_*_INIT / _START / _OPM / _END in
 // recipes/kiouenginebridge.py), so the installer is omitted there.
 // ---------------------------------------------------------------------------
-#if !KIOU_BINPATCH
+#if !KIOU_CHINLAN
 void InstallMatchModeObserveHook(uintptr_t unityBase) {
     struct { const char *tag; const char *what; uintptr_t rva;
              void *hook; void **origSlot; } entries[] = {
@@ -660,26 +672,26 @@ void InstallMatchModeObserveHook(uintptr_t unityBase) {
                   (unsigned long)addr, (unsigned long)entries[i].rva]);
     }
 }
-#else   // KIOU_BINPATCH
-// On the binpatch build the static cave + SLOT dispatcher drives every hook
+#else   // KIOU_CHINLAN
+// On the chinlan build the static cave + SLOT dispatcher drives every hook
 // body, so MSHookFunction is never called.
 //
 // Importantly we MUST NOT write `unityBase + RVA_*` into `orig_*` here: that
 // address is the patched first instruction (`B <cave>`), so calling it from
 // the inject path would re-enter the dispatcher and loop. The bypass entry
-// for binpatch injection is the cave tail (cave + KIOU_BR_CAVE_BYPASS_OFFSET),
+// for chinlan injection is the cave tail (cave + KIOU_BR_CAVE_BYPASS_OFFSET),
 // computed by `kiou_bridge_bypass_entry_for_hook()` and exposed via
-// `KIOU_BR_BINPATCH_ORIG_OR_BYPASS(orig_*, hook_id, type)` -- the macro
+// `KIOU_BR_CHINLAN_ORIG_OR_BYPASS(orig_*, hook_id, type)` -- the macro
 // returns `g_inject_entry[hook_id]` when `orig_*` is NULL, which is the
 // right call target on this build.
 //
 // Leaving `orig_*` at NULL is therefore the correct (and required) state on
-// binpatch. The installer is kept as a no-op so Tweak.m can dispatch it
+// chinlan. The installer is kept as a no-op so Tweak.m can dispatch it
 // unconditionally and the log explicitly records that we're on the
 // bypass-entry path.
 void InstallMatchModeObserveHook(uintptr_t unityBase) {
     (void)unityBase;
-    IPALog(@"[MMODE] binpatch: install is a no-op — orig_* OPM slots stay "
+    IPALog(@"[MMODE] chinlan: install is a no-op — orig_* OPM slots stay "
              @"NULL so the bypass-entry path in inject_pickRoute() is taken.");
 }
-#endif  // !KIOU_BINPATCH
+#endif  // !KIOU_CHINLAN
