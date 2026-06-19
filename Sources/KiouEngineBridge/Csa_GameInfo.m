@@ -268,12 +268,12 @@ NSString *CsaBuildGameSummary(int32_t local_player,
     // we omit the field so the engine falls back to Total_Time.
     float blackRemain = g_csaLastBlackRemainSec;
     float whiteRemain = g_csaLastWhiteRemainSec;
-    if (!isnan(blackRemain) && blackRemain >= 0.0f) {
-        [out appendFormat:@"Remaining_Time+:%d\n", (int32_t)blackRemain];
-    }
-    if (!isnan(whiteRemain) && whiteRemain >= 0.0f) {
-        [out appendFormat:@"Remaining_Time-:%d\n", (int32_t)whiteRemain];
-    }
+    int32_t blackRemainSec = isnan(blackRemain) ? tc.main_seconds
+        : (blackRemain < 0.0f ? 86400 : (int32_t)blackRemain);
+    int32_t whiteRemainSec = isnan(whiteRemain) ? tc.main_seconds
+        : (whiteRemain < 0.0f ? 86400 : (int32_t)whiteRemain);
+    [out appendFormat:@"Remaining_Time+:%d\n", blackRemainSec];
+    [out appendFormat:@"Remaining_Time-:%d\n", whiteRemainSec];
     [out appendString:@"END Time\n"];
 
     [out appendString:@"BEGIN Position\n"];
