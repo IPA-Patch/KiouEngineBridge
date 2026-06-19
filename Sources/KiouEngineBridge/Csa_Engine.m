@@ -68,6 +68,7 @@ static NSString *volatile g_csaLastGameID = nil;
 _Atomic float g_csaLastBlackRemainSec = NAN;
 _Atomic float g_csaLastWhiteRemainSec = NAN;
 _Atomic int32_t g_csaByoyomiMs = -1;
+_Atomic int64_t g_csaTotalTimeMs = -1;
 
 // Previous-move SFEN. Used to detect drops by hand-delta against the
 // post-move SFEN (the KIOU Move bits don't encode the dropped piece type
@@ -275,12 +276,15 @@ static NSString *csa_timeBlockString(void) {
     float whiteRemainSec = atomic_load(&g_csaLastWhiteRemainSec);
     int32_t byoyomiMs = atomic_load(&g_csaByoyomiMs);
 
-    // NaN = clock not yet observed; -1.0f = no-limit sentinel (VsAI CPU side).
-    // Both map to the CSA "no limit" value of 86400000ms.
-    int64_t blackMs = (isnan(blackRemainSec) || blackRemainSec < 0.0f)
-        ? 86400000 : (int64_t)llroundf(blackRemainSec * 1000.0f);
-    int64_t whiteMs = (isnan(whiteRemainSec) || whiteRemainSec < 0.0f)
-        ? 86400000 : (int64_t)llroundf(whiteRemainSec * 1000.0f);
+    int64_t totalMs = atomic_load(&g_csaTotalTimeMs);
+    // NaN = this side has not moved yet → use the initial total time.
+    // -1.0f = VsAI CPU no-limit sentinel → 86400000ms.
+    int64_t blackMs = isnan(blackRemainSec) ? totalMs
+        : (blackRemainSec < 0.0f ? 86400000
+        : (int64_t)llroundf(blackRemainSec * 1000.0f));
+    int64_t whiteMs = isnan(whiteRemainSec) ? totalMs
+        : (whiteRemainSec < 0.0f ? 86400000
+        : (int64_t)llroundf(whiteRemainSec * 1000.0f));
 
     NSMutableString *out = [NSMutableString stringWithString:@"BEGIN Time\n"];
     [out appendFormat:@"Remaining_Time_Ms+:%lld\n", blackMs];
@@ -656,6 +660,7 @@ void CsaEngineOnMatchStart(int32_t local_player) {
     g_csaLastBlackRemainSec = NAN;
     g_csaLastWhiteRemainSec = NAN;
     atomic_store(&g_csaByoyomiMs, -1);
+    atomic_store(&g_csaTotalTimeMs, -1);
     // Drop the previous match's SFEN so hand-delta drop detection and
     // pre-move piece lookup don't carry across matches.
     g_csaPrevSfen = nil;
