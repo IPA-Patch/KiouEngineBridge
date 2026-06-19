@@ -335,6 +335,7 @@ void CsaEngineOnMoveObserved(uint32_t move,
 // already cached for the legacy meta path. Called from the same Init macro
 // alongside MetaSetMatchConfig.
 void CsaSetMatchConfig(void *cfg);
+void CsaSetGameStateStore(void *gss);
 
 // Latest Online player-info pointer, captured from
 // GameStateStore.Set{Black,White}PlayerInfo. side: 0=Black, 1=White.
