@@ -268,11 +268,16 @@ NSString *CsaBuildGameSummary(int32_t local_player,
     // we omit the field so the engine falls back to Total_Time.
     float blackRemain = g_csaLastBlackRemainSec;
     float whiteRemain = g_csaLastWhiteRemainSec;
-    // NaN = no clock observed yet → use initial total time.
+    // NaN = no clock observed yet for this side.
+    //   VsAI non-local side (CPU): no-limit → 86400s.
+    //   All other cases: fall back to the initial total time.
     // < 0 = no-limit sentinel (-1.0f from the hook) → 86400s.
-    int32_t blackRemainSec = isnan(blackRemain) ? tc.main_seconds
+    BOOL isVsAI = (mode == 0);
+    int32_t blackNanFallback = (isVsAI && local_player != 0) ? 86400 : tc.main_seconds;
+    int32_t whiteNanFallback = (isVsAI && local_player != 1) ? 86400 : tc.main_seconds;
+    int32_t blackRemainSec = isnan(blackRemain) ? blackNanFallback
         : (blackRemain < 0.0f ? 86400 : (int32_t)blackRemain);
-    int32_t whiteRemainSec = isnan(whiteRemain) ? tc.main_seconds
+    int32_t whiteRemainSec = isnan(whiteRemain) ? whiteNanFallback
         : (whiteRemain < 0.0f ? 86400 : (int32_t)whiteRemain);
     [out appendFormat:@"Remaining_Time+:%d\n", blackRemainSec];
     [out appendFormat:@"Remaining_Time-:%d\n", whiteRemainSec];
