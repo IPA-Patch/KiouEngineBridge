@@ -275,19 +275,16 @@ static NSString *csa_timeBlockString(void) {
     float whiteRemainSec = atomic_load(&g_csaLastWhiteRemainSec);
     int32_t byoyomiMs = atomic_load(&g_csaByoyomiMs);
 
+    // NaN = clock not yet observed; -1.0f = no-limit sentinel (VsAI CPU side).
+    // Both map to the CSA "no limit" value of 86400000ms.
+    int64_t blackMs = (isnan(blackRemainSec) || blackRemainSec < 0.0f)
+        ? 86400000 : (int64_t)llroundf(blackRemainSec * 1000.0f);
+    int64_t whiteMs = (isnan(whiteRemainSec) || whiteRemainSec < 0.0f)
+        ? 86400000 : (int64_t)llroundf(whiteRemainSec * 1000.0f);
+
     NSMutableString *out = [NSMutableString stringWithString:@"BEGIN Time\n"];
-    // NaN means no clock has been observed yet for that side (start of match
-    // or KIOU does not surface a live clock for that side, e.g. VsAI's CPU
-    // sentinel -1.0f). Omit the field so the engine knows it is unavailable
-    // rather than returning a misleading 0.
-    if (!isnan(blackRemainSec) && blackRemainSec >= 0.0f) {
-        int64_t ms = (int64_t)llroundf(blackRemainSec * 1000.0f);
-        [out appendFormat:@"Remaining_Time_Ms+:%lld\n", ms];
-    }
-    if (!isnan(whiteRemainSec) && whiteRemainSec >= 0.0f) {
-        int64_t ms = (int64_t)llroundf(whiteRemainSec * 1000.0f);
-        [out appendFormat:@"Remaining_Time_Ms-:%lld\n", ms];
-    }
+    [out appendFormat:@"Remaining_Time_Ms+:%lld\n", blackMs];
+    [out appendFormat:@"Remaining_Time_Ms-:%lld\n", whiteMs];
     if (byoyomiMs >= 0) {
         [out appendFormat:@"Byoyomi_Ms:%d\n", byoyomiMs];
     }
