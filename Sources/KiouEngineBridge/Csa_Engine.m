@@ -830,8 +830,10 @@ void CsaEngineOnMoveObserved(uint32_t move,
             float delta = last - remain;
             timeSpent = (int32_t)delta;  // round down
         }
-        *cacheSlot = remain;
     }
+    // Always write the cache — including the -1.0f no-limit sentinel — so
+    // %%TIME can distinguish "not yet observed" (NaN) from "no-limit" (-1.0f).
+    *cacheSlot = remain;
     if (timeSpent < 0 && opponentLastMach > 0 && nowMach > opponentLastMach) {
         // Path (b): wall-clock fallback. Used either when KIOU doesn't
         // surface a live clock for this side (VsAI's CPU sentinel), or
