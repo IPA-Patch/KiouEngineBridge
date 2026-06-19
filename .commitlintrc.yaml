@@ -5,7 +5,7 @@ rules:
   header-max-length:
     - 2
     - always
-    - 96
+    - 128
   type-enum:
     - 2
     - always
