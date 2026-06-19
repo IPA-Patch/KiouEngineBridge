@@ -67,6 +67,8 @@ static NSString *volatile g_csaLastGameID = nil;
 // declined to surface a clock for that side this match).
 _Atomic float g_csaLastBlackRemainSec = NAN;
 _Atomic float g_csaLastWhiteRemainSec = NAN;
+_Atomic int32_t g_csaByoyomiMs = -1;
+_Atomic int64_t g_csaTotalTimeMs = -1;
 
 // Previous-move SFEN. Used to detect drops by hand-delta against the
 // post-move SFEN (the KIOU Move bits don't encode the dropped piece type
@@ -269,6 +271,49 @@ static void csa_handle_reject(NSString *line) {
     csa_set_state(CSA_STATE_LOGIN);
 }
 
+static NSString *csa_timeBlockString(void) {
+    float blackRemainSec = atomic_load(&g_csaLastBlackRemainSec);
+    float whiteRemainSec = atomic_load(&g_csaLastWhiteRemainSec);
+    int32_t byoyomiMs = atomic_load(&g_csaByoyomiMs);
+
+    int64_t totalMs = atomic_load(&g_csaTotalTimeMs);
+    // NaN = no clock observed yet for this side → fall back to initial total time.
+    // < 0 = no-limit sentinel (-1.0f from the hook) → 86400000ms.
+    int64_t blackMs = isnan(blackRemainSec) ? totalMs
+        : (blackRemainSec < 0.0f ? 86400000LL
+        : (int64_t)llroundf(blackRemainSec * 1000.0f));
+    int64_t whiteMs = isnan(whiteRemainSec) ? totalMs
+        : (whiteRemainSec < 0.0f ? 86400000LL
+        : (int64_t)llroundf(whiteRemainSec * 1000.0f));
+
+    NSMutableString *out = [NSMutableString stringWithString:@"BEGIN Time\n"];
+    [out appendFormat:@"Remaining_Time_Ms+:%lld\n", blackMs];
+    [out appendFormat:@"Remaining_Time_Ms-:%lld\n", whiteMs];
+    if (byoyomiMs >= 0) {
+        [out appendFormat:@"Byoyomi_Ms:%d\n", byoyomiMs];
+    }
+    [out appendString:@"END Time"];
+    return out;
+}
+
+static void csa_handle_extension(NSString *line) {
+    int s = atomic_load(&g_csaState);
+    if (s != CSA_STATE_PLAYING) {
+        IPALog([NSString stringWithFormat:
+                  @"[CSA-ENG] extension %@ in state %s — ignoring",
+                  line, csa_state_name(s)]);
+        return;
+    }
+
+    if ([line isEqualToString:@"%%TIME"]) {
+        CsaEngineSendBlock(csa_timeBlockString());
+        return;
+    }
+
+    IPALog([NSString stringWithFormat:
+              @"[CSA-ENG] unknown extension: %@", line]);
+}
+
 // Forward decl — implemented later in this file.
 static void csa_handle_move_from_engine(NSString *line);
 static void csa_handle_special(NSString *line);
@@ -302,6 +347,10 @@ static void csa_handle_line(NSString *line) {
     }
     if ([trimmed hasPrefix:@"REJECT"]) {
         csa_handle_reject(trimmed);
+        return;
+    }
+    if ([trimmed hasPrefix:@"%%"]) {
+        csa_handle_extension(trimmed);
         return;
     }
     if ([trimmed hasPrefix:@"%"]) {
@@ -610,6 +659,8 @@ void CsaEngineOnMatchStart(int32_t local_player) {
     // delta isn't computed against a stale previous-match value.
     g_csaLastBlackRemainSec = NAN;
     g_csaLastWhiteRemainSec = NAN;
+    atomic_store(&g_csaByoyomiMs, -1);
+    atomic_store(&g_csaTotalTimeMs, -1);
     // Drop the previous match's SFEN so hand-delta drop detection and
     // pre-move piece lookup don't carry across matches.
     g_csaPrevSfen = nil;
@@ -779,8 +830,10 @@ void CsaEngineOnMoveObserved(uint32_t move,
             float delta = last - remain;
             timeSpent = (int32_t)delta;  // round down
         }
-        *cacheSlot = remain;
     }
+    // Always write the cache — including the -1.0f no-limit sentinel — so
+    // %%TIME can distinguish "not yet observed" (NaN) from "no-limit" (-1.0f).
+    *cacheSlot = remain;
     if (timeSpent < 0 && opponentLastMach > 0 && nowMach > opponentLastMach) {
         // Path (b): wall-clock fallback. Used either when KIOU doesn't
         // surface a live clock for this side (VsAI's CPU sentinel), or

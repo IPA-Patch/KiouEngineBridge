@@ -83,3 +83,5 @@ csa_state_t CsaEngineCurrentState(void);
 // cross-thread access — atomics give us a defined memory model.
 extern _Atomic float g_csaLastBlackRemainSec;
 extern _Atomic float g_csaLastWhiteRemainSec;
+extern _Atomic int32_t g_csaByoyomiMs;
+extern _Atomic int64_t g_csaTotalTimeMs;
