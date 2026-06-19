@@ -39,7 +39,7 @@ jobs:
           fi
 
       - name: Checkout source at tag
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ steps.tag.outputs.value }}
           submodules: recursive
@@ -172,7 +172,7 @@ jobs:
           cat release_notes.md
 
       - name: Publish release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.tag.outputs.value }}
           name: ${{ steps.tag.outputs.value }}
