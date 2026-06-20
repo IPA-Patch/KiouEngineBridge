@@ -68,6 +68,13 @@ static void installUnityHooks(void) {
 
     g_unityHooked = YES;
     IPALog(@"=== WarsEngineBridge: all hooks installed ===");
+
+    // Settings sheet — right-edge swipe gesture installed on the key window.
+    // Retries internally until a UIWindow is available.
+    WEBSettingsInstall();
+
+    // Swizzle UIKit to log every UIAlertController the app presents.
+    InstallAlertObserveHook();
 }
 
 static void retryInstallHooks(void) {

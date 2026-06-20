@@ -44,6 +44,11 @@
 // ---------------------------------------------------------------------------
 static void *volatile g_csaGameStartJson = NULL;
 
+// Set to true once at least one move has been observed in the current match.
+// When true, CsaBuildGameSummary uses WarsLiveSfen() for the live position
+// instead of init_pos. Reset to false on match end (CsaSetGameStart(nil)).
+static _Atomic bool g_csaHasMoves = false;
+
 // Remaining time cache (seconds), updated by CsaEngineOnMoveObserved.
 // NaN = no move observed yet.
 _Atomic float g_csaLastSenteRemainSec = NAN;
@@ -104,9 +109,17 @@ static NSString *csa_modeName(int32_t opponentType) {
 void CsaSetGameStart(void *gameStartJson) {
     g_csaGameStartJson = gameStartJson;
     if (!gameStartJson) {
-        // Match teardown — reset time caches.
+        // Match teardown — reset time and move-history caches.
         g_csaLastSenteRemainSec = NAN;
         g_csaLastGoteRemainSec  = NAN;
+        atomic_store(&g_csaHasMoves, false);
+    }
+}
+
+void CsaSetMoveObserved(void) {
+    bool prev = atomic_exchange(&g_csaHasMoves, true);
+    if (!prev) {
+        IPALog(@"[CSA-GAME] first move observed: live SFEN on next reconnect");
     }
 }
 
@@ -143,8 +156,45 @@ NSString *CsaBuildGameSummary(bool isBlack, NSString **outGameId) {
     int32_t senteByoyomi   = readI32(gsj, OFF_GSJ_SENTE_BYOYOMI);
     int32_t goteByoyomi    = readI32(gsj, OFF_GSJ_GOTE_BYOYOMI);
 
-    // SFEN of the starting position.
-    NSString *sfen = il2cppStr(readPtr(gsj, OFF_GSJ_INIT_POS));
+    // Position block for BEGIN Position...END Position.
+    // hasMoves=true: mid-game reconnect — use live CSA block from WarsLiveSfen().
+    // hasMoves=false: match start — convert init_pos SFEN via CsaPositionFromSfen().
+    bool hasMoves = atomic_load(&g_csaHasMoves);
+    IPALog([NSString stringWithFormat:
+              @"[CSA-GAME] BuildGameSummary: hasMoves=%d", (int)hasMoves]);
+
+    // liveCsaBlock: non-nil when WarsLiveSfen() succeeds (already in CSA format).
+    // initPosSfen: SFEN string from GameStartJson for the starting position.
+    NSString *liveCsaBlock = nil;
+    NSString *initPosSfen  = il2cppStr(readPtr(gsj, OFF_GSJ_INIT_POS));
+
+    if (hasMoves) {
+        IPALog(@"[CSA-GAME] hasMoves=true: calling WarsLiveSfen()");
+        liveCsaBlock = WarsLiveSfen();
+        if (liveCsaBlock.length == 0) {
+            IPALog(@"[CSA-GAME] WarsLiveSfen() nil/empty, falling back to init_pos");
+            liveCsaBlock = nil;
+        }
+    }
+
+    // To_Move: derive from live block tail line or init_pos SFEN side token.
+    NSString *toMove = @"+";
+    if (liveCsaBlock.length > 0) {
+        // Last non-empty line of the CSA block is "+" or "-".
+        NSArray<NSString *> *blkLines = [liveCsaBlock componentsSeparatedByString:@"\n"];
+        for (NSInteger i = (NSInteger)blkLines.count - 1; i >= 0; i--) {
+            NSString *ln = [blkLines[i] stringByTrimmingCharactersInSet:
+                            [NSCharacterSet whitespaceCharacterSet]];
+            if ([ln isEqualToString:@"+"] || [ln isEqualToString:@"-"]) {
+                toMove = ln;
+                break;
+            }
+        }
+    } else if (initPosSfen.length > 0) {
+        NSArray<NSString *> *parts = [initPosSfen componentsSeparatedByString:@" "];
+        if (parts.count >= 2 && [parts[1] isEqualToString:@"w"]) toMove = @"-";
+    }
+    IPALog([NSString stringWithFormat:@"[CSA-GAME] toMove=%@", toMove]);
 
     NSString *mode   = csa_modeName(oType);
     NSString *gameId = [NSString stringWithFormat:@"%@-%@",
@@ -153,13 +203,6 @@ NSString *CsaBuildGameSummary(bool isBlack, NSString **outGameId) {
 
     // Your_Turn reflects which side the local player (= the CSA engine) holds.
     NSString *yourTurn = isBlack ? @"+" : @"-";
-
-    // To_Move from SFEN side-to-move token.
-    NSString *toMove = @"+";
-    if (sfen.length > 0) {
-        NSArray<NSString *> *parts = [sfen componentsSeparatedByString:@" "];
-        if (parts.count >= 2 && [parts[1] isEqualToString:@"w"]) toMove = @"-";
-    }
 
     // Engine's time control — use the side that matches isBlack.
     int32_t engineTimeLimit = isBlack ? senteTimeLimit : goteTimeLimit;
@@ -198,8 +241,13 @@ NSString *CsaBuildGameSummary(bool isBlack, NSString **outGameId) {
     [out appendString:@"END Time\n"];
 
     [out appendString:@"BEGIN Position\n"];
-    if (sfen.length > 0) {
-        NSString *csaPos = CsaPositionFromSfen(sfen);
+    if (liveCsaBlock.length > 0) {
+        // WarsLiveSfen() returns a ready-to-use CSA block (P1..P9, P+, P-, +/-).
+        [out appendString:liveCsaBlock];
+        if (![liveCsaBlock hasSuffix:@"\n"]) [out appendString:@"\n"];
+    } else {
+        // Fall back to starting position from GameStartJson.
+        NSString *csaPos = CsaPositionFromSfen(initPosSfen);
         if (csaPos.length > 0) {
             [out appendString:csaPos];
             [out appendString:@"\n"];

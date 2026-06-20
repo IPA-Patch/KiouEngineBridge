@@ -127,6 +127,10 @@ void CsaSetGameStart(void *gameStartJson);
 // not been captured yet. outGameId receives the derived Game_ID string.
 NSString *CsaBuildGameSummary(bool isBlack, NSString **outGameId);
 
+// Mark that at least one move has been observed in the current match.
+// Called by Csa_Engine when a move is observed; enables live SFEN on reconnect.
+void CsaSetMoveObserved(void);
+
 // Build "#REASON\n#OUTCOME". Returns nil for unknown outcomes.
 NSString *CsaBuildMatchResult(web_match_result_t result, NSString *reason);
 
@@ -135,6 +139,23 @@ NSString *CsaBuildMatchResult(web_match_result_t result, NSString *reason);
 // Remaining_Time+/- in Game_Summary). NaN means no observation yet.
 extern _Atomic float g_csaLastSenteRemainSec;
 extern _Atomic float g_csaLastGoteRemainSec;
+
+// Read the live board SFEN from GameController.GameData.Position.ToString().
+// Returns "board side hands ply" SFEN string, or nil on any failure.
+// Implemented in Hook_GameController.m.
+NSString *WarsLiveSfen(void);
+
+// ---------------------------------------------------------------------------
+// Settings_UI.m — in-process settings sheet (right-edge swipe to open).
+// ---------------------------------------------------------------------------
+void WEBSettingsInstall(void);
+void WEBPresentSettings(void);
+
+// ---------------------------------------------------------------------------
+// Hook_AlertObserve.m — swizzle UIViewController -presentViewController:
+// animated:completion: to log every UIAlertController shown by the app.
+// ---------------------------------------------------------------------------
+void InstallAlertObserveHook(void);
 
 // ---------------------------------------------------------------------------
 // Inject_Move.m — feed a CSA move back into GameController.SendMove.
@@ -175,7 +196,7 @@ typedef bool (*Move_t)(void *self, void *csaStr, float timeLeft, bool quiet);
 typedef bool (*MoveWithPly_t)(void *self, int32_t ply, void *csaStr,
                               float timeLeft, bool quiet);
 
-// ShowResignAlertDialog()  RVA: 0x284018  (static, no self)
+// ShowResignAlertDialog()  RVA: 0x154B72C  (static, no self)
 typedef void (*ShowResignAlertDialog_t)(void);
 
 extern OnGameStart_t   orig_OnGameStart;

@@ -295,6 +295,9 @@ void CsaEngineOnMoveObserved(NSString *csa, float timeLeft, bool isBlackMove) {
     int s = atomic_load(&g_csaState);
     if (s != CSA_STATE_PLAYING) return;
 
+    // Record that at least one move has been observed so reconnects use live SFEN.
+    CsaSetMoveObserved();
+
     // Update remaining time cache.
     if (timeLeft > 0.0f) {
         if (isBlackMove) g_csaLastSenteRemainSec = timeLeft;

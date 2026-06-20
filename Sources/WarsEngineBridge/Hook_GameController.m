@@ -1,4 +1,5 @@
 #import "Internal.h"
+#import "Settings_Persistence.h"
 
 // ===========================================================================
 // Hook_GameController — observe ShogiWars match lifecycle via GameController.
@@ -39,6 +40,34 @@
 // through this overload, not the (csa,timeLeft,quiet) one. Hooking both
 // gives us coverage for both directions.
 #define RVA_MOVE_PLY_CSA    0x1590DF4
+// GameDialogButtonManager.OnRevengeMenu(bool isUseBackFilterEvent) — RVA 0x1598BB8.
+// Shows the iOS "play again?" dialog after a match ends. Suppressed
+// unconditionally so the dialog never appears.
+#define RVA_ON_REVENGE_MENU 0x1598BB8
+// Native.ShowAndroidAlertDialog(title, message, cancel, other) — RVA 0x1534934.
+// Despite the name, this is the cross-platform dialog wrapper used on iOS too.
+// We suppress the "Continue?" dialog that pops up on match end by matching on
+// the message string when skip_revenge_dialog is on.
+#define RVA_SHOW_ANDROID_ALERT_DIALOG 0x1534934
+// DialogManager.ShowSelectDialog(msg, Action) — RVA 0x153CC68 (instance method).
+// DialogManager.ShowSelectDialog(title, msg, Action) — RVA 0x153CCD8.
+// These present the OK/Cancel two-button dialogs (e.g. "Continue?" after
+// match end). Hooked observation-only for now to identify each call site.
+#define RVA_SHOW_SELECT_DIALOG_2 0x153CC68
+#define RVA_SHOW_SELECT_DIALOG_3 0x153CCD8
+// ShowResignAlertDialog (static, void) — RVA 0x154B72C. Entry point that
+// triggers the "Resign confirmation" dialog. Hooked so we can set a flag
+// for Hook_AlertObserve to auto-confirm when skip_resign_dialog is on.
+#define RVA_SHOW_RESIGN_ALERT_DIALOG 0x154B72C
+// Wars.Dialog.Confirm(title, message, Action ok, Action cancel) — RVA 0x1624A38.
+// The real entry point for confirmation dialogs (the resign dialog goes
+// through here, despite ShowResignAlertDialog also existing). Hooked so we
+// can mark the next UIAlertController presentation as a confirm dialog and
+// auto-invoke the OK callback when skip_resign_dialog is on.
+#define RVA_DIALOG_CONFIRM_4 0x1624A38
+
+// Flag bridged across translation units. Defined in Hook_AlertObserve.m.
+extern _Atomic bool g_webNextAlertIsResign;
 
 // ---------------------------------------------------------------------------
 // Offsets into il2cpp string objects (System.String).
@@ -134,6 +163,150 @@ ShowResignAlertDialog_t g_ShowResignAlertDialog = NULL;
 static inline NSString *il2cppStr(void *str) {
     NSString *s = il2cppStringToNSString(str);
     return s ?: @"";
+}
+
+// ---------------------------------------------------------------------------
+// Live-position chain.
+//   GameController.get_GameData()   RVA 0x158D510  (static)
+//   GameData.get_Position()         RVA 0x1596B94  (instance -> Position*)
+//   Position.ToString()             RVA 0x1600194  (instance -> System.String*)
+// ---------------------------------------------------------------------------
+#define RVA_GC_GET_GAMEDATA       0x158D510
+#define RVA_GAMEDATA_GET_POSITION 0x1596B94
+#define RVA_POSITION_TO_STRING    0x1600194
+
+typedef void *(*GC_GetGameData_t)(void);
+typedef void *(*GameData_GetPosition_t)(void *gameData);
+typedef void *(*Position_ToString_t)(void *position);
+
+static GC_GetGameData_t        g_GC_GetGameData        = NULL;
+static GameData_GetPosition_t  g_GameData_GetPosition  = NULL;
+static Position_ToString_t     g_Position_ToString     = NULL;
+
+// Convert a single board row from Position.ToString() format to CSA format.
+// ToString uses '*' (1 char) for empty, '+XX'/'-XX' (3 chars) for pieces.
+// CSA uses ' * ' (3 chars) for empty, '+XX'/'-XX' (3 chars) for pieces.
+static NSString *csaRowFromToStringRow(NSString *row) {
+    NSMutableString *out = [NSMutableString stringWithCapacity:27];
+    NSUInteger i = 0, len = row.length;
+    while (i < len) {
+        unichar c = [row characterAtIndex:i];
+        if (c == '*') {
+            [out appendString:@" * "];
+            i++;
+        } else if ((c == '+' || c == '-') && i + 2 < len) {
+            [out appendString:[row substringWithRange:NSMakeRange(i, 3)]];
+            i += 3;
+        } else {
+            i++;
+        }
+    }
+    return out;
+}
+
+// Read the live board from GameController.GameData.Position.ToString() and
+// return a CSA position block string (the lines between BEGIN/END Position).
+// Returns nil on any failure.
+NSString *WarsLiveSfen(void) {
+    if (!g_GC_GetGameData || !g_GameData_GetPosition || !g_Position_ToString) {
+        IPALog([NSString stringWithFormat:
+                  @"[GC] WarsLiveSfen: chain not ready "
+                  @"(GetGameData=%p GetPosition=%p ToString=%p)",
+                  g_GC_GetGameData, g_GameData_GetPosition, g_Position_ToString]);
+        return nil;
+    }
+    NSString *result = nil;
+    @try {
+        void *gd = g_GC_GetGameData();
+        if (!gd) {
+            IPALog(@"[GC] WarsLiveSfen: GetGameData() returned nil");
+            return nil;
+        }
+        void *pos = g_GameData_GetPosition(gd);
+        if (!pos) {
+            IPALog([NSString stringWithFormat:
+                      @"[GC] WarsLiveSfen: GetPosition(gd=%p) returned nil", gd]);
+            return nil;
+        }
+        void *strObj = g_Position_ToString(pos);
+        NSString *raw = il2cppStr(strObj);
+        IPALog([NSString stringWithFormat:
+                  @"[GC] WarsLiveSfen: raw ToString=\"%@\"", raw]);
+
+        // Position.ToString() format (from ShogiWars dump.cs):
+        //   "[Board: board=\n<row1>\n...<row9>\n] <side> <hands> <ply> ..."
+        // where each row uses '*' for empty squares and '+XX'/'-XX' for pieces.
+        //
+        // We parse this into a CSA position block directly, since it's already
+        // close to CSA format — just needs P1..P9 row labels and ' * ' for empty.
+
+        // Split by newline.
+        NSArray<NSString *> *lines = [raw componentsSeparatedByString:@"\n"];
+        if (lines.count < 11) {
+            IPALog([NSString stringWithFormat:
+                      @"[GC] WarsLiveSfen: too few lines (%lu) in raw",
+                      (unsigned long)lines.count]);
+            return nil;
+        }
+
+        // Line 0: "[Board: board=" — skip.
+        // Lines 1..9: board rows.
+        // Line 10: "] <side> <hands> <ply> ..."
+        NSMutableString *csaPos = [NSMutableString string];
+        for (int row = 1; row <= 9; row++) {
+            NSString *csaRow = csaRowFromToStringRow(lines[row]);
+            [csaPos appendFormat:@"P%d%@\n", row, csaRow];
+        }
+
+        // Parse tail line: "] <side> <initSfen> <stands> <ply> [hash]"
+        // Position.ToString() format confirmed from live log:
+        //   "] b lnsgkgsnl/... - 1 <hash>"
+        //   tailParts[0] = side ("b"/"w")
+        //   tailParts[1] = InitSfen (skip)
+        //   tailParts[2] = Stands ("-" when no pieces in hand)
+        //   tailParts[3] = Ply
+        NSString *tail = lines[10];
+        if ([tail hasPrefix:@"] "]) tail = [tail substringFromIndex:2];
+        NSArray<NSString *> *tailParts = [tail componentsSeparatedByString:@" "];
+        IPALog([NSString stringWithFormat:@"[GC] WarsLiveSfen: tail parts=%lu \"%@\"",
+                (unsigned long)tailParts.count, tail]);
+
+        // side: "b" -> "+", "w" -> "-"
+        NSString *side = @"+";
+        if (tailParts.count >= 1) {
+            side = [tailParts[0] isEqualToString:@"w"] ? @"-" : @"+";
+        }
+
+        // Stands (pieces in hand) is NOT in the tail — call get_Stands() directly.
+        // pos is valid here since g_Position_ToString(pos) just succeeded above.
+        typedef void *(*Position_GetStands_t)(void *position);
+        static Position_GetStands_t s_GetStands = NULL;
+        if (!s_GetStands && g_GC_GetGameData) {
+            extern uintptr_t g_unityBase;
+            s_GetStands = (Position_GetStands_t)(void *)(g_unityBase + 0x15FFF04);
+        }
+        NSString *standsStr = @"-";
+        if (s_GetStands) {
+            void *standsObj = s_GetStands(pos);
+            NSString *s = il2cppStr(standsObj);
+            if (s.length > 0) standsStr = s;
+        }
+        IPALog([NSString stringWithFormat:@"[GC] WarsLiveSfen: stands=\"%@\"", standsStr]);
+        if ([standsStr isEqualToString:@"-"]) {
+            [csaPos appendString:@"P+\nP-\n"];
+        } else {
+            [csaPos appendFormat:@"P+%@\nP-\n", standsStr];
+        }
+
+        [csaPos appendString:side];
+
+        IPALog([NSString stringWithFormat:@"[GC] WarsLiveSfen: csaPos=\n%@", csaPos]);
+        result = csaPos;
+
+    } @catch (NSException *e) {
+        IPALog([NSString stringWithFormat:@"[GC] WarsLiveSfen threw: %@", e]);
+    }
+    return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -361,6 +534,118 @@ void HookSendMove(void *self, void *moveStr, bool isKishin) {
     WARS_CALL_ORIG_VOID(orig_SendMove, self, moveStr, isKishin);
 }
 
+// ---------------------------------------------------------------------------
+// Hook: GameDialogButtonManager.OnRevengeMenu(bool isUseBackFilterEvent)
+//
+// The "play again?" dialog after a match ends. Suppressed unconditionally —
+// we never want this dialog to appear. Skip orig so nothing happens.
+// ---------------------------------------------------------------------------
+typedef void (*OnRevengeMenu_t)(void *self, bool isUseBackFilterEvent);
+static OnRevengeMenu_t orig_OnRevengeMenu = NULL;
+
+void HookOnRevengeMenu(void *self, bool isUseBackFilterEvent) {
+    bool skip = WEBSkipRevengeDialog();
+    IPALog([NSString stringWithFormat:
+              @"[GC] OnRevengeMenu self=%p isUseBackFilterEvent=%d skip=%d",
+              self, (int)isUseBackFilterEvent, (int)skip]);
+    if (skip) return;
+    WARS_CALL_ORIG_VOID(orig_OnRevengeMenu, self, isUseBackFilterEvent);
+}
+
+// ---------------------------------------------------------------------------
+// Hook: Native.ShowAndroidAlertDialog(title, message, cancelButton, otherButton)
+//
+// The "Continue?" dialog after match end goes through this static method
+// (the name is misleading — it's used on iOS too). Suppressed when
+// skip_revenge_dialog is on. Always logs the message so we can identify
+// other dialog use sites later.
+// ---------------------------------------------------------------------------
+typedef void (*ShowAndroidAlertDialog_t)(void *title, void *message,
+                                          void *cancelButton, void *otherButton);
+static ShowAndroidAlertDialog_t orig_ShowAndroidAlertDialog = NULL;
+
+void HookShowAndroidAlertDialog(void *titleStr, void *messageStr,
+                                 void *cancelStr, void *otherStr) {
+    NSString *title  = il2cppStr(titleStr);
+    NSString *msg    = il2cppStr(messageStr);
+    NSString *cancel = il2cppStr(cancelStr);
+    NSString *other  = il2cppStr(otherStr);
+    IPALog([NSString stringWithFormat:
+              @"[GC] ShowAlertDialog title=\"%@\" msg=\"%@\" cancel=\"%@\" other=\"%@\"",
+              title, msg, cancel, other]);
+    // Observation only — always forward to orig so the dialog behaviour is
+    // unchanged. Once we have enough samples in the logs to identify which
+    // call sites correspond to which dialogs, we can decide what to suppress.
+    WARS_CALL_ORIG_VOID(orig_ShowAndroidAlertDialog, titleStr, messageStr, cancelStr, otherStr);
+}
+
+// ---------------------------------------------------------------------------
+// Hook: DialogManager.ShowSelectDialog overloads
+// These produce the OK/Cancel two-button dialogs (the "Continue?" prompt
+// after match end likely comes through here). Observation only.
+// ---------------------------------------------------------------------------
+typedef int32_t (*ShowSelectDialog2_t)(void *self, void *msg, void *del);
+typedef int32_t (*ShowSelectDialog3_t)(void *self, void *title, void *msg, void *del);
+static ShowSelectDialog2_t orig_ShowSelectDialog2 = NULL;
+static ShowSelectDialog3_t orig_ShowSelectDialog3 = NULL;
+
+int32_t HookShowSelectDialog2(void *self, void *msgStr, void *del) {
+    NSString *msg = il2cppStr(msgStr);
+    IPALog([NSString stringWithFormat:
+              @"[GC] ShowSelectDialog(msg) self=%p msg=\"%@\" del=%p",
+              self, msg, del]);
+    if (orig_ShowSelectDialog2) return orig_ShowSelectDialog2(self, msgStr, del);
+    return 0;
+}
+
+int32_t HookShowSelectDialog3(void *self, void *titleStr, void *msgStr, void *del) {
+    NSString *title = il2cppStr(titleStr);
+    NSString *msg   = il2cppStr(msgStr);
+    IPALog([NSString stringWithFormat:
+              @"[GC] ShowSelectDialog(title,msg) self=%p title=\"%@\" msg=\"%@\" del=%p",
+              self, title, msg, del]);
+    if (orig_ShowSelectDialog3) return orig_ShowSelectDialog3(self, titleStr, msgStr, del);
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Hook: ShowResignAlertDialog() — static, no args.
+// Sets g_webNextAlertIsResign so the swizzle in Hook_AlertObserve.m can
+// auto-confirm the dialog when skip_resign_dialog is on. Always forwards.
+// ---------------------------------------------------------------------------
+typedef void (*ShowResignAlertDialogOrig_t)(void);
+static ShowResignAlertDialogOrig_t orig_ShowResignAlertDialog_hook = NULL;
+
+void HookShowResignAlertDialog(void) {
+    IPALog(@"[GC] ShowResignAlertDialog called");
+    atomic_store(&g_webNextAlertIsResign, true);
+    if (orig_ShowResignAlertDialog_hook) orig_ShowResignAlertDialog_hook();
+}
+
+// ---------------------------------------------------------------------------
+// Hook: Wars.Dialog.Confirm(title, msg, Action ok, Action cancel)
+// Logs every confirmation dialog and sets the resign flag so the swizzle
+// can auto-confirm.
+// ---------------------------------------------------------------------------
+typedef void (*DialogConfirm4_t)(void *titleStr, void *messageStr,
+                                  void *okAction, void *cancelAction);
+static DialogConfirm4_t orig_DialogConfirm4 = NULL;
+
+void HookDialogConfirm4(void *titleStr, void *messageStr,
+                         void *okAction, void *cancelAction) {
+    NSString *title = il2cppStr(titleStr);
+    NSString *msg   = il2cppStr(messageStr);
+    IPALog([NSString stringWithFormat:
+              @"[GC] Wars.Dialog.Confirm title=\"%@\" msg=\"%@\" ok=%p cancel=%p",
+              title, msg, okAction, cancelAction]);
+    // Mark so the UIAlertController swizzle auto-confirms the next dialog.
+    // This catches BOTH the resign confirmation and any other Confirm() call,
+    // so the swizzle's skip_resign_dialog gate decides whether to act.
+    atomic_store(&g_webNextAlertIsResign, true);
+    if (orig_DialogConfirm4) orig_DialogConfirm4(titleStr, messageStr,
+                                                  okAction, cancelAction);
+}
+
 // ===========================================================================
 // Installer
 // ===========================================================================
@@ -371,6 +656,13 @@ void InstallGameControllerHook(uintptr_t unityBase) {
     // Resolve static helpers.
     g_GetIsBlack = (GetIsBlack_t)(void *)(unityBase + RVA_GET_IS_BLACK);
     g_GetColor   = (GetColor_t)(void *)(unityBase + RVA_GET_COLOR);
+
+    g_GC_GetGameData       = (GC_GetGameData_t)(void *)(unityBase + RVA_GC_GET_GAMEDATA);
+    g_GameData_GetPosition = (GameData_GetPosition_t)(void *)(unityBase + RVA_GAMEDATA_GET_POSITION);
+    g_Position_ToString    = (Position_ToString_t)(void *)(unityBase + RVA_POSITION_TO_STRING);
+    IPALog([NSString stringWithFormat:
+              @"[GC] live-pos: GetGameData=%p GetPosition=%p ToString=%p",
+              g_GC_GetGameData, g_GameData_GetPosition, g_Position_ToString]);
 
     struct {
         const char *tag;
@@ -396,6 +688,24 @@ void InstallGameControllerHook(uintptr_t unityBase) {
         { "GameController.Move(ply,csa,timeLeft,quiet)",
           RVA_MOVE_PLY_CSA,    (void *)HookMoveWithPly,
           (void **)&orig_MoveWithPly },
+        { "GameDialogButtonManager.OnRevengeMenu",
+          RVA_ON_REVENGE_MENU, (void *)HookOnRevengeMenu,
+          (void **)&orig_OnRevengeMenu },
+        { "Native.ShowAndroidAlertDialog",
+          RVA_SHOW_ANDROID_ALERT_DIALOG, (void *)HookShowAndroidAlertDialog,
+          (void **)&orig_ShowAndroidAlertDialog },
+        { "DialogManager.ShowSelectDialog(msg,del)",
+          RVA_SHOW_SELECT_DIALOG_2, (void *)HookShowSelectDialog2,
+          (void **)&orig_ShowSelectDialog2 },
+        { "DialogManager.ShowSelectDialog(title,msg,del)",
+          RVA_SHOW_SELECT_DIALOG_3, (void *)HookShowSelectDialog3,
+          (void **)&orig_ShowSelectDialog3 },
+        { "ShowResignAlertDialog",
+          RVA_SHOW_RESIGN_ALERT_DIALOG, (void *)HookShowResignAlertDialog,
+          (void **)&orig_ShowResignAlertDialog_hook },
+        { "Wars.Dialog.Confirm(title,msg,ok,cancel)",
+          RVA_DIALOG_CONFIRM_4, (void *)HookDialogConfirm4,
+          (void **)&orig_DialogConfirm4 },
     };
 
     for (size_t i = 0; i < sizeof(entries) / sizeof(entries[0]); i++) {
