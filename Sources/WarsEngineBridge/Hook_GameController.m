@@ -65,6 +65,11 @@
 // can mark the next UIAlertController presentation as a confirm dialog and
 // auto-invoke the OK callback when skip_resign_dialog is on.
 #define RVA_DIALOG_CONFIRM_4 0x1624A38
+// GameDialogButtonManager.OnToryo() — RVA 0x1599818. The click handler that
+// the in-game toryo button calls. Triggers the resign confirmation flow with
+// the OK callback wired up to actually resign. Used as the entry point for
+// CSA-driven %TORYO so the dialog is identical to the manual path.
+#define RVA_ON_TORYO 0x1599818
 
 // Flag bridged across translation units. Defined in Hook_AlertObserve.m.
 extern _Atomic bool g_webNextAlertIsResign;
@@ -149,6 +154,15 @@ static GetColor_t   g_GetColor   = NULL;
 // Definitions here; declarations in Internal.h.
 // ---------------------------------------------------------------------------
 void *volatile g_gameControllerCache = NULL;
+// GameDialogButtonManager instance — captured from any of our hooks on its
+// instance methods (OnRevengeMenu / Wars.Dialog.Confirm invocations from it
+// etc.). Used by Inject_Resign to call OnToryo() directly instead of going
+// through ShowResignAlertDialog whose OK callback is a no-op on the CSA path.
+void *volatile g_gameDialogButtonManagerCache = NULL;
+typedef void (*OnToryo_t)(void *self);
+OnToryo_t g_OnToryo = NULL;
+ToryoFinish_t g_ToryoFinish = NULL;
+#define RVA_TORYO_FINISH 0x1591734
 
 OnGameStart_t   orig_OnGameStart   = NULL;
 OnMovesNormal_t orig_OnMovesNormal = NULL;
@@ -544,6 +558,7 @@ typedef void (*OnRevengeMenu_t)(void *self, bool isUseBackFilterEvent);
 static OnRevengeMenu_t orig_OnRevengeMenu = NULL;
 
 void HookOnRevengeMenu(void *self, bool isUseBackFilterEvent) {
+    if (self) g_gameDialogButtonManagerCache = self;
     bool skip = WEBSkipRevengeDialog();
     IPALog([NSString stringWithFormat:
               @"[GC] OnRevengeMenu self=%p isUseBackFilterEvent=%d skip=%d",
@@ -623,6 +638,20 @@ void HookShowResignAlertDialog(void) {
 }
 
 // ---------------------------------------------------------------------------
+// Hook: GameDialogButtonManager.OnToryo() — captures self so InjectResign
+// can later call OnToryo directly when CSA TORYO arrives.
+// ---------------------------------------------------------------------------
+typedef void (*OnToryoOrig_t)(void *self);
+static OnToryoOrig_t orig_OnToryo = NULL;
+
+void HookOnToryo(void *self) {
+    if (self) g_gameDialogButtonManagerCache = self;
+    IPALog([NSString stringWithFormat:
+              @"[GC] OnToryo self=%p (cached)", self]);
+    WARS_CALL_ORIG_VOID(orig_OnToryo, self);
+}
+
+// ---------------------------------------------------------------------------
 // Hook: Wars.Dialog.Confirm(title, msg, Action ok, Action cancel)
 // Logs every confirmation dialog and sets the resign flag so the swizzle
 // can auto-confirm.
@@ -660,9 +689,13 @@ void InstallGameControllerHook(uintptr_t unityBase) {
     g_GC_GetGameData       = (GC_GetGameData_t)(void *)(unityBase + RVA_GC_GET_GAMEDATA);
     g_GameData_GetPosition = (GameData_GetPosition_t)(void *)(unityBase + RVA_GAMEDATA_GET_POSITION);
     g_Position_ToString    = (Position_ToString_t)(void *)(unityBase + RVA_POSITION_TO_STRING);
+    g_OnToryo              = (OnToryo_t)(void *)(unityBase + RVA_ON_TORYO);
+    g_ToryoFinish          = (ToryoFinish_t)(void *)(unityBase + RVA_TORYO_FINISH);
     IPALog([NSString stringWithFormat:
-              @"[GC] live-pos: GetGameData=%p GetPosition=%p ToString=%p",
-              g_GC_GetGameData, g_GameData_GetPosition, g_Position_ToString]);
+              @"[GC] live-pos: GetGameData=%p GetPosition=%p ToString=%p "
+              @"OnToryo=%p ToryoFinish=%p",
+              g_GC_GetGameData, g_GameData_GetPosition, g_Position_ToString,
+              g_OnToryo, g_ToryoFinish]);
 
     struct {
         const char *tag;
@@ -706,6 +739,9 @@ void InstallGameControllerHook(uintptr_t unityBase) {
         { "Wars.Dialog.Confirm(title,msg,ok,cancel)",
           RVA_DIALOG_CONFIRM_4, (void *)HookDialogConfirm4,
           (void **)&orig_DialogConfirm4 },
+        { "GameDialogButtonManager.OnToryo",
+          RVA_ON_TORYO, (void *)HookOnToryo,
+          (void **)&orig_OnToryo },
     };
 
     for (size_t i = 0; i < sizeof(entries) / sizeof(entries[0]); i++) {

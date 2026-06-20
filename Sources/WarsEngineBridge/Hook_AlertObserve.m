@@ -56,8 +56,8 @@ static void web_present_swizzled(id self, SEL _cmd,
                                   BOOL animated,
                                   void (^completion)(void)) {
     BOOL suppress = NO;
-    BOOL autoConfirmResign = NO;
-    UIAlertAction *resignOKAction = nil;
+    UIAlertAction *handlerToInvoke = nil;
+    NSString *handlerLabel = nil;
     @try {
         if ([vc isKindOfClass:[UIAlertController class]]) {
             UIAlertController *alert = (UIAlertController *)vc;
@@ -67,61 +67,100 @@ static void web_present_swizzled(id self, SEL _cmd,
                 [actionTitles addObject:a.title ?: @"(nil)"];
             }
 
-            // Resign flow: ShowResignAlertDialog sets g_webNextAlertIsResign
-            // just before presenting. Consume it here.
             bool resignFlag = atomic_exchange(&g_webNextAlertIsResign, false);
             BOOL skipResign = WEBSkipResignDialog();
 
-            // Revenge flow: detected by stack signature (RevengeStartProcess).
             NSArray<NSString *> *symbols = [NSThread callStackSymbols];
             BOOL inRevengeFlow = stackIsRevengeFlow(symbols);
             BOOL skipRevenge = WEBSkipRevengeDialog();
 
-            if (resignFlag && skipResign) {
-                // Find the non-cancel action — that's "OK"/"Confirm".
+            if (inRevengeFlow && skipRevenge) {
+                // Continue?: choose Cancel or OK based on the Auto Rematch
+                // setting. Cancel goes back to title, OK starts another match.
+                BOOL wantsRematch = WEBAutoRematchEnabled();
+                UIAlertActionStyle targetStyle = wantsRematch
+                    ? UIAlertActionStyleDefault   // OK
+                    : UIAlertActionStyleCancel;   // Cancel
+                NSString *targetLabel = wantsRematch ? @"revenge OK"
+                                                     : @"revenge Cancel";
                 for (UIAlertAction *a in alert.actions) {
-                    if (a.style != UIAlertActionStyleCancel) {
-                        resignOKAction = a;
+                    if (a.style == targetStyle) {
+                        handlerToInvoke = a;
+                        handlerLabel = targetLabel;
                         break;
                     }
                 }
-                if (resignOKAction) {
-                    autoConfirmResign = YES;
-                    suppress = YES;
+                // If we asked for OK but didn't find a non-cancel match,
+                // fall back to the first non-cancel action.
+                if (wantsRematch && !handlerToInvoke) {
+                    for (UIAlertAction *a in alert.actions) {
+                        if (a.style != UIAlertActionStyleCancel) {
+                            handlerToInvoke = a;
+                            handlerLabel = @"revenge OK";
+                            break;
+                        }
+                    }
                 }
-            } else if (inRevengeFlow && skipRevenge) {
+                suppress = YES;
+            } else if (resignFlag && skipResign) {
+                // Resign confirmation: invoke the non-cancel (OK) handler so
+                // the resignation actually goes through.
+                for (UIAlertAction *a in alert.actions) {
+                    if (a.style != UIAlertActionStyleCancel) {
+                        handlerToInvoke = a;
+                        handlerLabel = @"resign OK";
+                        break;
+                    }
+                }
                 suppress = YES;
             }
 
             IPALog([NSString stringWithFormat:
                       @"[ALERT] title=\"%@\" msg=\"%@\" style=%ld actions=[%@] "
-                      @"resign=%d revenge=%d suppress=%d autoConfirm=%d",
+                      @"resign=%d revenge=%d suppress=%d invoke=%@",
                       alert.title ?: @"(nil)",
                       alert.message ?: @"(nil)",
                       (long)alert.preferredStyle,
                       [actionTitles componentsJoinedByString:@", "],
                       (int)resignFlag, (int)inRevengeFlow,
-                      (int)suppress, (int)autoConfirmResign]);
+                      (int)suppress, handlerLabel ?: @"(none)"]);
         }
     } @catch (NSException *e) {
         IPALog([NSString stringWithFormat:@"[ALERT] swizzle threw: %@", e]);
     }
 
     if (suppress) {
-        if (autoConfirmResign && resignOKAction) {
-            // Pull the private handler block and invoke it directly.
+        if (handlerToInvoke) {
+            // Pull the handler block out NOW while the action is fresh —
+            // UIAlertAction can drop its `_handler` reference between the
+            // time we return from presentViewController: and the next
+            // runloop iteration. Then defer the actual invocation so the
+            // original presentation path can unwind first.
+            void (^handlerBlock)(UIAlertAction *) = nil;
             @try {
-                id handler = [resignOKAction valueForKey:@"handler"];
-                if (handler) {
-                    void (^block)(UIAlertAction *) = handler;
-                    block(resignOKAction);
-                    IPALog(@"[ALERT] resign OK handler invoked");
-                } else {
-                    IPALog(@"[ALERT] resign OK action has no handler");
-                }
+                id raw = [handlerToInvoke valueForKey:@"handler"];
+                if (raw) handlerBlock = raw;
             } @catch (NSException *e) {
                 IPALog([NSString stringWithFormat:
-                          @"[ALERT] resign handler invoke threw: %@", e]);
+                          @"[ALERT] %@ valueForKey threw: %@", handlerLabel, e]);
+            }
+            if (!handlerBlock) {
+                IPALog([NSString stringWithFormat:
+                          @"[ALERT] %@ has no handler", handlerLabel]);
+            } else {
+                UIAlertAction *capturedAction = handlerToInvoke;
+                NSString *capturedLabel = [handlerLabel copy];
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    @try {
+                        handlerBlock(capturedAction);
+                        IPALog([NSString stringWithFormat:
+                                  @"[ALERT] %@ handler invoked", capturedLabel]);
+                    } @catch (NSException *e) {
+                        IPALog([NSString stringWithFormat:
+                                  @"[ALERT] %@ handler invoke threw: %@",
+                                  capturedLabel, e]);
+                    }
+                });
             }
         }
         if (completion) completion();

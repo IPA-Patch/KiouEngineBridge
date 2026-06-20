@@ -27,6 +27,29 @@ void InstallResignHook(uintptr_t unityBase) {
 }
 
 void InjectResign(void) {
+    // Preferred: call GameController.ToryoFinish() directly on the cached
+    // singleton. This is the no-UI resign path — same effect as the user
+    // tapping OK on the confirmation dialog. Bypasses both the dialog and
+    // the locale-specific button flow.
+    ToryoFinish_t toryoFinish = g_ToryoFinish;
+    void *gc = g_gameControllerCache;
+    if (toryoFinish && gc) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            @try {
+                toryoFinish(gc);
+                IPALog([NSString stringWithFormat:
+                          @"[RESIGN] ToryoFinish called on GC=%p", gc]);
+            } @catch (NSException *e) {
+                IPALog([NSString stringWithFormat:
+                          @"[RESIGN] ToryoFinish threw: %@", e]);
+            }
+        });
+        return;
+    }
+
+    IPALog([NSString stringWithFormat:
+              @"[RESIGN] ToryoFinish not ready (fn=%p gc=%p) — falling back to dialog",
+              toryoFinish, gc]);
     ShowResignAlertDialog_t fn = g_ShowResignAlertDialog;
     if (!fn) {
         IPALog(@"[RESIGN] ShowResignAlertDialog not resolved yet");

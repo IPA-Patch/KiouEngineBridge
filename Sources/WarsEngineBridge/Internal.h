@@ -207,6 +207,20 @@ extern Move_t          orig_Move;
 extern MoveWithPly_t   orig_MoveWithPly;
 extern ShowResignAlertDialog_t g_ShowResignAlertDialog;
 
+// GameDialogButtonManager.OnToryo() — captured at install time. When called
+// with the cached GameDialogButtonManager instance it shows the same resign
+// dialog the in-game toryo button does, with the OK handler that actually
+// resigns. Preferred over ShowResignAlertDialog for CSA-driven resigns.
+typedef void (*OnToryo_t)(void *self);
+extern OnToryo_t g_OnToryo;
+extern void *volatile g_gameDialogButtonManagerCache;
+
+// GameController.ToryoFinish() — RVA 0x1591734. Resigns immediately without a
+// dialog. Called on the GameController singleton instance (use
+// g_gameControllerCache). This is the no-UI path CSA-driven resigns use.
+typedef void (*ToryoFinish_t)(void *self);
+extern ToryoFinish_t g_ToryoFinish;
+
 // ---------------------------------------------------------------------------
 // Chinlan dispatcher (chinlan build only).
 // ---------------------------------------------------------------------------
