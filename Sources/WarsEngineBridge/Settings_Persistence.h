@@ -26,3 +26,9 @@ void WEBSetSkipRevengeDialog(bool skip);
 // Default: false (preserve the original confirmation step).
 bool WEBSkipResignDialog(void);
 void WEBSetSkipResignDialog(bool skip);
+
+// Whether the app auto-navigates from the title screen straight into a
+// practice match on launch. Default: true (so `make package install`
+// boots the user directly into a match).
+bool WEBAutoLaunchEnabled(void);
+void WEBSetAutoLaunchEnabled(bool enabled);

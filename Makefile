@@ -28,11 +28,14 @@ BUILD_COMMIT_DEFINE      := WARS_ENGINE_BRIDGE_COMMIT
 # ---------------------------------------------------------------------------
 # Theos boilerplate.
 # ---------------------------------------------------------------------------
+-include .env
+export THEOS_DEVICE_IP
+
 TARGET                   := iphone:clang:16.5:15.0
 INSTALL_TARGET_PROCESSES := $(TARGET_PROCESS)
 ARCHS                    := arm64
 THEOS_PACKAGE_SCHEME     := rootless
-THEOS_DEVICE_IP          := 192.168.0.49
+THEOS_DEVICE_IP          ?= 192.168.0.49
 
 include $(THEOS)/makefiles/common.mk
 

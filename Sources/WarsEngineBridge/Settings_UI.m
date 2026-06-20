@@ -24,10 +24,11 @@
 #define WEB_SECTION_ABOUT 1
 #define WEB_SECTION_COUNT 2
 
-#define WEB_ROW_AUTO_REMATCH     0
-#define WEB_ROW_SKIP_DIALOG      1
-#define WEB_ROW_SKIP_RESIGN      2
-#define WEB_MATCH_ROW_COUNT      3
+#define WEB_ROW_AUTO_LAUNCH      0
+#define WEB_ROW_AUTO_REMATCH     1
+#define WEB_ROW_SKIP_DIALOG      2
+#define WEB_ROW_SKIP_RESIGN      3
+#define WEB_MATCH_ROW_COUNT      4
 
 #define WEB_ROW_ABOUT_REPO   0
 #define WEB_ROW_ABOUT_AUTHOR 1
@@ -127,6 +128,12 @@ static UIViewController *webTopmostViewController(void) {
     switch (ip.section) {
 
         case WEB_SECTION_MATCH: {
+            if (ip.row == WEB_ROW_AUTO_LAUNCH) {
+                return [self toggleCellWithTitle:@"Auto Launch"
+                                            key:@"auto_launch"
+                                          value:WEBAutoLaunchEnabled()
+                                         action:@selector(autoLaunchChanged:)];
+            }
             if (ip.row == WEB_ROW_AUTO_REMATCH) {
                 return [self toggleCellWithTitle:@"Auto Rematch"
                                             key:@"auto_rematch"
@@ -219,6 +226,10 @@ static UIViewController *webTopmostViewController(void) {
 // ---------------------------------------------------------------------------
 // Toggle actions
 // ---------------------------------------------------------------------------
+
+- (void)autoLaunchChanged:(UISwitch *)sw {
+    WEBSetAutoLaunchEnabled(sw.on);
+}
 
 - (void)autoRematchChanged:(UISwitch *)sw {
     WEBSetAutoRematchEnabled(sw.on);

@@ -158,6 +158,11 @@ void WEBPresentSettings(void);
 void InstallAlertObserveHook(void);
 
 // ---------------------------------------------------------------------------
+// Hook_AutoLaunch.m — drive the app from title straight into a practice match.
+// ---------------------------------------------------------------------------
+void InstallAutoLaunchHook(uintptr_t unityBase);
+
+// ---------------------------------------------------------------------------
 // Inject_Move.m — feed a CSA move back into GameController.SendMove.
 //
 // Called by Csa_Engine.m when the connected engine submits a move.

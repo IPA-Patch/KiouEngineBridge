@@ -56,11 +56,13 @@ static void installUnityHooks(void) {
     InstallGameControllerHook(unityBase);
     InstallResignHook(unityBase);
     InstallNoLoginDialogHook(unityBase);
+    InstallAutoLaunchHook(unityBase);
     CsaEngineInstall();
 #else
     InstallGameControllerHook(unityBase);
     InstallResignHook(unityBase);
     InstallNoLoginDialogHook(unityBase);
+    InstallAutoLaunchHook(unityBase);
     // CSA engine driver. Must come AFTER hook installers so the observation
     // callbacks are wired before the CSA recv queue can dispatch into them.
     CsaEngineInstall();

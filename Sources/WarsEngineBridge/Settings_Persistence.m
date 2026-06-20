@@ -11,6 +11,7 @@
 static NSString * const kKeyAutoRematch       = @"wars_bridge.auto_rematch";
 static NSString * const kKeySkipRevengeDialog = @"wars_bridge.skip_revenge_dialog";
 static NSString * const kKeySkipResignDialog  = @"wars_bridge.skip_resign_dialog";
+static NSString * const kKeyAutoLaunch        = @"wars_bridge.auto_launch";
 
 // ---------------------------------------------------------------------------
 // Auto-rematch
@@ -57,4 +58,21 @@ void WEBSetSkipResignDialog(bool skip) {
     [d setBool:skip forKey:kKeySkipResignDialog];
     IPALog([NSString stringWithFormat:@"[SETTINGS] skip_resign_dialog=%s",
               skip ? "true" : "false"]);
+}
+
+// ---------------------------------------------------------------------------
+// Auto-launch
+// ---------------------------------------------------------------------------
+
+bool WEBAutoLaunchEnabled(void) {
+    NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+    id v = [d objectForKey:kKeyAutoLaunch];
+    return v ? [v boolValue] : true;
+}
+
+void WEBSetAutoLaunchEnabled(bool enabled) {
+    NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+    [d setBool:enabled forKey:kKeyAutoLaunch];
+    IPALog([NSString stringWithFormat:@"[SETTINGS] auto_launch=%s",
+              enabled ? "true" : "false"]);
 }
