@@ -526,6 +526,8 @@ enum kiou_bridge_hook_id {
     // (entry caves route through the entry slot table, not the observer
     // dispatcher), but Inject_Move-style bypass lookups still work.
     KIOU_BR_HOOK_ACCOUNT_EXISTS,
+    KIOU_BR_HOOK_LOGIN_ARGS_CREATE,
+    KIOU_BR_HOOK_REGISTER_USER_ARGS_CREATE,
 
     KIOU_BR_HOOK__COUNT,
 };
@@ -536,6 +538,8 @@ enum kiou_bridge_hook_id {
 // writes the live hook function pointers into those slots.
 enum kiou_bridge_entry_slot_id {
     KIOU_BR_ENTRY_SLOT_ACCOUNT_EXISTS = 0,
+    KIOU_BR_ENTRY_SLOT_LOGIN_ARGS_CREATE,
+    KIOU_BR_ENTRY_SLOT_REGISTER_USER_ARGS_CREATE,
 
     KIOU_BR_ENTRY_SLOT__COUNT,
 };
@@ -689,6 +693,13 @@ void HookGStateNotifyPieceMoved(void *self, uint32_t move, int32_t playerSide);
 // from inside this hook via the cave bypass entry, and the hook's bool
 // return propagates straight back to the caller (cave tail is RET).
 bool HookAccountExistsEntry(void *data);
+
+// LoginArgs.Create / RegisterUserArgs.Create chinlan-side entry hooks. Both
+// swap one il2cpp string argument (deviceId / distinctId) per the pending_*
+// override slots, then call orig via the cave bypass entry and forward
+// orig's return (the freshly built ILoginArgs* / IRegisterUserArgs*).
+void *HookLoginArgsCreateEntry(void *deviceId, void *distinctId);
+void *HookRegisterUserArgsCreateEntry(void *userName, void *distinctId);
 void HookGStateNotifyStateSyncedForCurrentPosition(void);
 void ResolveGameStateStoreNotifyStateSynced(uintptr_t unityBase);
 void HookGStateRememberStore(void *self);

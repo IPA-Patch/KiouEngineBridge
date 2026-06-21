@@ -179,12 +179,18 @@ void KEBBridgeChinlanPublish(void) {
         (void * volatile *)(g_unityBase + KIOU_BR_ENTRY_SLOT_BASE_RVA);
     entrySlots[KIOU_BR_ENTRY_SLOT_ACCOUNT_EXISTS] =
         (void *)&HookAccountExistsEntry;
+    entrySlots[KIOU_BR_ENTRY_SLOT_LOGIN_ARGS_CREATE] =
+        (void *)&HookLoginArgsCreateEntry;
+    entrySlots[KIOU_BR_ENTRY_SLOT_REGISTER_USER_ARGS_CREATE] =
+        (void *)&HookRegisterUserArgsCreateEntry;
     IPALog([NSString stringWithFormat:
               @"[CHINLAN] entry slots base=%p (unityBase+0x%x): "
-              @"AccountExists=%p",
+              @"AccountExists=%p LoginArgs=%p RegisterUserArgs=%p",
               (void *)entrySlots,
               (unsigned)KIOU_BR_ENTRY_SLOT_BASE_RVA,
-              (void *)entrySlots[KIOU_BR_ENTRY_SLOT_ACCOUNT_EXISTS]]);
+              (void *)entrySlots[KIOU_BR_ENTRY_SLOT_ACCOUNT_EXISTS],
+              (void *)entrySlots[KIOU_BR_ENTRY_SLOT_LOGIN_ARGS_CREATE],
+              (void *)entrySlots[KIOU_BR_ENTRY_SLOT_REGISTER_USER_ARGS_CREATE]]);
     IPALog([NSString stringWithFormat:
               @"[CHINLAN] slot=%p (unityBase+0x%lx) published "
               @"dispatcher=%p inject_entry[ai_opm]=%p inject_entry[adapter]=%p "

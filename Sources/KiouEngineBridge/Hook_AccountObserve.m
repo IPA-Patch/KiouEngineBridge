@@ -218,70 +218,112 @@ typedef void *(*RegisterUserArgsCreate_t)(void *userName, void *distinctId);
 static RegisterUserArgsCreate_t orig_RegisterUserArgsCreate
     __attribute__((unused)) = NULL;
 
-void *HookRegisterUserArgsCreate(void *userName, void *distinctId) {
+// Shared substitution helpers. Both the JB hook and the chinlan entry hook
+// run the same swap-or-pass-through logic; only the orig dispatch differs.
+
+static void *registerUserArgsSwapDistinctId(void *userName, void *distinctId) {
     NSString *origUserName   = readIl2CppString(userName);
     NSString *origDistinctId = readIl2CppString(distinctId);
 
-    // When pending_distinct_id is armed (set by HookRunResetUserDataSeq for
-    // every Reset → Register cycle), substitute the distinctId arg so the
-    // server allocates a fresh account paired with that UUID instead of
-    // overwriting whatever is already keyed by the TDAnalytics distinctId.
-    void *useDistinctId = distinctId;
     NSString *pendingDistinct = KEBPendingDistinctId();
     if (pendingDistinct.length > 0 && g_il2cpp_string_new) {
         void *newStr = g_il2cpp_string_new(pendingDistinct.UTF8String);
         if (newStr) {
-            useDistinctId = newStr;
             IPALog([NSString stringWithFormat:
                       @"[ACCOUNT] RegisterUserArgs.Create distinctId substituted "
                       @"%@ → %@ (userName=%@)",
                       origDistinctId ?: @"(nil)", pendingDistinct,
                       origUserName ?: @"(nil)"]);
+            return newStr;
         }
-    } else {
-        IPALog([NSString stringWithFormat:
-                  @"[ACCOUNT] RegisterUserArgs.Create userName=%@ distinctId=%@",
-                  origUserName ?: @"(nil)", origDistinctId ?: @"(nil)"]);
     }
-    // KIOU_CALL_ORIG_RET drops varargs on chinlan (the cave runs orig itself),
-    // so silence the unused-but-set warning there.
-    (void)useDistinctId;
-    return KIOU_CALL_ORIG_RET(void *, orig_RegisterUserArgsCreate,
-                               userName, useDistinctId);
+    IPALog([NSString stringWithFormat:
+              @"[ACCOUNT] RegisterUserArgs.Create userName=%@ distinctId=%@",
+              origUserName ?: @"(nil)", origDistinctId ?: @"(nil)"]);
+    return distinctId;
 }
 
-void *HookLoginArgsCreate(void *deviceId, void *distinctId) {
+static void *loginArgsSwapDeviceId(void *deviceId, void *distinctId) {
     NSString *origDev  = readIl2CppString(deviceId);
     NSString *origDist = readIl2CppString(distinctId);
 
-    // Account switching: when pending_device_id is set, swap the deviceId
-    // argument to that value. The server keys LoginAsync by the deviceId
-    // arg, so this is enough to log into a different saved account.
-    // We deliberately do NOT touch distinctId — past attempts to substitute
-    // it caused -40004 because distinctId substitutions hit the analytics
-    // path instead.
-    void *useDeviceId = deviceId;
     NSString *pendingDevice = KEBPendingDeviceId();
     if (pendingDevice.length > 0 && g_il2cpp_string_new) {
         void *newStr = g_il2cpp_string_new(pendingDevice.UTF8String);
         if (newStr) {
-            useDeviceId = newStr;
             IPALog([NSString stringWithFormat:
                       @"[ACCOUNT] LoginArgs.Create deviceId substituted %@ → %@ "
                       @"(distinctId untouched=%@)",
                       origDev ?: @"(nil)", pendingDevice,
                       origDist ?: @"(nil)"]);
+            return newStr;
         }
-    } else {
-        IPALog([NSString stringWithFormat:
-                  @"[ACCOUNT] LoginArgs.Create deviceId=%@ distinctId=%@",
-                  origDev ?: @"(nil)", origDist ?: @"(nil)"]);
     }
-    // KIOU_CALL_ORIG_RET drops varargs on chinlan; silence unused-but-set there.
-    (void)useDeviceId;
+    IPALog([NSString stringWithFormat:
+              @"[ACCOUNT] LoginArgs.Create deviceId=%@ distinctId=%@",
+              origDev ?: @"(nil)", origDist ?: @"(nil)"]);
+    return deviceId;
+}
+
+#if !KIOU_CHINLAN
+// JB MSHookFunction targets. On chinlan these are unused (the entry hooks
+// below cover that flavor), so the whole pair is compiled out to silence
+// -Werror=unused-variable on KIOU_CALL_ORIG_RET's varargs-dropping macro.
+void *HookRegisterUserArgsCreate(void *userName, void *distinctId) {
+    void *useDistinctId = registerUserArgsSwapDistinctId(userName, distinctId);
+    return KIOU_CALL_ORIG_RET(void *, orig_RegisterUserArgsCreate,
+                               userName, useDistinctId);
+}
+
+void *HookLoginArgsCreate(void *deviceId, void *distinctId) {
+    void *useDeviceId = loginArgsSwapDeviceId(deviceId, distinctId);
     return KIOU_CALL_ORIG_RET(void *, orig_LoginArgsCreate,
                                useDeviceId, distinctId);
 }
+#endif
+
+// Chinlan entry-cave hooks. The cave gives us pristine x0..x7 and RETs to
+// the caller after our hook returns; we substitute the args ourselves and
+// invoke orig via the per-site bypass entry, which runs orig's body and
+// produces the real ILoginArgs* / IRegisterUserArgs* in x0.
+#if KIOU_CHINLAN
+void *HookLoginArgsCreateEntry(void *deviceId, void *distinctId) {
+    void *useDeviceId = loginArgsSwapDeviceId(deviceId, distinctId);
+    LoginArgsCreate_t bypass =
+        (LoginArgsCreate_t)g_inject_entry[KIOU_BR_HOOK_LOGIN_ARGS_CREATE];
+    if (!bypass) {
+        IPALog(@"[ACCOUNT] LoginArgs.Create chinlan bypass not published — "
+                 @"returning NULL; the caller will likely abort the login");
+        return NULL;
+    }
+    @try {
+        return bypass(useDeviceId, distinctId);
+    } @catch (NSException *e) {
+        IPALog([NSString stringWithFormat:
+                  @"[ACCOUNT] LoginArgs.Create chinlan bypass threw: %@", e]);
+        return NULL;
+    }
+}
+
+void *HookRegisterUserArgsCreateEntry(void *userName, void *distinctId) {
+    void *useDistinctId = registerUserArgsSwapDistinctId(userName, distinctId);
+    RegisterUserArgsCreate_t bypass = (RegisterUserArgsCreate_t)
+        g_inject_entry[KIOU_BR_HOOK_REGISTER_USER_ARGS_CREATE];
+    if (!bypass) {
+        IPALog(@"[ACCOUNT] RegisterUserArgs.Create chinlan bypass not "
+                 @"published — returning NULL");
+        return NULL;
+    }
+    @try {
+        return bypass(userName, useDistinctId);
+    } @catch (NSException *e) {
+        IPALog([NSString stringWithFormat:
+                  @"[ACCOUNT] RegisterUserArgs.Create chinlan bypass "
+                  @"threw: %@", e]);
+        return NULL;
+    }
+}
+#endif
 
 // ---------------------------------------------------------------------------
 // Hook: RunLoginSequenceAsync d__1.MoveNext

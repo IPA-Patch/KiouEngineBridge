@@ -109,7 +109,7 @@ PROBED_HOOK_SLOT_RVA = 0x8F90CD0
 # PROBED_HOOK_SLOT_RVA (= 0x8F90CD0). Bump ENTRY_SLOT_COUNT when adding a
 # new entry-class hook and reserve the next __bss tail if you exhaust the
 # space.
-ENTRY_SLOT_COUNT    = 1
+ENTRY_SLOT_COUNT    = 3
 ENTRY_SLOT_BASE_RVA = PROBED_HOOK_SLOT_RVA  # 0x8F90CD0
 
 # Must stay inside __DATA,__bss and leave room for at least 32 8-byte entries.
@@ -159,6 +159,8 @@ _HOOK_IDS: dict[str, int] = {
     "KIOU_BR_HOOK_GSTATE_SET_WHITE_PLAYER_INFO": 26,
     "KIOU_BR_HOOK_GSTATE_NOTIFY_PIECE_MOVED": 27,
     "KIOU_BR_HOOK_ACCOUNT_EXISTS": 28,
+    "KIOU_BR_HOOK_LOGIN_ARGS_CREATE": 29,
+    "KIOU_BR_HOOK_REGISTER_USER_ARGS_CREATE": 30,
 }
 
 
@@ -518,6 +520,17 @@ _BRIDGE_SITES: list[tuple[int, str, str, str, str]] = [
     # wants the original return — which lets Force Register flip the bool
     # without re-entering the cave.
     (0x591E860, "fd7bbfa9", "KIOU_BR_HOOK_ACCOUNT_EXISTS",          CAVE_ENTRY,    "UserSaveDataExtensions.AccountExists"),
+
+    # Account switching + Register-flow distinctId pinning.
+    # CAVE_ENTRY: the cave gives the hook full control of the argument
+    # registers so we can swap the il2cpp `deviceId` (LoginArgs) or
+    # `distinctId` (RegisterUserArgs) strings to whatever
+    # KEBPendingDeviceId / KEBPendingDistinctId is armed with, then
+    # forward through the bypass entry. CAVE_OBSERVER cannot do this
+    # because the cave restores x0..x7 from the saved frame before
+    # branching to orig+4, undoing the substitution.
+    (0x5B9899C, "f657bda9", "KIOU_BR_HOOK_LOGIN_ARGS_CREATE",         CAVE_ENTRY, "ILoginArgs.Create"),
+    (0x5B98A2C, "f657bda9", "KIOU_BR_HOOK_REGISTER_USER_ARGS_CREATE", CAVE_ENTRY, "IRegisterUserArgs.Create"),
 ]
 
 
@@ -525,7 +538,9 @@ _BRIDGE_SITES: list[tuple[int, str, str, str, str]] = [
 # allocation order. Must match the enum in Sources/KiouEngineBridge/Internal.h
 # (KIOU_BR_ENTRY_SLOT_*).
 _ENTRY_SLOT_INDEX_BY_HOOK: dict[str, int] = {
-    "KIOU_BR_HOOK_ACCOUNT_EXISTS": 0,
+    "KIOU_BR_HOOK_ACCOUNT_EXISTS":            0,
+    "KIOU_BR_HOOK_LOGIN_ARGS_CREATE":         1,
+    "KIOU_BR_HOOK_REGISTER_USER_ARGS_CREATE": 2,
 }
 assert len(_ENTRY_SLOT_INDEX_BY_HOOK) == ENTRY_SLOT_COUNT, \
     f"ENTRY_SLOT_COUNT ({ENTRY_SLOT_COUNT}) must match the entry-slot map"
