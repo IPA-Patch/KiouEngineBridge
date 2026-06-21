@@ -92,6 +92,10 @@ static void installUnityHooks(uintptr_t unityBase, const char *unityName) {
     // match_start with the matchmaking-resolved opponent identity on
     // Online matches (MatchConfig alone holds placeholders there).
     InstallGameStateStoreObserveHook(unityBase);
+    // Account identity observation (LoginArgs / LoginReply / RegisterReply /
+    // AccountExists / TDAnalytics). Must come before CsaEngineInstall so
+    // account state is live before any engine session starts.
+    InstallAccountObserveHook(unityBase);
     // gRPC HTTP/2 transport logging — logs every outbound URL + HTTP status.
     InstallGrpcLoggingHook(unityBase);
     // CSA engine driver. Must come AFTER InstallInjectHook so inject_apply
