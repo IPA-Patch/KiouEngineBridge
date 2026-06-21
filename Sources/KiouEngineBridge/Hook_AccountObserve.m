@@ -720,10 +720,13 @@ bool HookAccountExists(void *data) {
     } @catch (NSException *e) {
         IPALog([NSString stringWithFormat:@"[ACCOUNT] AccountExists orig threw: %@", e]);
     }
-    NSString *userName = readIl2CppString(readPtr(data, OFF_USER_SAVE_DATA_USER_NAME));
-    NSString *openId   = readIl2CppString(readPtr(data, OFF_USER_SAVE_DATA_OPEN_ID));
-    NSString *userId   = readIl2CppString(readPtr(data, OFF_USER_SAVE_DATA_USER_ID));
-    NSString *deviceId = readIl2CppString(readPtr(data, OFF_USER_SAVE_DATA_DEVICE_ID));
+    NSString *userName = nil, *openId = nil, *userId = nil, *deviceId = nil;
+    if (data) {
+        userName = readIl2CppString(readPtr(data, OFF_USER_SAVE_DATA_USER_NAME));
+        openId   = readIl2CppString(readPtr(data, OFF_USER_SAVE_DATA_OPEN_ID));
+        userId   = readIl2CppString(readPtr(data, OFF_USER_SAVE_DATA_USER_ID));
+        deviceId = readIl2CppString(readPtr(data, OFF_USER_SAVE_DATA_DEVICE_ID));
+    }
 
     observeAccountExistsData(data);
 
