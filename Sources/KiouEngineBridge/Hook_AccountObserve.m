@@ -243,6 +243,9 @@ void *HookRegisterUserArgsCreate(void *userName, void *distinctId) {
                   @"[ACCOUNT] RegisterUserArgs.Create userName=%@ distinctId=%@",
                   origUserName ?: @"(nil)", origDistinctId ?: @"(nil)"]);
     }
+    // KIOU_CALL_ORIG_RET drops varargs on chinlan (the cave runs orig itself),
+    // so silence the unused-but-set warning there.
+    (void)useDistinctId;
     return KIOU_CALL_ORIG_RET(void *, orig_RegisterUserArgsCreate,
                                userName, useDistinctId);
 }
@@ -274,6 +277,8 @@ void *HookLoginArgsCreate(void *deviceId, void *distinctId) {
                   @"[ACCOUNT] LoginArgs.Create deviceId=%@ distinctId=%@",
                   origDev ?: @"(nil)", origDist ?: @"(nil)"]);
     }
+    // KIOU_CALL_ORIG_RET drops varargs on chinlan; silence unused-but-set there.
+    (void)useDeviceId;
     return KIOU_CALL_ORIG_RET(void *, orig_LoginArgsCreate,
                                useDeviceId, distinctId);
 }
