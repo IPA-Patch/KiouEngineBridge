@@ -53,6 +53,7 @@ from tools.encode import (
     ldr_x_imm,
     mov_w0_imm_ret,
     movz_w_imm,
+    ret_insn,
     stp_off_x,
     stp_pre_x,
 )
@@ -100,6 +101,16 @@ CAVE_REGION = (0x826A000, 0x826C000)  # (start, end exclusive)
 INJECT_ENTRY_TABLE_RVA = 0x8F90C00
 HOOK_SLOT_RVA = 0x8F90CC0
 PROBED_HOOK_SLOT_RVA = 0x8F90CD0
+
+# Entry caves (KiouForge-style) use a separate slot table — each entry hook
+# gets a dedicated 8-byte slot the dylib publishes its function pointer
+# into, so the cave can BLR straight into it without touching the observer
+# dispatcher. Reserve ENTRY_SLOT_COUNT consecutive 8-byte slots starting at
+# PROBED_HOOK_SLOT_RVA (= 0x8F90CD0). Bump ENTRY_SLOT_COUNT when adding a
+# new entry-class hook and reserve the next __bss tail if you exhaust the
+# space.
+ENTRY_SLOT_COUNT    = 1
+ENTRY_SLOT_BASE_RVA = PROBED_HOOK_SLOT_RVA  # 0x8F90CD0
 
 # Must stay inside __DATA,__bss and leave room for at least 32 8-byte entries.
 # Runtime code reconstructs the actual bypass entry VAs from the cave geometry,
@@ -193,6 +204,31 @@ _HOOK_IDS: dict[str, int] = {
 
 CAVE_PAYLOAD_SIZE = 84  # 21 instructions
 
+# Cave kinds — Bridge supports two cave shapes:
+#
+#   "observer" : peek BEFORE orig runs (Bridge's original cave shape).
+#                Routes through the dispatcher slot at HOOK_SLOT_RVA with
+#                the per-site hook_id in W6. The hook's return value is
+#                discarded — orig executes afterwards via the displaced
+#                prologue + B orig+4. Used for all 28 existing sites.
+#
+#   "entry"    : REPLACE the original (KiouForge-style). The cave reads
+#                the per-site hook fn ptr from its dedicated entry slot,
+#                BLRs it, then RETs — orig is NOT executed by the cave.
+#                The hook is responsible for invoking orig itself when it
+#                wants the original behavior, via the cave-bypass entry
+#                exposed at cave_va + KIOU_BR_CAVE_BYPASS_OFFSET.
+#                Used for AccountExists so Force Register can flip the
+#                bool return on chinlan.
+#
+# To add a new cave kind: write `_build_<kind>_cave_payload(...)` returning
+# a `build(cave_va) -> bytes` closure, then add it to `_CAVE_BUILDERS`.
+CAVE_OBSERVER = "observer"
+CAVE_ENTRY    = "entry"
+
+# Single NOP instruction (arm64 little-endian).
+_NOP = b"\x1f\x20\x03\xd5"
+
 
 def _build_bridge_cave_payload(
     orig_va: int, slot_va: int, displaced_insn: bytes, hook_id: int
@@ -279,6 +315,79 @@ def _build_bridge_cave_payload(
 
 
 # ---------------------------------------------------------------------------
+# Entry cave payload builder.
+#
+# Cave shape (21 insns = 84 bytes), modelled on KiouForge's entry cave:
+#
+#     STP X29, X30, [SP, #-0x10]!
+#     ADRP X16, page(slot_va)
+#     LDR  X16, [X16, #lo12(slot_va)]
+#     MOVZ W9,  #slot_index             ; passed for diagnostics; hook may ignore
+#     BLR  X16                          ; hook(x0..x7) — return value lives in x0
+#     LDP  X29, X30, [SP], #0x10
+#     RET                               ; orig is NOT invoked by the cave
+#     NOP × 12                          ; padding so the bypass tail stays at +0x4C
+#     <displaced prologue insn>         ; reachable only when the hook BLs
+#     B    <orig + 4>                   ; the bypass entry (cave_va + 0x4C)
+#
+# Caller registers (x0..x7) reach the hook unchanged because nothing between
+# the cave entry and BLR touches them. The hook decides:
+#   * return its own value -> cave RETs straight back to the call site
+#   * invoke the bypass entry (cave_va + 0x4C) as a function pointer to run
+#     orig and forward its return.
+# ---------------------------------------------------------------------------
+
+# Last two instructions (displaced + B orig+4) occupy 8 bytes at the tail,
+# matching the observer cave's geometry so kiou_bridge_bypass_entry_for_hook()
+# stays correct (cave_va + 0x4C).
+_ENTRY_HEAD_INSNS = 7  # STP, ADRP, LDR, MOVZ, BLR, LDP, RET
+_ENTRY_TAIL_BYTES = 8  # displaced_insn + B orig+4
+_ENTRY_PAD_INSNS  = (CAVE_PAYLOAD_SIZE - _ENTRY_HEAD_INSNS * 4 - _ENTRY_TAIL_BYTES) // 4
+
+
+def _build_entry_cave_payload(
+    orig_va: int, slot_va: int, displaced_insn: bytes, slot_index: int
+):
+    """Return a ``build_payload(cave_va) -> bytes`` closure for an entry cave."""
+    if len(displaced_insn) != 4:
+        raise ValueError(
+            f"displaced_insn must be exactly 4 bytes; got {len(displaced_insn)}"
+        )
+    if not (0 <= slot_index <= 0xFFFF):
+        raise ValueError(f"slot_index out of MOVZ 16-bit range: {slot_index}")
+
+    def build(cave_va: int) -> bytes:
+        out = bytearray()
+        cur = cave_va
+
+        def emit(insn: bytes) -> None:
+            nonlocal cur
+            out.extend(insn)
+            cur += 4
+
+        emit(stp_pre_x(29, 30, 31, -0x10))
+        emit(adrp(16, cur, slot_va))
+        emit(ldr_x_imm(16, 16, slot_va & 0xFFF))
+        emit(movz_w_imm(9, slot_index))
+        emit(blr_x(16))
+        emit(ldp_post_x(29, 30, 31, 0x10))
+        emit(ret_insn())
+        for _ in range(_ENTRY_PAD_INSNS):
+            emit(_NOP)
+        emit(displaced_insn)
+        emit(b_imm(cur, orig_va + 4))
+
+        if len(out) != CAVE_PAYLOAD_SIZE:
+            raise AssertionError(
+                f"entry cave payload wrong size: got {len(out)}, "
+                f"expected {CAVE_PAYLOAD_SIZE}"
+            )
+        return bytes(out)
+
+    return build
+
+
+# ---------------------------------------------------------------------------
 # PATCHES — inline single-instruction (or short-multi-instruction)
 # replacements.
 #
@@ -358,70 +467,95 @@ PATCHES: list = [
 # BinpatchDispatcher.m / Inject_Move.m must be updated in lockstep.
 # ---------------------------------------------------------------------------
 
-_BRIDGE_SITES: list[tuple[int, str, str, str]] = [
+_BRIDGE_SITES: list[tuple[int, str, str, str, str]] = [
     # OnMatchEndAsync × 5
-    (0x59E5958, "f657bda9", "KIOU_BR_HOOK_AI_END",        "AIMatchMode.OnMatchEndAsync"),
-    (0x59EC818, "ff8301d1", "KIOU_BR_HOOK_CPUSTREAM_END", "CPUStreamMode.OnMatchEndAsync"),
-    (0x59FF8F8, "f44fbea9", "KIOU_BR_HOOK_LOCAL_END",     "LocalPvPMode.OnMatchEndAsync"),
-    (0x5A0139C, "ff8301d1", "KIOU_BR_HOOK_ONLINE_END",    "OnlinePvPMode.OnMatchEndAsync"),
-    (0x5A2B564, "f85fbca9", "KIOU_BR_HOOK_REPLAY_END",    "RecordReplayMode.OnMatchEndAsync"),
+    (0x59E5958, "f657bda9", "KIOU_BR_HOOK_AI_END",        CAVE_OBSERVER, "AIMatchMode.OnMatchEndAsync"),
+    (0x59EC818, "ff8301d1", "KIOU_BR_HOOK_CPUSTREAM_END", CAVE_OBSERVER, "CPUStreamMode.OnMatchEndAsync"),
+    (0x59FF8F8, "f44fbea9", "KIOU_BR_HOOK_LOCAL_END",     CAVE_OBSERVER, "LocalPvPMode.OnMatchEndAsync"),
+    (0x5A0139C, "ff8301d1", "KIOU_BR_HOOK_ONLINE_END",    CAVE_OBSERVER, "OnlinePvPMode.OnMatchEndAsync"),
+    (0x5A2B564, "f85fbca9", "KIOU_BR_HOOK_REPLAY_END",    CAVE_OBSERVER, "RecordReplayMode.OnMatchEndAsync"),
 
     # InitializeAsync × 5
-    (0x59E4E0C, "e923ba6d", "KIOU_BR_HOOK_AI_INIT",        "AIMatchMode.InitializeAsync"),
-    (0x59E7B48, "ff8302d1", "KIOU_BR_HOOK_CPUSTREAM_INIT", "CPUStreamMode.InitializeAsync"),
-    (0x59FF7B0, "f657bda9", "KIOU_BR_HOOK_LOCAL_INIT",     "LocalPvPMode.InitializeAsync"),
-    (0x5A00E90, "ff8302d1", "KIOU_BR_HOOK_ONLINE_INIT",    "OnlinePvPMode.InitializeAsync"),
-    (0x5A2ADD0, "ff0301d1", "KIOU_BR_HOOK_REPLAY_INIT",    "RecordReplayMode.InitializeAsync"),
+    (0x59E4E0C, "e923ba6d", "KIOU_BR_HOOK_AI_INIT",        CAVE_OBSERVER, "AIMatchMode.InitializeAsync"),
+    (0x59E7B48, "ff8302d1", "KIOU_BR_HOOK_CPUSTREAM_INIT", CAVE_OBSERVER, "CPUStreamMode.InitializeAsync"),
+    (0x59FF7B0, "f657bda9", "KIOU_BR_HOOK_LOCAL_INIT",     CAVE_OBSERVER, "LocalPvPMode.InitializeAsync"),
+    (0x5A00E90, "ff8302d1", "KIOU_BR_HOOK_ONLINE_INIT",    CAVE_OBSERVER, "OnlinePvPMode.InitializeAsync"),
+    (0x5A2ADD0, "ff0301d1", "KIOU_BR_HOOK_REPLAY_INIT",    CAVE_OBSERVER, "RecordReplayMode.InitializeAsync"),
 
     # OnPlayerMoveAsync × 5
-    (0x59E5268, "ffc301d1", "KIOU_BR_HOOK_AI_OPM",        "AIMatchMode.OnPlayerMoveAsync"),
-    (0x59E886C, "ffc301d1", "KIOU_BR_HOOK_CPUSTREAM_OPM", "CPUStreamMode.OnPlayerMoveAsync"),
-    (0x59FF87C, "f44fbea9", "KIOU_BR_HOOK_LOCAL_OPM",     "LocalPvPMode.OnPlayerMoveAsync"),
-    (0x5A012D8, "ffc301d1", "KIOU_BR_HOOK_ONLINE_OPM",    "OnlinePvPMode.OnPlayerMoveAsync"),
-    (0x5A2B3EC, "ff0301d1", "KIOU_BR_HOOK_REPLAY_OPM",    "RecordReplayMode.OnPlayerMoveAsync"),
+    (0x59E5268, "ffc301d1", "KIOU_BR_HOOK_AI_OPM",        CAVE_OBSERVER, "AIMatchMode.OnPlayerMoveAsync"),
+    (0x59E886C, "ffc301d1", "KIOU_BR_HOOK_CPUSTREAM_OPM", CAVE_OBSERVER, "CPUStreamMode.OnPlayerMoveAsync"),
+    (0x59FF87C, "f44fbea9", "KIOU_BR_HOOK_LOCAL_OPM",     CAVE_OBSERVER, "LocalPvPMode.OnPlayerMoveAsync"),
+    (0x5A012D8, "ffc301d1", "KIOU_BR_HOOK_ONLINE_OPM",    CAVE_OBSERVER, "OnlinePvPMode.OnPlayerMoveAsync"),
+    (0x5A2B3EC, "ff0301d1", "KIOU_BR_HOOK_REPLAY_OPM",    CAVE_OBSERVER, "RecordReplayMode.OnPlayerMoveAsync"),
 
     # OnMatchStart × 5 — prologue bytes captured on 2026-06-15 from the
     # extracted Kiou-1.0.1 build 11 UnityFramework. LocalPvPMode's
     # OnMatchStart is a synchronous void thunk that compiles to a bare
     # RET (top byte 0xd6); the other four are STP pre-index frame setups.
-    (0x59E5000, "f85fbca9", "KIOU_BR_HOOK_AI_START",        "AIMatchMode.OnMatchStart"),
-    (0x59E7D64, "fa67bba9", "KIOU_BR_HOOK_CPUSTREAM_START", "CPUStreamMode.OnMatchStart"),
-    (0x59FF878, "c0035fd6", "KIOU_BR_HOOK_LOCAL_START",     "LocalPvPMode.OnMatchStart"),
-    (0x59FFE3C, "f657bda9", "KIOU_BR_HOOK_ONLINE_START",    "OnlinePvPMode.OnMatchStart"),
-    (0x5A2B36C, "f657bda9", "KIOU_BR_HOOK_REPLAY_START",    "RecordReplayMode.OnMatchStart"),
+    (0x59E5000, "f85fbca9", "KIOU_BR_HOOK_AI_START",        CAVE_OBSERVER, "AIMatchMode.OnMatchStart"),
+    (0x59E7D64, "fa67bba9", "KIOU_BR_HOOK_CPUSTREAM_START", CAVE_OBSERVER, "CPUStreamMode.OnMatchStart"),
+    (0x59FF878, "c0035fd6", "KIOU_BR_HOOK_LOCAL_START",     CAVE_OBSERVER, "LocalPvPMode.OnMatchStart"),
+    (0x59FFE3C, "f657bda9", "KIOU_BR_HOOK_ONLINE_START",    CAVE_OBSERVER, "OnlinePvPMode.OnMatchStart"),
+    (0x5A2B36C, "f657bda9", "KIOU_BR_HOOK_REPLAY_START",    CAVE_OBSERVER, "RecordReplayMode.OnMatchStart"),
 
     # Single-site observation hooks
-    (0x59D0DFC, "ff8301d1", "KIOU_BR_HOOK_ADAPTER_TRY_MAKE_MOVE_OUT", "ShogiGameAdapter.TryMakeMove(Move,out)"),
-    (0x5A0A64C, "e923bc6d", "KIOU_BR_HOOK_ONLINE_UPDATE_SNAPSHOT",    "OnlinePvPMode.UpdateAuthoritativeSnapshot"),
-    (0x5A0CBD0, "ff0302d1", "KIOU_BR_HOOK_ONLINE_HANDLE_RESULT",      "OnlinePvPMode.HandleMoveResult"),
-    (0x59EB0E0, "e923bc6d", "KIOU_BR_HOOK_CPUSTREAM_UPDATE_SNAPSHOT", "CPUStreamMode.UpdateAuthoritativeSnapshot"),
-    (0x5944E84, "ff4302d1", "KIOU_BR_HOOK_GAMEORCH_ACTIVATE",         "GameOrchestrator.ActivateAsync"),
+    (0x59D0DFC, "ff8301d1", "KIOU_BR_HOOK_ADAPTER_TRY_MAKE_MOVE_OUT", CAVE_OBSERVER, "ShogiGameAdapter.TryMakeMove(Move,out)"),
+    (0x5A0A64C, "e923bc6d", "KIOU_BR_HOOK_ONLINE_UPDATE_SNAPSHOT",    CAVE_OBSERVER, "OnlinePvPMode.UpdateAuthoritativeSnapshot"),
+    (0x5A0CBD0, "ff0302d1", "KIOU_BR_HOOK_ONLINE_HANDLE_RESULT",      CAVE_OBSERVER, "OnlinePvPMode.HandleMoveResult"),
+    (0x59EB0E0, "e923bc6d", "KIOU_BR_HOOK_CPUSTREAM_UPDATE_SNAPSHOT", CAVE_OBSERVER, "CPUStreamMode.UpdateAuthoritativeSnapshot"),
+    (0x5944E84, "ff4302d1", "KIOU_BR_HOOK_GAMEORCH_ACTIVATE",         CAVE_OBSERVER, "GameOrchestrator.ActivateAsync"),
 
     # GameStateStore hooks — move observation (CSA) + player identity (Online)
-    (0x5A2CB64, "f44fbea9", "KIOU_BR_HOOK_GSTATE_SET_BLACK_PLAYER_INFO", "GameStateStore.SetBlackPlayerInfo"),
-    (0x5A2CBA0, "f44fbea9", "KIOU_BR_HOOK_GSTATE_SET_WHITE_PLAYER_INFO", "GameStateStore.SetWhitePlayerInfo"),
-    (0x5A2CD24, "ff4301d1", "KIOU_BR_HOOK_GSTATE_NOTIFY_PIECE_MOVED",    "GameStateStore.NotifyPieceMoved"),
+    (0x5A2CB64, "f44fbea9", "KIOU_BR_HOOK_GSTATE_SET_BLACK_PLAYER_INFO", CAVE_OBSERVER, "GameStateStore.SetBlackPlayerInfo"),
+    (0x5A2CBA0, "f44fbea9", "KIOU_BR_HOOK_GSTATE_SET_WHITE_PLAYER_INFO", CAVE_OBSERVER, "GameStateStore.SetWhitePlayerInfo"),
+    (0x5A2CD24, "ff4301d1", "KIOU_BR_HOOK_GSTATE_NOTIFY_PIECE_MOVED",    CAVE_OBSERVER, "GameStateStore.NotifyPieceMoved"),
 
-    # Account identity observation — UserSaveDataExtensions.AccountExists
-    # is called early on every boot. Capturing its arg (UserSaveData) lets
-    # us persist the *currently active* account into accounts.json even
-    # when the user installed / upgraded the tweak after first login (the
-    # JB-only LoginReply observer alone misses that boot's first login).
-    # Pre-orig only — the force-register override path stays JB-only.
-    (0x591E860, "fd7bbfa9", "KIOU_BR_HOOK_ACCOUNT_EXISTS",          "UserSaveDataExtensions.AccountExists"),
+    # Account identity observation + Force Register override.
+    # CAVE_ENTRY: the cave reads HookAccountExistsEntry from the dedicated
+    # entry slot (ENTRY_SLOT_BASE_RVA + 0) and calls it. The hook is
+    # responsible for invoking orig itself via the bypass entry when it
+    # wants the original return — which lets Force Register flip the bool
+    # without re-entering the cave.
+    (0x591E860, "fd7bbfa9", "KIOU_BR_HOOK_ACCOUNT_EXISTS",          CAVE_ENTRY,    "UserSaveDataExtensions.AccountExists"),
 ]
+
+
+# Entry slot indices — one per CAVE_ENTRY row in _BRIDGE_SITES, assigned in
+# allocation order. Must match the enum in Sources/KiouEngineBridge/Internal.h
+# (KIOU_BR_ENTRY_SLOT_*).
+_ENTRY_SLOT_INDEX_BY_HOOK: dict[str, int] = {
+    "KIOU_BR_HOOK_ACCOUNT_EXISTS": 0,
+}
+assert len(_ENTRY_SLOT_INDEX_BY_HOOK) == ENTRY_SLOT_COUNT, \
+    f"ENTRY_SLOT_COUNT ({ENTRY_SLOT_COUNT}) must match the entry-slot map"
+
+
+def _payload_for_row(site, prologue_bytes, hook_id_name, kind):
+    """Pick the cave builder for `kind` and return its closure."""
+    if kind == CAVE_OBSERVER:
+        return _build_bridge_cave_payload(
+            site, HOOK_SLOT_RVA, prologue_bytes, _HOOK_IDS[hook_id_name]
+        )
+    if kind == CAVE_ENTRY:
+        slot_index = _ENTRY_SLOT_INDEX_BY_HOOK[hook_id_name]
+        slot_va = ENTRY_SLOT_BASE_RVA + slot_index * 8
+        return _build_entry_cave_payload(
+            site, slot_va, prologue_bytes, slot_index
+        )
+    raise AssertionError(f"unknown cave kind {kind!r} for {hook_id_name}")
 
 
 CAVE_PATCHES: list = [
     (
         site,
         bytes.fromhex(prologue_hex),
-        _build_bridge_cave_payload(
-            site, HOOK_SLOT_RVA, bytes.fromhex(prologue_hex), _HOOK_IDS[hook_id_name]
+        _payload_for_row(
+            site, bytes.fromhex(prologue_hex), hook_id_name, kind
         ),
-        f"{label}: route to Bridge cave ({hook_id_name})",
+        f"{label}: route to Bridge {kind} cave ({hook_id_name})",
     )
-    for site, prologue_hex, hook_id_name, label in _BRIDGE_SITES
+    for site, prologue_hex, hook_id_name, kind, label in _BRIDGE_SITES
 ]
 
 
@@ -458,5 +592,5 @@ PLIST_KEYS: dict = {
 # ---------------------------------------------------------------------------
 _SITES: list[tuple[int, int, str, str]] = [
     (_HOOK_IDS[hook_id_name], site_rva, prologue_hex, label)
-    for site_rva, prologue_hex, hook_id_name, label in _BRIDGE_SITES
+    for site_rva, prologue_hex, hook_id_name, kind, label in _BRIDGE_SITES
 ]
