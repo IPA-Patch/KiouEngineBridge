@@ -713,13 +713,19 @@ static void observeAccountExistsData(void *data) {
     }
 }
 
-bool HookAccountExists(void *data) {
-    bool origResult = false;
-    @try {
-        origResult = KIOU_CALL_ORIG_RET(bool, orig_AccountExists, data);
-    } @catch (NSException *e) {
-        IPALog([NSString stringWithFormat:@"[ACCOUNT] AccountExists orig threw: %@", e]);
-    }
+// Shared body for the JB hook and the chinlan entry hook.
+// Force-Register flag: when set (via Settings UI), return false so KIOU
+// routes the title scene into RunRegisterUserSequenceAsync. Combined
+// with the pending_distinct_id armed by the same toggle, the user can
+// create a new account WITHOUT going through RunResetUserDataSequenceAsync
+// — which appears to trigger server-side rebinding that orphans the
+// previous account.
+//
+// The flag is NOT cleared here. KIOU calls AccountExists multiple times
+// during boot — clearing on first read would let the second call drop
+// back to Login flow. The flag is consumed in HookRunLoginSeqMoveNext
+// once the post-Register auto-Login has succeeded.
+static bool accountExistsBody(void *data, bool origResult, const char *flavor) {
     NSString *userName = nil, *openId = nil, *userId = nil, *deviceId = nil;
     if (data) {
         userName = readIl2CppString(readPtr(data, OFF_USER_SAVE_DATA_USER_NAME));
@@ -727,26 +733,15 @@ bool HookAccountExists(void *data) {
         userId   = readIl2CppString(readPtr(data, OFF_USER_SAVE_DATA_USER_ID));
         deviceId = readIl2CppString(readPtr(data, OFF_USER_SAVE_DATA_DEVICE_ID));
     }
-
     observeAccountExistsData(data);
 
-    // Force-Register flag: when set (via Settings UI), return false so KIOU
-    // routes the title scene into RunRegisterUserSequenceAsync. Combined
-    // with the pending_distinct_id armed by the same toggle, the user can
-    // create a new account WITHOUT going through RunResetUserDataSequenceAsync
-    // — which appears to trigger server-side rebinding that orphans the
-    // previous account.
-    //
-    // The flag is NOT cleared here. KIOU calls AccountExists multiple times
-    // during boot — clearing on first read would let the second call drop
-    // back to Login flow. The flag is consumed in HookRunLoginSeqMoveNext
-    // once the post-Register auto-Login has succeeded.
     bool forceRegister = KEBForceRegisterOnNextLaunch();
     bool result = forceRegister ? false : origResult;
 
     IPALog([NSString stringWithFormat:
-              @"[ACCOUNT] AccountExists orig=%s force=%s returned=%s "
+              @"[ACCOUNT] AccountExists (%s) orig=%s force=%s returned=%s "
               @"userName=%@ openId=%@ userId=%@ deviceId=%@",
+              flavor,
               origResult ? "true" : "false",
               forceRegister ? "true" : "false",
               result ? "true" : "false",
@@ -755,12 +750,40 @@ bool HookAccountExists(void *data) {
     return result;
 }
 
-// Chinlan cave hook — pre-orig observe only. The cave runs orig itself, so
-// we can't override the return value here; force-register stays JB-only.
-void HookAccountExistsObserve(void *data) {
-    observeAccountExistsData(data);
-    IPALog(@"[ACCOUNT] AccountExists observe (chinlan): UserSaveData captured");
+bool HookAccountExists(void *data) {
+    bool origResult = false;
+    @try {
+        origResult = KIOU_CALL_ORIG_RET(bool, orig_AccountExists, data);
+    } @catch (NSException *e) {
+        IPALog([NSString stringWithFormat:@"[ACCOUNT] AccountExists orig threw: %@", e]);
+    }
+    return accountExistsBody(data, origResult, "jb");
 }
+
+// Chinlan entry-cave hook. The cave does NOT run orig; we have to invoke it
+// ourselves through the per-site bypass entry (cave_va + 0x4C, published into
+// g_inject_entry by KEBBridgeChinlanPublish) and feed its return into the
+// shared body. Returning a bool here propagates to the caller because the
+// entry cave's tail is RET — the cave never overwrites x0.
+#if KIOU_CHINLAN
+bool HookAccountExistsEntry(void *data) {
+    bool origResult = false;
+    AccountExists_t bypass =
+        (AccountExists_t)g_inject_entry[KIOU_BR_HOOK_ACCOUNT_EXISTS];
+    if (bypass) {
+        @try {
+            origResult = bypass(data);
+        } @catch (NSException *e) {
+            IPALog([NSString stringWithFormat:
+                      @"[ACCOUNT] AccountExists chinlan bypass threw: %@", e]);
+        }
+    } else {
+        IPALog(@"[ACCOUNT] AccountExists chinlan bypass entry not published — "
+                 @"returning false; KIOU will route into the Register flow");
+    }
+    return accountExistsBody(data, origResult, "chinlan");
+}
+#endif
 
 // ---------------------------------------------------------------------------
 // Account switching — calls TDAnalytics.SetDistinctId with a fresh il2cpp
