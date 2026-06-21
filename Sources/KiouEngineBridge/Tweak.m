@@ -102,16 +102,6 @@ static void installUnityHooks(void) {
     IPALog(@"=== KiouEngineBridge: all hooks installed ===");
 }
 
-static void retryInstallHooks(void) {
-    if (!g_unityHooked) installUnityHooks();
-
-    if (!g_unityHooked) {
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)),
-                       dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-            retryInstallHooks();
-        });
-    }
-}
 
 __attribute__((constructor)) static void init(void) {
     IPALoggingInit("com.neconome.shogi.kiouenginebridge");
@@ -148,13 +138,7 @@ __attribute__((constructor)) static void init(void) {
     // and retries until the key window is available — safe to call here.
     KEBSettingsInstall();
 
-    // UnityFramework is almost certainly not mapped yet at constructor time.
     installUnityHooks();
-
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)),
-                   dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        retryInstallHooks();
-    });
 
     IPALog(@"=== KiouEngineBridge constructor done ===");
 }
