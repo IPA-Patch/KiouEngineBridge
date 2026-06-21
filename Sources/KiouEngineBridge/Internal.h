@@ -529,6 +529,10 @@ enum kiou_bridge_hook_id {
     KIOU_BR_HOOK_LOGIN_ARGS_CREATE,
     KIOU_BR_HOOK_REGISTER_USER_ARGS_CREATE,
 
+    KIOU_BR_HOOK_GET_VALID_MATCH_FOUND_STATUS,
+    KIOU_BR_HOOK_MATCH_STREAM_ARGS_CREATE,
+    KIOU_BR_HOOK_RECEIVE_TIMEOUT_MOVENEXT,
+
     KIOU_BR_HOOK__COUNT,
 };
 
@@ -540,6 +544,8 @@ enum kiou_bridge_entry_slot_id {
     KIOU_BR_ENTRY_SLOT_ACCOUNT_EXISTS = 0,
     KIOU_BR_ENTRY_SLOT_LOGIN_ARGS_CREATE,
     KIOU_BR_ENTRY_SLOT_REGISTER_USER_ARGS_CREATE,
+    KIOU_BR_ENTRY_SLOT_GET_VALID_MATCH_FOUND_STATUS,
+    KIOU_BR_ENTRY_SLOT_MATCH_STREAM_ARGS_CREATE,
 
     KIOU_BR_ENTRY_SLOT__COUNT,
 };
@@ -700,6 +706,23 @@ bool HookAccountExistsEntry(void *data);
 // orig's return (the freshly built ILoginArgs* / IRegisterUserArgs*).
 void *HookLoginArgsCreateEntry(void *deviceId, void *distinctId);
 void *HookRegisterUserArgsCreateEntry(void *userName, void *distinctId);
+
+// Matching filter chinlan-side entry hooks. GetValidMatchFoundStatus
+// returns the orig status (so the JB-shape observable contract holds) but
+// fires a ConnectionFailed JoinQueue at the matching stream when the seat
+// doesn't match the user's preference. ArgsCreate is CAVE_ENTRY because
+// its 7th C arg lands in W6 which CAVE_OBSERVER would clobber with hook_id.
+void *HookGetValidMatchFoundStatusEntry(void *reply);
+void *HookArgsCreateEntry(int32_t action, int32_t matchType,
+                           int32_t rankRuleType, int32_t eventRuleType,
+                           int32_t mstEventMatchId,
+                           int32_t matchingClientType,
+                           bool enableBeginnerSupport);
+
+// MatchingHandler.ReceiveWithTimeoutAsync.MoveNext observer hook — declared
+// here so the chinlan dispatcher can call it without recompiling against
+// Hook_MatchingFilterObserve.m's internal symbol table.
+void HookReceiveTimeoutMoveNext(void *self);
 void HookGStateNotifyStateSyncedForCurrentPosition(void);
 void ResolveGameStateStoreNotifyStateSynced(uintptr_t unityBase);
 void HookGStateRememberStore(void *self);

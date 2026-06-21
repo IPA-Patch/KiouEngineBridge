@@ -109,7 +109,7 @@ PROBED_HOOK_SLOT_RVA = 0x8F90CD0
 # PROBED_HOOK_SLOT_RVA (= 0x8F90CD0). Bump ENTRY_SLOT_COUNT when adding a
 # new entry-class hook and reserve the next __bss tail if you exhaust the
 # space.
-ENTRY_SLOT_COUNT    = 3
+ENTRY_SLOT_COUNT    = 5
 ENTRY_SLOT_BASE_RVA = PROBED_HOOK_SLOT_RVA  # 0x8F90CD0
 
 # Must stay inside __DATA,__bss and leave room for at least 32 8-byte entries.
@@ -161,6 +161,9 @@ _HOOK_IDS: dict[str, int] = {
     "KIOU_BR_HOOK_ACCOUNT_EXISTS": 28,
     "KIOU_BR_HOOK_LOGIN_ARGS_CREATE": 29,
     "KIOU_BR_HOOK_REGISTER_USER_ARGS_CREATE": 30,
+    "KIOU_BR_HOOK_GET_VALID_MATCH_FOUND_STATUS": 31,
+    "KIOU_BR_HOOK_MATCH_STREAM_ARGS_CREATE": 32,
+    "KIOU_BR_HOOK_RECEIVE_TIMEOUT_MOVENEXT": 33,
 }
 
 
@@ -531,6 +534,20 @@ _BRIDGE_SITES: list[tuple[int, str, str, str, str]] = [
     # branching to orig+4, undoing the substitution.
     (0x5B9899C, "f657bda9", "KIOU_BR_HOOK_LOGIN_ARGS_CREATE",         CAVE_ENTRY, "ILoginArgs.Create"),
     (0x5B98A2C, "f657bda9", "KIOU_BR_HOOK_REGISTER_USER_ARGS_CREATE", CAVE_ENTRY, "IRegisterUserArgs.Create"),
+
+    # Matching filter: Accept Seat (sente/gote-only) + Fixed Rate Range.
+    # GetValidMatchFoundStatus must be CAVE_ENTRY so the hook can return
+    # NULL when the matched seat doesn't satisfy the filter (the caller
+    # treats NULL as "reject this match"). The two supporting sites are:
+    #   * ShogiMatchStreamArgs.Create — CAVE_ENTRY because the 7th C
+    #     argument (enableBeginnerSupport) lands in W6, which CAVE_OBSERVER
+    #     clobbers with the hook_id MOVZ. CAVE_ENTRY only touches W9.
+    #   * ReceiveWithTimeoutAsync.MoveNext — CAVE_OBSERVER. Single self
+    #     pointer in x0; we just need to peek to cache the stream pointer
+    #     and react to MatchingStatus replies.
+    (0x5D04E94, "ff0301d1", "KIOU_BR_HOOK_GET_VALID_MATCH_FOUND_STATUS", CAVE_ENTRY,    "GetValidMatchFoundStatus"),
+    (0x5BCA664, "fc6fbaa9", "KIOU_BR_HOOK_MATCH_STREAM_ARGS_CREATE",     CAVE_ENTRY,    "IShogiMatchStreamArgs.Create"),
+    (0x5D06B10, "ff0303d1", "KIOU_BR_HOOK_RECEIVE_TIMEOUT_MOVENEXT",     CAVE_OBSERVER, "MatchingHandler.ReceiveWithTimeoutAsync.MoveNext"),
 ]
 
 
@@ -538,9 +555,11 @@ _BRIDGE_SITES: list[tuple[int, str, str, str, str]] = [
 # allocation order. Must match the enum in Sources/KiouEngineBridge/Internal.h
 # (KIOU_BR_ENTRY_SLOT_*).
 _ENTRY_SLOT_INDEX_BY_HOOK: dict[str, int] = {
-    "KIOU_BR_HOOK_ACCOUNT_EXISTS":            0,
-    "KIOU_BR_HOOK_LOGIN_ARGS_CREATE":         1,
-    "KIOU_BR_HOOK_REGISTER_USER_ARGS_CREATE": 2,
+    "KIOU_BR_HOOK_ACCOUNT_EXISTS":               0,
+    "KIOU_BR_HOOK_LOGIN_ARGS_CREATE":            1,
+    "KIOU_BR_HOOK_REGISTER_USER_ARGS_CREATE":    2,
+    "KIOU_BR_HOOK_GET_VALID_MATCH_FOUND_STATUS": 3,
+    "KIOU_BR_HOOK_MATCH_STREAM_ARGS_CREATE":     4,
 }
 assert len(_ENTRY_SLOT_INDEX_BY_HOOK) == ENTRY_SLOT_COUNT, \
     f"ENTRY_SLOT_COUNT ({ENTRY_SLOT_COUNT}) must match the entry-slot map"
