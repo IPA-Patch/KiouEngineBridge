@@ -1,6 +1,7 @@
 #import "Internal.h"
 #import "Settings_Persistence.h"
 #import <mach-o/dyld.h>
+#import <dlfcn.h>
 #import <string.h>
 
 // ===========================================================================
@@ -26,25 +27,23 @@ static BOOL g_unityHooked = NO;
 // that doesn't carry the installer's `unityBase` argument on its stack.
 uintptr_t g_unityBase = 0;
 
-static void installUnityHooks(void) {
+static void installUnityHooks(uintptr_t unityBase, const char *unityName);
+
+// dyld add-image callback. Fires for every Mach-O image already loaded at
+// registration time, then for every subsequent dlopen. We watch for
+// UnityFramework and install our hooks the first time it appears.
+static void kebOnImageAdded(const struct mach_header *mh, intptr_t slide) {
+    (void)slide;
     if (g_unityHooked) return;
+    Dl_info info;
+    if (dladdr(mh, &info) == 0 || !info.dli_fname) return;
+    if (!strstr(info.dli_fname, "UnityFramework")) return;
+    installUnityHooks((uintptr_t)mh, info.dli_fname);
+}
 
-    uint32_t imgCount = _dyld_image_count();
-    uintptr_t unityBase = 0;
-    const char *unityName = NULL;
-    for (uint32_t i = 0; i < imgCount; i++) {
-        const char *name = _dyld_get_image_name(i);
-        if (name && strstr(name, "UnityFramework")) {
-            unityBase = (uintptr_t)_dyld_get_image_header(i);
-            unityName = name;
-            break;
-        }
-    }
-
-    if (unityBase == 0) {
-        // Not loaded yet - retry will call us again.
-        return;
-    }
+static void installUnityHooks(uintptr_t unityBase, const char *unityName) {
+    if (g_unityHooked) return;
+    if (unityBase == 0) return;
 
     g_unityBase = unityBase;
 
@@ -138,7 +137,12 @@ __attribute__((constructor)) static void init(void) {
     // and retries until the key window is available — safe to call here.
     KEBSettingsInstall();
 
-    installUnityHooks();
+    // Wire UnityFramework hooks the moment UnityFramework is mapped.
+    // _dyld_register_func_for_add_image fires synchronously for every image
+    // already loaded at registration time, then for every subsequent dlopen
+    // — so this works whether UnityFramework is mapped when our constructor
+    // runs or it gets dlopened later.
+    _dyld_register_func_for_add_image(&kebOnImageAdded);
 
     IPALog(@"=== KiouEngineBridge constructor done ===");
 }
