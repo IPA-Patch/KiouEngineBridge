@@ -120,7 +120,6 @@ toggle writes to `NSUserDefaults` under `kiou_bridge.*`. Sections:
 |---|---|
 | **Account** | Drills down into a list of every account the tweak has seen pass through `RunLoginSequenceAsync`. Tap to switch, swipe to delete, share to export as `accounts.json` (userId / openId / userName / deviceId / distinctId / rank table per match-type). The `New Register` toggle arms a fresh distinctId so the next launch falls into KIOU's register flow without going through `RunResetUserDataSequenceAsync`. |
 | **Match** | `Auto Rematch` toggle; `Skip Resign Dialog` (`%TORYO` → `SurrenderAsync` directly, no confirm). |
-| **Accept Seat** | `Both` / `Black` / `White`. Non-matching seats are rejected with `ConnectionFailed` and the matching loop requeues. Debug-only — unsportsmanlike for production use. |
 | **Matching Filter** | `Fixed Rate Range`: when non-zero, `LeaveQueue`+`JoinQueue` whenever the server's `CurrentRateRange` exceeds the value. |
 | **Delay** | Two-step rematch timing: `Close Result` (seconds before dismissing the result overlay) + `Next Match` (seconds before calling `StartCpuFreeMatchAsync` / `StartRankMatchingAsync`). |
 | **CSA Server** | Listening port for the CSA TCP server (applies on next launch). |
