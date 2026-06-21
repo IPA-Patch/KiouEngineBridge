@@ -409,6 +409,7 @@ void MetaOnPlayerInfoSet(int32_t side, void *playerInfo);
 
 // Installer for the GameStateStore.Set*PlayerInfo hooks.
 void InstallGameStateStoreObserveHook(uintptr_t unityBase);
+void InstallMatchingFilterObserveHook(uintptr_t unityBase);
 
 // ---------------------------------------------------------------------------
 // Static chinlan dispatcher (chinlan build only).
