@@ -132,6 +132,13 @@ static void dispatch_one(void *x0, void *x1, void *x2, void *x3, void *x4,
         HookGStateNotifyPieceMoved(x0, (uint32_t)(uintptr_t)x1,
                                    (int32_t)(intptr_t)x2); break;
 
+    // UserSaveDataExtensions.AccountExists(UserSaveData data)
+    //   data=x0. Pre-orig observe — we read UserSaveData fields and persist
+    //   the resulting account row. The cave runs orig itself so the return
+    //   value is unaffected (force-register stays JB-only).
+    case KIOU_BR_HOOK_ACCOUNT_EXISTS:
+        HookAccountExistsObserve(x0); break;
+
     default:
         // Cave fired with an id outside the recipe table. Almost certainly
         // a recipe / header skew — log it and return so we at least keep

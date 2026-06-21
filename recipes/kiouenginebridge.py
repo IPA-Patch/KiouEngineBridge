@@ -147,6 +147,7 @@ _HOOK_IDS: dict[str, int] = {
     "KIOU_BR_HOOK_GSTATE_SET_BLACK_PLAYER_INFO": 25,
     "KIOU_BR_HOOK_GSTATE_SET_WHITE_PLAYER_INFO": 26,
     "KIOU_BR_HOOK_GSTATE_NOTIFY_PIECE_MOVED": 27,
+    "KIOU_BR_HOOK_ACCOUNT_EXISTS": 28,
 }
 
 
@@ -400,6 +401,14 @@ _BRIDGE_SITES: list[tuple[int, str, str, str]] = [
     (0x5A2CB64, "f44fbea9", "KIOU_BR_HOOK_GSTATE_SET_BLACK_PLAYER_INFO", "GameStateStore.SetBlackPlayerInfo"),
     (0x5A2CBA0, "f44fbea9", "KIOU_BR_HOOK_GSTATE_SET_WHITE_PLAYER_INFO", "GameStateStore.SetWhitePlayerInfo"),
     (0x5A2CD24, "ff4301d1", "KIOU_BR_HOOK_GSTATE_NOTIFY_PIECE_MOVED",    "GameStateStore.NotifyPieceMoved"),
+
+    # Account identity observation — UserSaveDataExtensions.AccountExists
+    # is called early on every boot. Capturing its arg (UserSaveData) lets
+    # us persist the *currently active* account into accounts.json even
+    # when the user installed / upgraded the tweak after first login (the
+    # JB-only LoginReply observer alone misses that boot's first login).
+    # Pre-orig only — the force-register override path stays JB-only.
+    (0x591E860, "fd7bbfa9", "KIOU_BR_HOOK_ACCOUNT_EXISTS",          "UserSaveDataExtensions.AccountExists"),
 ]
 
 
