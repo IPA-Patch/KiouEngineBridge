@@ -513,6 +513,8 @@ enum kiou_bridge_hook_id {
     KIOU_BR_HOOK_GSTATE_SET_WHITE_PLAYER_INFO,
     KIOU_BR_HOOK_GSTATE_NOTIFY_PIECE_MOVED,
 
+    KIOU_BR_HOOK_ACCOUNT_EXISTS,
+
     KIOU_BR_HOOK__COUNT,
 };
 
@@ -659,6 +661,10 @@ UniTaskRet HookGameOrchActivateAsync(void *self, void *setup,
 void HookGStateSetBlackPlayerInfo(void *self, void *playerInfo);
 void HookGStateSetWhitePlayerInfo(void *self, void *playerInfo);
 void HookGStateNotifyPieceMoved(void *self, uint32_t move, int32_t playerSide);
+
+// AccountExists chinlan-side observer — see Hook_AccountObserve.m. Pre-orig
+// only (the cave runs orig itself), so the return value is unaffected.
+void HookAccountExistsObserve(void *data);
 void HookGStateNotifyStateSyncedForCurrentPosition(void);
 void ResolveGameStateStoreNotifyStateSynced(uintptr_t unityBase);
 void HookGStateRememberStore(void *self);
