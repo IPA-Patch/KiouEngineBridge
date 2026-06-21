@@ -506,4 +506,5 @@ docs/archive/
 
 # Claude Code session files — local only.
 .claude/plans/
+.claude/settings.json
 .claude/settings.local.json

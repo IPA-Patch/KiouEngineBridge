@@ -90,7 +90,9 @@ void InstallLowLevelObserveHook(uintptr_t unityBase);
 void InstallMatchModeObserveHook(uintptr_t unityBase);
 void InstallInjectHook(uintptr_t unityBase);
 void InstallAfkSuppressHook(uintptr_t unityBase);
+void InstallBackToTitleSuppressHook(uintptr_t unityBase);
 void InstallGameOrchestratorObserveHook(uintptr_t unityBase);
+void InstallGrpcLoggingHook(uintptr_t unityBase);
 
 // Settings panel (Settings_UI.m). Installs the right-edge swipe gesture on
 // the key window; retries automatically if the window is not yet available.
@@ -408,6 +410,22 @@ void MetaOnPlayerInfoSet(int32_t side, void *playerInfo);
 
 // Installer for the GameStateStore.Set*PlayerInfo hooks.
 void InstallGameStateStoreObserveHook(uintptr_t unityBase);
+void InstallMatchingFilterObserveHook(uintptr_t unityBase);
+void InstallAccountObserveHook(uintptr_t unityBase);
+
+// ---------------------------------------------------------------------------
+// Account switching — written by Hook_AccountObserve.m. Calls
+// TDAnalytics.SetDistinctId on the supplied UUID so the next login sequence
+// authenticates as that account. The caller is expected to also restart the
+// login flow (typically by relaunching the app or invoking RunLoginSequence).
+// No-op when the unity base / TDAnalytics symbol has not yet been resolved.
+// ---------------------------------------------------------------------------
+void KEBSwitchAccount(NSString *uuid);
+
+// Trigger BackToTitleSequence.RunAsync so KIOU returns to the title scene
+// without exit() / app relaunch. Used by the Settings UI after a Switch tap.
+// No-op if UnityFramework hasn't been mapped yet.
+void KEBNavigateToTitleScene(void);
 
 // ---------------------------------------------------------------------------
 // Static chinlan dispatcher (chinlan build only).
