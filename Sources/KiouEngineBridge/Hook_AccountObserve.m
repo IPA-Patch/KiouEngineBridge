@@ -681,6 +681,38 @@ UniTaskRet HookRunDeleteAccountSeq(void *ct) {
 typedef bool (*AccountExists_t)(void *data);
 static AccountExists_t orig_AccountExists __attribute__((unused)) = NULL;
 
+// Read UserSaveData and persist the resulting account row. Shared between the
+// JB hook (HookAccountExists) and the chinlan cave observer
+// (HookAccountExistsObserve). Idempotent — KEBSaveAccount merges by userId.
+//
+// Captures the openId / userId fan-out into g_latestObservedOpenId /
+// g_latestObservedUserId so the post-Login LoginReply observer can correlate
+// them with the JWT.sub when it later populates accessToken metadata.
+static void observeAccountExistsData(void *data) {
+    if (!data) return;
+    NSString *userName = readIl2CppString(readPtr(data, OFF_USER_SAVE_DATA_USER_NAME));
+    NSString *openId   = readIl2CppString(readPtr(data, OFF_USER_SAVE_DATA_OPEN_ID));
+    NSString *userId   = readIl2CppString(readPtr(data, OFF_USER_SAVE_DATA_USER_ID));
+    NSString *deviceId = readIl2CppString(readPtr(data, OFF_USER_SAVE_DATA_DEVICE_ID));
+
+    if (openId.length > 0) g_latestObservedOpenId = openId;
+    if (userId.length > 0) g_latestObservedUserId = userId;
+
+    // Persist the currently-active account into accounts.json the moment
+    // KIOU consults AccountExists. Without this, a fresh tweak install on a
+    // device that's already logged in would not record that account until
+    // the user happens to trigger a fresh Login — and on chinlan, where the
+    // LoginReply hook can't run at all, that account would never appear.
+    if (userId.length > 0 && deviceId.length > 0) {
+        KEBSaveAccount(deviceId, userName, openId, userId, deviceId);
+        // Don't overwrite the active selection if it's already set — the
+        // user may have switched manually since the last boot.
+        if (KEBActiveAccountUserId().length == 0) {
+            KEBSetActiveAccountUserId(userId);
+        }
+    }
+}
+
 bool HookAccountExists(void *data) {
     bool origResult = false;
     @try {
@@ -693,8 +725,7 @@ bool HookAccountExists(void *data) {
     NSString *userId   = readIl2CppString(readPtr(data, OFF_USER_SAVE_DATA_USER_ID));
     NSString *deviceId = readIl2CppString(readPtr(data, OFF_USER_SAVE_DATA_DEVICE_ID));
 
-    if (openId.length > 0) g_latestObservedOpenId = openId;
-    if (userId.length > 0) g_latestObservedUserId = userId;
+    observeAccountExistsData(data);
 
     // Force-Register flag: when set (via Settings UI), return false so KIOU
     // routes the title scene into RunRegisterUserSequenceAsync. Combined
@@ -719,6 +750,13 @@ bool HookAccountExists(void *data) {
               userName ?: @"(empty)", openId ?: @"(empty)",
               userId ?: @"(empty)", deviceId ?: @"(empty)"]);
     return result;
+}
+
+// Chinlan cave hook — pre-orig observe only. The cave runs orig itself, so
+// we can't override the return value here; force-register stays JB-only.
+void HookAccountExistsObserve(void *data) {
+    observeAccountExistsData(data);
+    IPALog(@"[ACCOUNT] AccountExists observe (chinlan): UserSaveData captured");
 }
 
 // ---------------------------------------------------------------------------
@@ -852,6 +890,19 @@ void InstallAccountObserveHook(uintptr_t unityBase) {
 #else
 void InstallAccountObserveHook(uintptr_t unityBase) {
     (void)unityBase;
-    IPALog(@"[ACCOUNT] chinlan: account observe hooks are no-op");
+    // On chinlan, the cave at the AccountExists site routes through the
+    // dispatcher to HookAccountExistsObserve. The other account-related
+    // hooks (LoginReply / Register reply / TDAnalytics / etc.) are inherently
+    // post-orig observations that the static cave model can't express, so
+    // they stay JB-only. We still resolve il2cpp_string_new here in case a
+    // future cave-side hook needs to allocate a managed string.
+    if (!g_il2cpp_string_new) {
+        g_il2cpp_string_new = (Il2CppStringNew_t)dlsym(RTLD_DEFAULT,
+                                                       "il2cpp_string_new");
+        IPALog([NSString stringWithFormat:
+                  @"[ACCOUNT] chinlan: il2cpp_string_new=%p", g_il2cpp_string_new]);
+    }
+    IPALog(@"[ACCOUNT] chinlan: AccountExists observer wired via cave; "
+             @"LoginReply / Register / TDAnalytics hooks are JB-only");
 }
 #endif // !KIOU_CHINLAN
