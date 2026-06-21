@@ -110,6 +110,42 @@ no equivalent for. A strict CSA parser must ignore unknown keys.
 | `KIOU_UserId+` / `KIOU_UserId-` | `550e8400-e29b-41d4-a716-446655440000` | Player user id (UUID format); omitted when blank. |
 | `KIOU_StartedAt` | `2026-06-16T09:30:03Z` | Wall-clock ISO 8601 UTC at match start. |
 
+## In-app settings panel
+
+A right-edge screen swipe from anywhere in KIOU opens a `UITableViewController`
+modal with the live tweak settings. Nothing is persisted server-side — every
+toggle writes to `NSUserDefaults` under `kiou_bridge.*`. Sections:
+
+| Section | What it does |
+|---|---|
+| **Account** | Drills down into a list of every account the tweak has seen pass through `RunLoginSequenceAsync`. Tap to switch, swipe to delete, share to export as `accounts.json` (userId / openId / userName / deviceId / distinctId / rank table per match-type). The `New Register` toggle arms a fresh distinctId so the next launch falls into KIOU's register flow without going through `RunResetUserDataSequenceAsync`. |
+| **Match** | `Auto Rematch` toggle; `Skip Resign Dialog` (`%TORYO` → `SurrenderAsync` directly, no confirm). |
+| **Accept Seat** | `Both` / `Black` / `White`. Non-matching seats are rejected with `ConnectionFailed` and the matching loop requeues. Debug-only — unsportsmanlike for production use. |
+| **Matching Filter** | `Fixed Rate Range`: when non-zero, `LeaveQueue`+`JoinQueue` whenever the server's `CurrentRateRange` exceeds the value. |
+| **Delay** | Two-step rematch timing: `Close Result` (seconds before dismissing the result overlay) + `Next Match` (seconds before calling `StartCpuFreeMatchAsync` / `StartRankMatchingAsync`). |
+| **CSA Server** | Listening port for the CSA TCP server (applies on next launch). |
+| **About** | Repo link, author link, build commit. |
+
+Account switching does **not** relaunch the app — picking a row substitutes
+the deviceId in the next `LoginArgs.Create`, then drives
+`BackToTitleSequence.RunAsync` so KIOU re-runs its boot sequence under the
+new identity.
+
+### gRPC and account observation logs
+
+The tweak prefixes log lines so the in-sandbox log can be grepped by area:
+
+| Prefix | Source |
+|---|---|
+| `[ACCOUNT]` | Login / Register / TDAnalytics / self-profile (rank, rating) |
+| `[GRPC]` | Outbound HTTP/2 request URL + headers + status |
+| `[MFILTER]` | Seat / rate-range filter decisions |
+| `[CSA]` / `[CSA-ENG]` | TCP server + engine driver |
+| `[MMODE]` | Match-mode lifecycle (`InitializeAsync` / `OnPlayerMoveAsync` / `OnMatchEndAsync`) |
+| `[GAMEORCH]` | `GameOrchestrator.ActivateAsync` instance cache |
+| `[AFK]` | AFK watchdog suppression |
+| `[SETTINGS]` | NSUserDefaults writes |
+
 ## Install
 
 ### Jailbroken device (rootless)
