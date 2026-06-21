@@ -70,6 +70,10 @@ static void installUnityHooks(uintptr_t unityBase, const char *unityName) {
     // patched `B <cave>` instruction.
     InstallMatchModeObserveHook(unityBase);
     InstallInjectHook(unityBase);
+    // Account observation — on chinlan this only wires the cave-side
+    // AccountExists observer + resolves il2cpp_string_new. The Login /
+    // Register / TDAnalytics post-orig observers stay JB-only.
+    InstallAccountObserveHook(unityBase);
     // CSA engine driver. Must come AFTER InstallInjectHook so inject_apply
     // is fully wired before the CSA recv queue can dispatch into it.
     CsaEngineInstall();
