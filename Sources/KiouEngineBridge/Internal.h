@@ -454,6 +454,12 @@ void KEBNavigateToTitleScene(void);
 // time, this header pins where the dylib publishes its dispatcher).
 #define KIOU_BR_HOOK_SLOT_RVA 0x8F90CC0
 
+// RVA of the entry-slot table inside UnityFramework's __DATA,__bss. Each
+// CAVE_ENTRY site reads its 8-byte slot at `ENTRY_SLOT_BASE_RVA + slot * 8`
+// and BLRs the function pointer there. MUST match ENTRY_SLOT_BASE_RVA in
+// recipes/kiouenginebridge.py.
+#define KIOU_BR_ENTRY_SLOT_BASE_RVA 0x8F90CD0
+
 // Reserved sibling RVA for a future in-framework inject-entry table.
 // Branch F currently reconstructs bypass entries dylib-locally from cave
 // geometry, but we still mirror the recipe's reserved address here so the
@@ -513,9 +519,25 @@ enum kiou_bridge_hook_id {
     KIOU_BR_HOOK_GSTATE_SET_WHITE_PLAYER_INFO,
     KIOU_BR_HOOK_GSTATE_NOTIFY_PIECE_MOVED,
 
+    // KIOU_BR_HOOK_ACCOUNT_EXISTS — assigned an enum value so the cave
+    // bypass entry table is computed the same way for entry caves as for
+    // observer caves (bypass index = cave allocation order = enum value
+    // for this row). The chinlan dispatcher does NOT switch on this id
+    // (entry caves route through the entry slot table, not the observer
+    // dispatcher), but Inject_Move-style bypass lookups still work.
     KIOU_BR_HOOK_ACCOUNT_EXISTS,
 
     KIOU_BR_HOOK__COUNT,
+};
+
+// Entry-slot enum — one per CAVE_ENTRY row in recipes/kiouenginebridge.py.
+// Slot N's hook function pointer lives at
+// `unityBase + KIOU_BR_ENTRY_SLOT_BASE_RVA + N * 8`. KEBBridgeChinlanPublish
+// writes the live hook function pointers into those slots.
+enum kiou_bridge_entry_slot_id {
+    KIOU_BR_ENTRY_SLOT_ACCOUNT_EXISTS = 0,
+
+    KIOU_BR_ENTRY_SLOT__COUNT,
 };
 
 // g_inject_entry is chinlan-only — it's populated by
@@ -662,9 +684,11 @@ void HookGStateSetBlackPlayerInfo(void *self, void *playerInfo);
 void HookGStateSetWhitePlayerInfo(void *self, void *playerInfo);
 void HookGStateNotifyPieceMoved(void *self, uint32_t move, int32_t playerSide);
 
-// AccountExists chinlan-side observer — see Hook_AccountObserve.m. Pre-orig
-// only (the cave runs orig itself), so the return value is unaffected.
-void HookAccountExistsObserve(void *data);
+// AccountExists chinlan-side entry hook — see Hook_AccountObserve.m. Called
+// directly by the entry cave (via the entry slot table); orig is invoked
+// from inside this hook via the cave bypass entry, and the hook's bool
+// return propagates straight back to the caller (cave tail is RET).
+bool HookAccountExistsEntry(void *data);
 void HookGStateNotifyStateSyncedForCurrentPosition(void);
 void ResolveGameStateStoreNotifyStateSynced(uintptr_t unityBase);
 void HookGStateRememberStore(void *self);
