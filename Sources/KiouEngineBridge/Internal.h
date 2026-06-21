@@ -90,6 +90,7 @@ void InstallLowLevelObserveHook(uintptr_t unityBase);
 void InstallMatchModeObserveHook(uintptr_t unityBase);
 void InstallInjectHook(uintptr_t unityBase);
 void InstallAfkSuppressHook(uintptr_t unityBase);
+void InstallBackToTitleSuppressHook(uintptr_t unityBase);
 void InstallGameOrchestratorObserveHook(uintptr_t unityBase);
 void InstallGrpcLoggingHook(uintptr_t unityBase);
 

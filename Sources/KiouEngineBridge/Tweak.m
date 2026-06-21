@@ -84,6 +84,11 @@ static void installUnityHooks(uintptr_t unityBase, const char *unityName) {
     // popup never spawns during long engine thinking. Independent of all
     // other hooks; install order doesn't matter for it.
     InstallAfkSuppressHook(unityBase);
+    // TODO: Suppress the daily 04:00 JST date-change back-to-title forced
+    // transition. Suppressing BackToTitleSequence.RunAsync directly is too
+    // broad — it also kills user-initiated back-to-title. Need to identify
+    // the midnight-specific caller RVA from device logs first.
+    // InstallBackToTitleSuppressHook(unityBase);
     // Capture the GameOrchestrator instance the moment GameScene calls
     // ActivateAsync. The match-end auto-rematch path needs this `self` to
     // invoke OnEndSequenceCompleted on it.
