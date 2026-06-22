@@ -454,11 +454,18 @@ void KEBNavigateToTitleScene(void);
 // time, this header pins where the dylib publishes its dispatcher).
 #define KIOU_BR_HOOK_SLOT_RVA 0x8F90CC0
 
-// RVA of the entry-slot table inside UnityFramework's __DATA,__bss. Each
-// CAVE_ENTRY site reads its 8-byte slot at `ENTRY_SLOT_BASE_RVA + slot * 8`
-// and BLRs the function pointer there. MUST match ENTRY_SLOT_BASE_RVA in
-// recipes/kiouenginebridge.py.
-#define KIOU_BR_ENTRY_SLOT_BASE_RVA 0x8F90CD0
+// RVA of the entry-slot table inside UnityFramework's __DATA,__common.
+// Each CAVE_ENTRY site reads its 8-byte slot at
+// `ENTRY_SLOT_BASE_RVA + slot * 8` and BLRs the function pointer there.
+// MUST match ENTRY_SLOT_BASE_RVA in recipes/kiouenginebridge.py.
+//
+// The earlier revision placed this at 0x8F90CD0 (the last 8 bytes of
+// __bss). That fit slot[0] but silently let slot[1+] spill into the
+// padding between __bss and __common; both are zero-fill so it worked by
+// accident. We now reserve 32 slots in __common's tail (0x091E9100..),
+// which has 2.4 MB of headroom and keeps the whole table inside a single
+// zero-fill section.
+#define KIOU_BR_ENTRY_SLOT_BASE_RVA 0x091E90B8
 
 // Reserved sibling RVA for a future in-framework inject-entry table.
 // Branch F currently reconstructs bypass entries dylib-locally from cave
@@ -526,6 +533,15 @@ enum kiou_bridge_hook_id {
     // (entry caves route through the entry slot table, not the observer
     // dispatcher), but Inject_Move-style bypass lookups still work.
     KIOU_BR_HOOK_ACCOUNT_EXISTS,
+    KIOU_BR_HOOK_LOGIN_ARGS_CREATE,
+    KIOU_BR_HOOK_REGISTER_USER_ARGS_CREATE,
+
+    KIOU_BR_HOOK_GET_VALID_MATCH_FOUND_STATUS,
+    KIOU_BR_HOOK_MATCH_STREAM_ARGS_CREATE,
+    KIOU_BR_HOOK_RECEIVE_TIMEOUT_MOVENEXT,
+
+    KIOU_BR_HOOK_RUN_LOGIN_SEQ_MOVENEXT,
+    KIOU_BR_HOOK_GET_SELF_PROFILE_MOVENEXT,
 
     KIOU_BR_HOOK__COUNT,
 };
@@ -536,6 +552,12 @@ enum kiou_bridge_hook_id {
 // writes the live hook function pointers into those slots.
 enum kiou_bridge_entry_slot_id {
     KIOU_BR_ENTRY_SLOT_ACCOUNT_EXISTS = 0,
+    KIOU_BR_ENTRY_SLOT_LOGIN_ARGS_CREATE,
+    KIOU_BR_ENTRY_SLOT_REGISTER_USER_ARGS_CREATE,
+    KIOU_BR_ENTRY_SLOT_GET_VALID_MATCH_FOUND_STATUS,
+    KIOU_BR_ENTRY_SLOT_MATCH_STREAM_ARGS_CREATE,
+    KIOU_BR_ENTRY_SLOT_RUN_LOGIN_SEQ_MOVENEXT,
+    KIOU_BR_ENTRY_SLOT_GET_SELF_PROFILE_MOVENEXT,
 
     KIOU_BR_ENTRY_SLOT__COUNT,
 };
@@ -689,6 +711,37 @@ void HookGStateNotifyPieceMoved(void *self, uint32_t move, int32_t playerSide);
 // from inside this hook via the cave bypass entry, and the hook's bool
 // return propagates straight back to the caller (cave tail is RET).
 bool HookAccountExistsEntry(void *data);
+
+// LoginArgs.Create / RegisterUserArgs.Create chinlan-side entry hooks. Both
+// swap one il2cpp string argument (deviceId / distinctId) per the pending_*
+// override slots, then call orig via the cave bypass entry and forward
+// orig's return (the freshly built ILoginArgs* / IRegisterUserArgs*).
+void *HookLoginArgsCreateEntry(void *deviceId, void *distinctId);
+void *HookRegisterUserArgsCreateEntry(void *userName, void *distinctId);
+
+// Matching filter chinlan-side entry hooks. GetValidMatchFoundStatus
+// returns the orig status (so the JB-shape observable contract holds) but
+// fires a ConnectionFailed JoinQueue at the matching stream when the seat
+// doesn't match the user's preference. ArgsCreate is CAVE_ENTRY because
+// its 7th C arg lands in W6 which CAVE_OBSERVER would clobber with hook_id.
+void *HookGetValidMatchFoundStatusEntry(void *reply);
+void *HookArgsCreateEntry(int32_t action, int32_t matchType,
+                           int32_t rankRuleType, int32_t eventRuleType,
+                           int32_t mstEventMatchId,
+                           int32_t matchingClientType,
+                           bool enableBeginnerSupport);
+
+// MatchingHandler.ReceiveWithTimeoutAsync.MoveNext observer hook — declared
+// here so the chinlan dispatcher can call it without recompiling against
+// Hook_MatchingFilterObserve.m's internal symbol table.
+void HookReceiveTimeoutMoveNext(void *self);
+
+// MoveNext entry hooks (chinlan). The state machine fields they observe
+// (LoginReply pointer, SelfUserProfileStatus rank list) only become
+// populated *after* orig advances state to -2, so these hooks have to
+// invoke orig themselves via the cave bypass entry before reading.
+void HookRunLoginSeqMoveNextEntry(void *self);
+void HookGetSelfProfileMoveNextEntry(void *self);
 void HookGStateNotifyStateSyncedForCurrentPosition(void);
 void ResolveGameStateStoreNotifyStateSynced(uintptr_t unityBase);
 void HookGStateRememberStore(void *self);

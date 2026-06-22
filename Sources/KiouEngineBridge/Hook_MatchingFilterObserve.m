@@ -181,9 +181,13 @@ typedef void *(*GetValidMatchFoundStatus_t)(void *reply);
 static GetValidMatchFoundStatus_t orig_GetValidMatchFoundStatus
     __attribute__((unused)) = NULL;
 
-void *HookGetValidMatchFoundStatus(void *reply) {
-    void *result = KIOU_CALL_ORIG_RET(void *, orig_GetValidMatchFoundStatus, reply);
-
+// Shared filter body: given the matched status pointer, decide whether to
+// accept it. When rejected, fire ConnectionFailed at the stream and return
+// the status anyway — the caller propagates it as "accept" only when our
+// caller (the JB path) chooses to. Both flavors return `result` unchanged
+// because the JB shape historically did so even on reject; the actual seat
+// filter is delivered by the ConnectionFailed sent into the stream.
+static void *filterMatchFoundResult(void *reply, void *result) {
     if (!result || !reply) return result;
     KEBAcceptedSeat accepted = KEBAcceptedSeatGet();
     if (accepted == KEBAcceptedSeatBoth) return result;
@@ -210,9 +214,36 @@ void *HookGetValidMatchFoundStatus(void *reply) {
               accepted == KEBAcceptedSeatBlack ? "Black" : "White"]);
     sendAction(stream, MATCH_STREAM_ACTION_JOIN_QUEUE,
                MATCHING_CLIENT_TYPE_CONNECTION_FAILED);
-
     return result;
 }
+
+#if !KIOU_CHINLAN
+void *HookGetValidMatchFoundStatus(void *reply) {
+    void *result = KIOU_CALL_ORIG_RET(void *, orig_GetValidMatchFoundStatus, reply);
+    return filterMatchFoundResult(reply, result);
+}
+#else
+// Chinlan entry-cave hook — calls orig via the bypass entry, then runs the
+// shared filter body. Cave tail is RET, so `result` propagates straight to
+// the caller via x0.
+void *HookGetValidMatchFoundStatusEntry(void *reply) {
+    GetValidMatchFoundStatus_t bypass = (GetValidMatchFoundStatus_t)
+        g_inject_entry[KIOU_BR_HOOK_GET_VALID_MATCH_FOUND_STATUS];
+    void *result = NULL;
+    if (bypass) {
+        @try { result = bypass(reply); }
+        @catch (NSException *e) {
+            IPALog([NSString stringWithFormat:
+                      @"[MFILTER] GetValidMatchFoundStatus chinlan bypass "
+                      @"threw: %@", e]);
+        }
+    } else {
+        IPALog(@"[MFILTER] GetValidMatchFoundStatus chinlan bypass not "
+                 @"published — returning NULL");
+    }
+    return filterMatchFoundResult(reply, result);
+}
+#endif
 
 // ---------------------------------------------------------------------------
 // Hook B: MatchingHandler.<ReceiveWithTimeoutAsync>d__6.MoveNext
@@ -312,6 +343,24 @@ typedef void *(*ArgsCreate_t)(int32_t action, int32_t matchType,
                                bool enableBeginnerSupport);
 static ArgsCreate_t orig_ArgsCreate __attribute__((unused)) = NULL;
 
+static void cacheJoinQueueParams(int32_t action, int32_t matchType,
+                                  int32_t rankRuleType, int32_t eventRuleType,
+                                  int32_t mstEventMatchId,
+                                  bool enableBeginnerSupport) {
+    if (action != MATCH_STREAM_ACTION_JOIN_QUEUE) return;
+    g_cachedMatchType       = matchType;
+    g_cachedRankRuleType    = rankRuleType;
+    g_cachedEventRuleType   = eventRuleType;
+    g_cachedMstEventMatchId = mstEventMatchId;
+    g_cachedBeginnerSupport = enableBeginnerSupport;
+    IPALog([NSString stringWithFormat:
+              @"[MFILTER] JoinQueue cached: matchType=%d rankRule=%d "
+              @"eventRule=%d mstId=%d beginner=%s",
+              (int)matchType, (int)rankRuleType, (int)eventRuleType,
+              (int)mstEventMatchId, enableBeginnerSupport ? "true" : "false"]);
+}
+
+#if !KIOU_CHINLAN
 void *HookArgsCreate(int32_t action, int32_t matchType,
                      int32_t rankRuleType, int32_t eventRuleType,
                      int32_t mstEventMatchId,
@@ -321,23 +370,42 @@ void *HookArgsCreate(int32_t action, int32_t matchType,
                                        action, matchType, rankRuleType,
                                        eventRuleType, mstEventMatchId,
                                        matchingClientType, enableBeginnerSupport);
-
-    // Cache params whenever a JoinQueue is sent.
-    if (action == MATCH_STREAM_ACTION_JOIN_QUEUE) {
-        g_cachedMatchType       = matchType;
-        g_cachedRankRuleType    = rankRuleType;
-        g_cachedEventRuleType   = eventRuleType;
-        g_cachedMstEventMatchId = mstEventMatchId;
-        g_cachedBeginnerSupport = enableBeginnerSupport;
-        IPALog([NSString stringWithFormat:
-                  @"[MFILTER] JoinQueue cached: matchType=%d rankRule=%d "
-                  @"eventRule=%d mstId=%d beginner=%s",
-                  (int)matchType, (int)rankRuleType, (int)eventRuleType,
-                  (int)mstEventMatchId, enableBeginnerSupport ? "true" : "false"]);
-    }
-
+    cacheJoinQueueParams(action, matchType, rankRuleType, eventRuleType,
+                          mstEventMatchId, enableBeginnerSupport);
     return result;
 }
+#else
+// Chinlan entry-cave hook. CAVE_ENTRY is required (not CAVE_OBSERVER)
+// because the 7th C argument (`enableBeginnerSupport`) lands in W6 — the
+// observer cave's MOVZ W6, #hook_id would clobber it. The entry cave only
+// touches W9, which AAPCS64 marks as call-clobbered scratch (x9–x15);
+// nothing the caller relies on lives there.
+void *HookArgsCreateEntry(int32_t action, int32_t matchType,
+                           int32_t rankRuleType, int32_t eventRuleType,
+                           int32_t mstEventMatchId,
+                           int32_t matchingClientType,
+                           bool enableBeginnerSupport) {
+    ArgsCreate_t bypass = (ArgsCreate_t)
+        g_inject_entry[KIOU_BR_HOOK_MATCH_STREAM_ARGS_CREATE];
+    void *result = NULL;
+    if (bypass) {
+        @try {
+            result = bypass(action, matchType, rankRuleType, eventRuleType,
+                            mstEventMatchId, matchingClientType,
+                            enableBeginnerSupport);
+        } @catch (NSException *e) {
+            IPALog([NSString stringWithFormat:
+                      @"[MFILTER] ArgsCreate chinlan bypass threw: %@", e]);
+        }
+    } else {
+        IPALog(@"[MFILTER] ArgsCreate chinlan bypass not published — "
+                 @"returning NULL (sendAction will be a no-op)");
+    }
+    cacheJoinQueueParams(action, matchType, rankRuleType, eventRuleType,
+                          mstEventMatchId, enableBeginnerSupport);
+    return result;
+}
+#endif
 
 // ---------------------------------------------------------------------------
 // Installer
@@ -382,9 +450,19 @@ void InstallMatchingFilterObserveHook(uintptr_t unityBase) {
 }
 #else
 void InstallMatchingFilterObserveHook(uintptr_t unityBase) {
-    g_ArgsCreate = (MatchStreamArgsCreate_t)(void *)
-        (unityBase + RVA_MATCH_STREAM_ARGS_CREATE);
-    IPALog(@"[MFILTER] chinlan: filter hooks are no-op (cave-driven); "
-             @"ArgsCreate resolved for sendAction()");
+    (void)unityBase;
+    // On chinlan the GetValidMatchFoundStatus / ReceiveTimeoutMoveNext /
+    // ArgsCreate sites are cave-patched in via recipes/kiouenginebridge.py
+    // and dispatched through KEBBridgeChinlanPublish's entry slot table.
+    // What this installer must still do is point g_ArgsCreate at the
+    // cave-bypass entry so sendAction() can rebuild IShogiMatchStreamArgs
+    // *without* re-entering HookArgsCreateEntry — calling the patched
+    // site directly would otherwise route back into our cache-and-bypass
+    // path and waste a round trip per re-queue.
+    g_ArgsCreate = (MatchStreamArgsCreate_t)
+        g_inject_entry[KIOU_BR_HOOK_MATCH_STREAM_ARGS_CREATE];
+    IPALog([NSString stringWithFormat:
+              @"[MFILTER] chinlan: filter hooks routed via entry slots; "
+              @"ArgsCreate bypass=%p", (void *)g_ArgsCreate]);
 }
 #endif // !KIOU_CHINLAN

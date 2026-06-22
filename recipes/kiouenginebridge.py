@@ -105,12 +105,46 @@ PROBED_HOOK_SLOT_RVA = 0x8F90CD0
 # Entry caves (KiouForge-style) use a separate slot table — each entry hook
 # gets a dedicated 8-byte slot the dylib publishes its function pointer
 # into, so the cave can BLR straight into it without touching the observer
-# dispatcher. Reserve ENTRY_SLOT_COUNT consecutive 8-byte slots starting at
-# PROBED_HOOK_SLOT_RVA (= 0x8F90CD0). Bump ENTRY_SLOT_COUNT when adding a
-# new entry-class hook and reserve the next __bss tail if you exhaust the
-# space.
-ENTRY_SLOT_COUNT    = 1
-ENTRY_SLOT_BASE_RVA = PROBED_HOOK_SLOT_RVA  # 0x8F90CD0
+# dispatcher.
+#
+# UnityFramework (Kiou-1.0.1 build 11) __DATA layout:
+#   __bss     0x08E76B80 .. 0x08F90CD8 (1.1 MB, zero-fill)
+#   __common  0x08F90D00 .. 0x091E91B8 (2.4 MB, zero-fill)
+#
+# The original revision placed the entry slot table at PROBED_HOOK_SLOT_RVA
+# (= 0x8F90CD0), which is the last 8 bytes of __bss — fine for a single
+# slot but slot[1+] silently fell into the 40-byte padding between __bss
+# and __common. Both regions are zero-fill so dyld didn't catch it, but
+# the placement is technically out-of-section and only the per-slot
+# assert_slot_in_bss check below would have flagged it.
+#
+# We move the table into the __common tail instead and reserve a generous
+# 32-slot capacity (256 B), giving room to add more entry-class hooks
+# without revisiting this constant. The recipe also asserts every slot in
+# the table — not just the first — sits inside __bss or __common.
+ENTRY_SLOT_COUNT    = 7      # currently published; bump alongside the dylib enum
+ENTRY_SLOT_CAPACITY = 32     # 256 B reserved at ENTRY_SLOT_BASE_RVA
+ENTRY_SLOT_BASE_RVA = 0x091E90B8  # __common end (0x091E91B8) - 32 * 8 bytes
+
+# Static sanity bound — when we know the section layout at recipe authoring
+# time, this catches a stale ENTRY_SLOT_BASE_RVA / capacity bump before the
+# patcher runs. Shared/tools/patch_macho.py only assert_slot_in_bss's the
+# main HOOK_SLOT_RVA today; extending it to walk an EXTRA_SLOT_VAS list is
+# a separate PR.
+_COMMON_SECTION_END_RVA = 0x091E91B8  # __DATA,__common end on Kiou-1.0.1 build 11
+assert (
+    ENTRY_SLOT_BASE_RVA + ENTRY_SLOT_CAPACITY * 8 <= _COMMON_SECTION_END_RVA
+), (
+    f"entry slot reservation overflows __common: "
+    f"0x{ENTRY_SLOT_BASE_RVA + ENTRY_SLOT_CAPACITY * 8:X} > "
+    f"0x{_COMMON_SECTION_END_RVA:X}. Pick a lower ENTRY_SLOT_BASE_RVA or "
+    "reduce ENTRY_SLOT_CAPACITY."
+)
+assert ENTRY_SLOT_COUNT <= ENTRY_SLOT_CAPACITY, (
+    f"ENTRY_SLOT_COUNT ({ENTRY_SLOT_COUNT}) exceeds reserved capacity "
+    f"({ENTRY_SLOT_CAPACITY}). Bump ENTRY_SLOT_CAPACITY *and* the recipe's "
+    "_COMMON_SECTION_END_RVA check above."
+)
 
 # Must stay inside __DATA,__bss and leave room for at least 32 8-byte entries.
 # Runtime code reconstructs the actual bypass entry VAs from the cave geometry,
@@ -159,6 +193,13 @@ _HOOK_IDS: dict[str, int] = {
     "KIOU_BR_HOOK_GSTATE_SET_WHITE_PLAYER_INFO": 26,
     "KIOU_BR_HOOK_GSTATE_NOTIFY_PIECE_MOVED": 27,
     "KIOU_BR_HOOK_ACCOUNT_EXISTS": 28,
+    "KIOU_BR_HOOK_LOGIN_ARGS_CREATE": 29,
+    "KIOU_BR_HOOK_REGISTER_USER_ARGS_CREATE": 30,
+    "KIOU_BR_HOOK_GET_VALID_MATCH_FOUND_STATUS": 31,
+    "KIOU_BR_HOOK_MATCH_STREAM_ARGS_CREATE": 32,
+    "KIOU_BR_HOOK_RECEIVE_TIMEOUT_MOVENEXT": 33,
+    "KIOU_BR_HOOK_RUN_LOGIN_SEQ_MOVENEXT": 34,
+    "KIOU_BR_HOOK_GET_SELF_PROFILE_MOVENEXT": 35,
 }
 
 
@@ -518,6 +559,43 @@ _BRIDGE_SITES: list[tuple[int, str, str, str, str]] = [
     # wants the original return — which lets Force Register flip the bool
     # without re-entering the cave.
     (0x591E860, "fd7bbfa9", "KIOU_BR_HOOK_ACCOUNT_EXISTS",          CAVE_ENTRY,    "UserSaveDataExtensions.AccountExists"),
+
+    # Account switching + Register-flow distinctId pinning.
+    # CAVE_ENTRY: the cave gives the hook full control of the argument
+    # registers so we can swap the il2cpp `deviceId` (LoginArgs) or
+    # `distinctId` (RegisterUserArgs) strings to whatever
+    # KEBPendingDeviceId / KEBPendingDistinctId is armed with, then
+    # forward through the bypass entry. CAVE_OBSERVER cannot do this
+    # because the cave restores x0..x7 from the saved frame before
+    # branching to orig+4, undoing the substitution.
+    (0x5B9899C, "f657bda9", "KIOU_BR_HOOK_LOGIN_ARGS_CREATE",         CAVE_ENTRY, "ILoginArgs.Create"),
+    (0x5B98A2C, "f657bda9", "KIOU_BR_HOOK_REGISTER_USER_ARGS_CREATE", CAVE_ENTRY, "IRegisterUserArgs.Create"),
+
+    # Matching filter: Accept Seat (sente/gote-only) + Fixed Rate Range.
+    # GetValidMatchFoundStatus must be CAVE_ENTRY because the seat-filter
+    # side effect (firing ConnectionFailed at the matching stream) needs to
+    # run AFTER orig produces the MatchFoundStatus so we can read
+    # `isFirstPlayer` from it. orig's return is forwarded unchanged; the
+    # observable reject signal goes through the stream, not through the
+    # return value. The two supporting sites are:
+    #   * ShogiMatchStreamArgs.Create — CAVE_ENTRY because the 7th C
+    #     argument (enableBeginnerSupport) lands in W6, which CAVE_OBSERVER
+    #     clobbers with the hook_id MOVZ. CAVE_ENTRY only touches W9, a
+    #     call-clobbered scratch register that isn't an argument slot.
+    #   * ReceiveWithTimeoutAsync.MoveNext — CAVE_OBSERVER. Single self
+    #     pointer in x0; we just need to peek to cache the stream pointer
+    #     and react to MatchingStatus replies.
+    (0x5D04E94, "ff0301d1", "KIOU_BR_HOOK_GET_VALID_MATCH_FOUND_STATUS", CAVE_ENTRY,    "GetValidMatchFoundStatus"),
+    (0x5BCA664, "fc6fbaa9", "KIOU_BR_HOOK_MATCH_STREAM_ARGS_CREATE",     CAVE_ENTRY,    "IShogiMatchStreamArgs.Create"),
+    (0x5D06B10, "ff0303d1", "KIOU_BR_HOOK_RECEIVE_TIMEOUT_MOVENEXT",     CAVE_OBSERVER, "MatchingHandler.ReceiveWithTimeoutAsync.MoveNext"),
+
+    # Async state-machine MoveNext post-orig observers — CAVE_ENTRY because
+    # the relevant fields (LoginReply pointer, SelfUserProfileStatus rank
+    # list, etc.) only land in the state machine struct *after* orig has
+    # advanced state to -2. The entry hook calls bypass to run orig
+    # itself, then reads the now-populated fields.
+    (0x5812534, "ff8302d1", "KIOU_BR_HOOK_RUN_LOGIN_SEQ_MOVENEXT",    CAVE_ENTRY, "RunLoginSequenceAsync.MoveNext"),
+    (0x5BB4774, "ff4302d1", "KIOU_BR_HOOK_GET_SELF_PROFILE_MOVENEXT", CAVE_ENTRY, "GetSelfUserProfileAsync.MoveNext"),
 ]
 
 
@@ -525,7 +603,13 @@ _BRIDGE_SITES: list[tuple[int, str, str, str, str]] = [
 # allocation order. Must match the enum in Sources/KiouEngineBridge/Internal.h
 # (KIOU_BR_ENTRY_SLOT_*).
 _ENTRY_SLOT_INDEX_BY_HOOK: dict[str, int] = {
-    "KIOU_BR_HOOK_ACCOUNT_EXISTS": 0,
+    "KIOU_BR_HOOK_ACCOUNT_EXISTS":               0,
+    "KIOU_BR_HOOK_LOGIN_ARGS_CREATE":            1,
+    "KIOU_BR_HOOK_REGISTER_USER_ARGS_CREATE":    2,
+    "KIOU_BR_HOOK_GET_VALID_MATCH_FOUND_STATUS": 3,
+    "KIOU_BR_HOOK_MATCH_STREAM_ARGS_CREATE":     4,
+    "KIOU_BR_HOOK_RUN_LOGIN_SEQ_MOVENEXT":       5,
+    "KIOU_BR_HOOK_GET_SELF_PROFILE_MOVENEXT":    6,
 }
 assert len(_ENTRY_SLOT_INDEX_BY_HOOK) == ENTRY_SLOT_COUNT, \
     f"ENTRY_SLOT_COUNT ({ENTRY_SLOT_COUNT}) must match the entry-slot map"
