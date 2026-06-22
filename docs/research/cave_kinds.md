@@ -59,7 +59,7 @@ and the entry hooks use that to run orig without re-entering the cave.
 0x18  STP X6,  X7,  [SP, #0x60]
 0x1C  MOV X29, SP                     ; canonical frame setup
 0x20  ADRP X16, page(HOOK_SLOT_RVA)
-0x24  LDR  X16, [X16, #lo12(SLOT)]    ; load dispatcher pointer
+0x24  LDR  X16, [X16, #lo12(HOOK_SLOT_RVA)] ; load dispatcher pointer
 0x28  MOVZ W6,  #hook_id               ; pass hook id via W6 (clobbers arg #7!)
 0x2C  BLR  X16                         ; dispatcher(x0..x5, hook_id_in_w6, x7)
 0x30  LDP  X6,  X7,  [SP, #0x60]      ; restore x0..x7 — orig must see originals
@@ -85,7 +85,7 @@ Hook bodies with up to six args (everything in this repo except
 ```
 0x00  STP X29, X30, [SP, #-0x10]!     ; minimal frame — no arg saving
 0x04  ADRP X16, page(entry_slot_va)
-0x08  LDR  X16, [X16, #lo12(slot)]    ; load this site's hook fn ptr
+0x08  LDR  X16, [X16, #lo12(entry_slot_va)] ; load this site's hook fn ptr
 0x0C  MOVZ W9,  #slot_index           ; diagnostic; hook may ignore (W9 is AAPCS64 call-clobbered scratch, not an argument slot)
 0x10  BLR  X16                         ; hook(x0..x7) — return ends up in x0
 0x14  LDP  X29, X30, [SP], #0x10
