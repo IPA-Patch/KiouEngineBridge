@@ -132,6 +132,19 @@ static void dispatch_one(void *x0, void *x1, void *x2, void *x3, void *x4,
         HookGStateNotifyPieceMoved(x0, (uint32_t)(uintptr_t)x1,
                                    (int32_t)(intptr_t)x2); break;
 
+    // KIOU_BR_HOOK_ACCOUNT_EXISTS / LOGIN_ARGS_CREATE /
+    // REGISTER_USER_ARGS_CREATE / GET_VALID_MATCH_FOUND_STATUS /
+    // MATCH_STREAM_ARGS_CREATE all use entry caves (CAVE_ENTRY): the cave
+    // calls the per-slot hook directly via the entry slot table and never
+    // reaches the observer dispatcher. No case bodies needed.
+
+    // MatchingHandler.ReceiveWithTimeoutAsync.MoveNext(self)
+    //   self=x0. Observer cave — peek into the state machine to cache
+    //   the IStreamHandler pointer and react to MatchingStatus rate-range
+    //   replies (Fixed Rate Range filter).
+    case KIOU_BR_HOOK_RECEIVE_TIMEOUT_MOVENEXT:
+        HookReceiveTimeoutMoveNext(x0); break;
+
     default:
         // Cave fired with an id outside the recipe table. Almost certainly
         // a recipe / header skew — log it and return so we at least keep
@@ -164,6 +177,46 @@ void KEBBridgeChinlanPublish(void) {
     for (uint32_t i = 0; i < KIOU_BR_HOOK__COUNT; i++) {
         g_inject_entry[i] = kiou_bridge_bypass_entry_for_hook(i);
     }
+
+    // Entry slots — one per CAVE_ENTRY site. The cave reads each slot via
+    // ADRP+LDR and BLRs the function pointer there, so missing publishes
+    // would BLR NULL and SIGKILL. Publishing before the cave can ever fire
+    // is enforced by Tweak.m's installer ordering (this function runs
+    // before any of the per-feature installers).
+    void * volatile *entrySlots =
+        (void * volatile *)(g_unityBase + KIOU_BR_ENTRY_SLOT_BASE_RVA);
+    entrySlots[KIOU_BR_ENTRY_SLOT_ACCOUNT_EXISTS] =
+        (void *)&HookAccountExistsEntry;
+    entrySlots[KIOU_BR_ENTRY_SLOT_LOGIN_ARGS_CREATE] =
+        (void *)&HookLoginArgsCreateEntry;
+    entrySlots[KIOU_BR_ENTRY_SLOT_REGISTER_USER_ARGS_CREATE] =
+        (void *)&HookRegisterUserArgsCreateEntry;
+    entrySlots[KIOU_BR_ENTRY_SLOT_GET_VALID_MATCH_FOUND_STATUS] =
+        (void *)&HookGetValidMatchFoundStatusEntry;
+    entrySlots[KIOU_BR_ENTRY_SLOT_MATCH_STREAM_ARGS_CREATE] =
+        (void *)&HookArgsCreateEntry;
+    entrySlots[KIOU_BR_ENTRY_SLOT_RUN_LOGIN_SEQ_MOVENEXT] =
+        (void *)&HookRunLoginSeqMoveNextEntry;
+    entrySlots[KIOU_BR_ENTRY_SLOT_GET_SELF_PROFILE_MOVENEXT] =
+        (void *)&HookGetSelfProfileMoveNextEntry;
+    entrySlots[KIOU_BR_ENTRY_SLOT_HTTPMSGINVOKER_SEND_ASYNC] =
+        (void *)&HookHttpMsgInvokerSendAsyncEntry;
+    IPALog([NSString stringWithFormat:
+              @"[CHINLAN] entry slots base=%p (unityBase+0x%x): "
+              @"AccountExists=%p LoginArgs=%p RegisterUserArgs=%p "
+              @"GetValidMatchFound=%p ArgsCreate=%p "
+              @"RunLoginSeq.MoveNext=%p GetSelfProfile.MoveNext=%p "
+              @"HttpMsgInvoker.SendAsync=%p",
+              (void *)entrySlots,
+              (unsigned)KIOU_BR_ENTRY_SLOT_BASE_RVA,
+              (void *)entrySlots[KIOU_BR_ENTRY_SLOT_ACCOUNT_EXISTS],
+              (void *)entrySlots[KIOU_BR_ENTRY_SLOT_LOGIN_ARGS_CREATE],
+              (void *)entrySlots[KIOU_BR_ENTRY_SLOT_REGISTER_USER_ARGS_CREATE],
+              (void *)entrySlots[KIOU_BR_ENTRY_SLOT_GET_VALID_MATCH_FOUND_STATUS],
+              (void *)entrySlots[KIOU_BR_ENTRY_SLOT_MATCH_STREAM_ARGS_CREATE],
+              (void *)entrySlots[KIOU_BR_ENTRY_SLOT_RUN_LOGIN_SEQ_MOVENEXT],
+              (void *)entrySlots[KIOU_BR_ENTRY_SLOT_GET_SELF_PROFILE_MOVENEXT],
+              (void *)entrySlots[KIOU_BR_ENTRY_SLOT_HTTPMSGINVOKER_SEND_ASYNC]]);
     IPALog([NSString stringWithFormat:
               @"[CHINLAN] slot=%p (unityBase+0x%lx) published "
               @"dispatcher=%p inject_entry[ai_opm]=%p inject_entry[adapter]=%p "
