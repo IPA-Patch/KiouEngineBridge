@@ -1,25 +1,37 @@
-# KiouEngineBridge — Claude向け作業ガイド
+# KiouEngineBridge — Claude Work Guide
 
-## ログの読み方
+## Reading logs
 
-「JB環境でログを見て」と言われた場合、SSH で実機に接続してサンドボックスのログを直接取得する。
-ローカルの `logs/` ディレクトリは古いログなので参照しない。
+### Jailbroken
+
+SSH into the device and fetch the sandbox log directly.
+Do not use the local `logs/` directory — it contains stale logs.
 
 ```bash
-# デバイスへのSSH接続
-ssh ShogiWars
+# Connect to the device
+ssh root@$THEOS_DEVICE_IP
 
-# ログファイルのパス（bundle IDごとにContainerが変わるので都度 find する）
+# Log path varies per container — find it each time
 find /var/mobile/Containers/Data/Application -name 'kiouenginebridge*.log' 2>/dev/null
 
-# ローカルに取得してから解析する
-ssh ShogiWars "cat <path>" > /home/vscode/app/logs/device_latest.log
+# Pull to local for analysis
+ssh root@$THEOS_DEVICE_IP "cat <path>" > /home/vscode/app/logs/device_latest.log
 ```
 
-SSH の Host 名は `ShogiWars`（`~/.ssh/config` に定義済み、IdentityFile = `~/.ssh/ios_device`）。アプリ名は KIOU だが SSH ホスト名は ShogiWars のまま。
+### Jailed
 
-## 開発方針
+The TCP log server listens on `0.0.0.0:18082` from process start.
+On connect, the last 100 KB of the sandbox log file is replayed before switching to the live stream — so boot-time and login-time logs are never lost even if no client was open at startup.
 
-- 新機能は **JBビルドで動作検証してから Chinlan に移行**する
-- JB では `MSHookFunction` が使えるので `#if !KIOU_CHINLAN` ブロックにまず実装する
-- Chinlan 移行は enum 追加・dispatcher 対応・Recipe 変更が伴うため別タスクとして切り出す
+```bash
+# Find the device IP in Settings → Wi-Fi → info button
+nc <device-ip> 18082
+```
+
+No AirDrop or SSH required. Not available in `FINAL_RELEASE=1` builds (compiled out).
+
+## Development policy
+
+- Validate new features on a **JB build first, then port to Chinlan**
+- On JB, use `MSHookFunction` inside `#if !KIOU_CHINLAN` blocks
+- Chinlan porting requires enum additions, dispatcher wiring, and recipe changes — treat it as a separate task
