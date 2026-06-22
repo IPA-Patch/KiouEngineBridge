@@ -124,20 +124,21 @@ PROBED_HOOK_SLOT_RVA = 0x8F90CD0
 # the table — not just the first — sits inside __bss or __common.
 ENTRY_SLOT_COUNT    = 7      # currently published; bump alongside the dylib enum
 ENTRY_SLOT_CAPACITY = 32     # 256 B reserved at ENTRY_SLOT_BASE_RVA
-ENTRY_SLOT_BASE_RVA = 0x091E90B8  # __common end (0x091E91B8) - 32 * 8 bytes
+# 0x091E90B8 (former placement) turned out to hold a KIOU bitmask table
+# written at runtime; frida dump confirmed 0x091E91B8..0x091E92B8 is all
+# zero both before and after login. Place the slot table there instead.
+ENTRY_SLOT_BASE_RVA = 0x091E91B8  # first confirmed-zero word past __common
 
-# Static sanity bound — when we know the section layout at recipe authoring
-# time, this catches a stale ENTRY_SLOT_BASE_RVA / capacity bump before the
-# patcher runs. Shared/tools/patch_macho.py only assert_slot_in_bss's the
-# main HOOK_SLOT_RVA today; extending it to walk an EXTRA_SLOT_VAS list is
-# a separate PR.
-_COMMON_SECTION_END_RVA = 0x091E91B8  # __DATA,__common end on Kiou-1.0.1 build 11
+# Static sanity bound — the region must stay zero-filled at runtime.
+# Verified by frida MemoryAccessMonitor on Kiou-1.0.1 build 11:
+# 0x091E91B8..0x091E93B0 read all zeros after a full login sequence.
+_ZERO_REGION_END_RVA = 0x091E93B8  # conservative: 512 B past ENTRY_SLOT_BASE_RVA
 assert (
-    ENTRY_SLOT_BASE_RVA + ENTRY_SLOT_CAPACITY * 8 <= _COMMON_SECTION_END_RVA
+    ENTRY_SLOT_BASE_RVA + ENTRY_SLOT_CAPACITY * 8 <= _ZERO_REGION_END_RVA
 ), (
-    f"entry slot reservation overflows __common: "
+    f"entry slot reservation overflows verified-zero region: "
     f"0x{ENTRY_SLOT_BASE_RVA + ENTRY_SLOT_CAPACITY * 8:X} > "
-    f"0x{_COMMON_SECTION_END_RVA:X}. Pick a lower ENTRY_SLOT_BASE_RVA or "
+    f"0x{_ZERO_REGION_END_RVA:X}. Pick a lower ENTRY_SLOT_BASE_RVA or "
     "reduce ENTRY_SLOT_CAPACITY."
 )
 assert ENTRY_SLOT_COUNT <= ENTRY_SLOT_CAPACITY, (

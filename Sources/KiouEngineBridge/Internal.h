@@ -465,7 +465,7 @@ void KEBNavigateToTitleScene(void);
 // accident. We now reserve 32 slots in __common's tail (0x091E9100..),
 // which has 2.4 MB of headroom and keeps the whole table inside a single
 // zero-fill section.
-#define KIOU_BR_ENTRY_SLOT_BASE_RVA 0x091E90B8
+#define KIOU_BR_ENTRY_SLOT_BASE_RVA 0x091E91B8
 
 // Reserved sibling RVA for a future in-framework inject-entry table.
 // Branch F currently reconstructs bypass entries dylib-locally from cave
