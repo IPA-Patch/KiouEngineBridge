@@ -122,7 +122,7 @@ PROBED_HOOK_SLOT_RVA = 0x8F90CD0
 # 32-slot capacity (256 B), giving room to add more entry-class hooks
 # without revisiting this constant. The recipe also asserts every slot in
 # the table — not just the first — sits inside __bss or __common.
-ENTRY_SLOT_COUNT    = 5      # currently published; bump alongside the dylib enum
+ENTRY_SLOT_COUNT    = 7      # currently published; bump alongside the dylib enum
 ENTRY_SLOT_CAPACITY = 32     # 256 B reserved at ENTRY_SLOT_BASE_RVA
 ENTRY_SLOT_BASE_RVA = 0x091E90B8  # __common end (0x091E91B8) - 32 * 8 bytes
 
@@ -198,6 +198,8 @@ _HOOK_IDS: dict[str, int] = {
     "KIOU_BR_HOOK_GET_VALID_MATCH_FOUND_STATUS": 31,
     "KIOU_BR_HOOK_MATCH_STREAM_ARGS_CREATE": 32,
     "KIOU_BR_HOOK_RECEIVE_TIMEOUT_MOVENEXT": 33,
+    "KIOU_BR_HOOK_RUN_LOGIN_SEQ_MOVENEXT": 34,
+    "KIOU_BR_HOOK_GET_SELF_PROFILE_MOVENEXT": 35,
 }
 
 
@@ -582,6 +584,14 @@ _BRIDGE_SITES: list[tuple[int, str, str, str, str]] = [
     (0x5D04E94, "ff0301d1", "KIOU_BR_HOOK_GET_VALID_MATCH_FOUND_STATUS", CAVE_ENTRY,    "GetValidMatchFoundStatus"),
     (0x5BCA664, "fc6fbaa9", "KIOU_BR_HOOK_MATCH_STREAM_ARGS_CREATE",     CAVE_ENTRY,    "IShogiMatchStreamArgs.Create"),
     (0x5D06B10, "ff0303d1", "KIOU_BR_HOOK_RECEIVE_TIMEOUT_MOVENEXT",     CAVE_OBSERVER, "MatchingHandler.ReceiveWithTimeoutAsync.MoveNext"),
+
+    # Async state-machine MoveNext post-orig observers — CAVE_ENTRY because
+    # the relevant fields (LoginReply pointer, SelfUserProfileStatus rank
+    # list, etc.) only land in the state machine struct *after* orig has
+    # advanced state to -2. The entry hook calls bypass to run orig
+    # itself, then reads the now-populated fields.
+    (0x5812534, "ff8302d1", "KIOU_BR_HOOK_RUN_LOGIN_SEQ_MOVENEXT",    CAVE_ENTRY, "RunLoginSequenceAsync.MoveNext"),
+    (0x5BB4774, "ff4302d1", "KIOU_BR_HOOK_GET_SELF_PROFILE_MOVENEXT", CAVE_ENTRY, "GetSelfUserProfileAsync.MoveNext"),
 ]
 
 
@@ -594,6 +604,8 @@ _ENTRY_SLOT_INDEX_BY_HOOK: dict[str, int] = {
     "KIOU_BR_HOOK_REGISTER_USER_ARGS_CREATE":    2,
     "KIOU_BR_HOOK_GET_VALID_MATCH_FOUND_STATUS": 3,
     "KIOU_BR_HOOK_MATCH_STREAM_ARGS_CREATE":     4,
+    "KIOU_BR_HOOK_RUN_LOGIN_SEQ_MOVENEXT":       5,
+    "KIOU_BR_HOOK_GET_SELF_PROFILE_MOVENEXT":    6,
 }
 assert len(_ENTRY_SLOT_INDEX_BY_HOOK) == ENTRY_SLOT_COUNT, \
     f"ENTRY_SLOT_COUNT ({ENTRY_SLOT_COUNT}) must match the entry-slot map"

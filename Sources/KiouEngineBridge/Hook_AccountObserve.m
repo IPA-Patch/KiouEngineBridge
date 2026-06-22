@@ -333,9 +333,10 @@ void *HookRegisterUserArgsCreateEntry(void *userName, void *distinctId) {
 typedef void (*MoveNextVoid_t)(void *self);
 static MoveNextVoid_t orig_RunLoginSeqMoveNext __attribute__((unused)) = NULL;
 
-void HookRunLoginSeqMoveNext(void *self) {
-    KIOU_CALL_ORIG_VOID(orig_RunLoginSeqMoveNext, self);
-
+// Shared body for both the JB MSHook trampoline and the chinlan entry
+// cave. Caller is responsible for invoking orig first; this just scans the
+// completed state machine and persists the LoginReply that lives inside it.
+static void observeRunLoginSeqCompletion(void *self) {
     if (!self) return;
     int32_t smState = readI32(self, OFF_SM_LOGIN_STATE);
     if (smState != -2) return;
@@ -392,6 +393,36 @@ void HookRunLoginSeqMoveNext(void *self) {
         return;
     }
 }
+
+void HookRunLoginSeqMoveNext(void *self) {
+    KIOU_CALL_ORIG_VOID(orig_RunLoginSeqMoveNext, self);
+    observeRunLoginSeqCompletion(self);
+}
+
+#if KIOU_CHINLAN
+// Chinlan entry-cave hook. The cave hands us pristine x0 (= self) and
+// RETs after we return; orig isn't run for us. We invoke it via the
+// per-site bypass entry so the state machine actually advances to
+// state == -2, then observe the now-populated reply field.
+void HookRunLoginSeqMoveNextEntry(void *self) {
+    MoveNextVoid_t bypass = (MoveNextVoid_t)
+        g_inject_entry[KIOU_BR_HOOK_RUN_LOGIN_SEQ_MOVENEXT];
+    if (bypass) {
+        @try { bypass(self); }
+        @catch (NSException *e) {
+            IPALog([NSString stringWithFormat:
+                      @"[ACCOUNT] RunLoginSeq.MoveNext chinlan bypass "
+                      @"threw: %@", e]);
+            return;
+        }
+    } else {
+        IPALog(@"[ACCOUNT] RunLoginSeq.MoveNext chinlan bypass not "
+                 @"published — skipping observation");
+        return;
+    }
+    observeRunLoginSeqCompletion(self);
+}
+#endif
 
 // ---------------------------------------------------------------------------
 // Hook: SystemInfo.get_deviceUniqueIdentifier() -> il2cpp string*
@@ -512,8 +543,9 @@ static const char *rankLabel(int32_t rank) {
     return labels[idx];
 }
 
-void HookGetSelfProfileMoveNext(void *self) {
-    KIOU_CALL_ORIG_VOID(orig_GetSelfProfileMoveNext, self);
+// Shared body for both the JB trampoline and the chinlan entry hook.
+// Caller is responsible for advancing orig first.
+static void observeGetSelfProfileCompletion(void *self) {
     if (!self) return;
     int32_t smState = readI32(self, 0x00);
     if (smState != -2) return;
@@ -575,6 +607,36 @@ void HookGetSelfProfileMoveNext(void *self) {
         return;
     }
 }
+
+void HookGetSelfProfileMoveNext(void *self) {
+    KIOU_CALL_ORIG_VOID(orig_GetSelfProfileMoveNext, self);
+    observeGetSelfProfileCompletion(self);
+}
+
+#if KIOU_CHINLAN
+// Chinlan entry-cave hook. Same shape as the RunLoginSeq entry hook:
+// the cave hands us pristine x0 and RETs after we return, so we have to
+// run orig ourselves via the per-site bypass entry before reading the
+// state machine fields the observation body needs.
+void HookGetSelfProfileMoveNextEntry(void *self) {
+    MoveNextVoid_t bypass = (MoveNextVoid_t)
+        g_inject_entry[KIOU_BR_HOOK_GET_SELF_PROFILE_MOVENEXT];
+    if (bypass) {
+        @try { bypass(self); }
+        @catch (NSException *e) {
+            IPALog([NSString stringWithFormat:
+                      @"[ACCOUNT] GetSelfProfile.MoveNext chinlan bypass "
+                      @"threw: %@", e]);
+            return;
+        }
+    } else {
+        IPALog(@"[ACCOUNT] GetSelfProfile.MoveNext chinlan bypass not "
+                 @"published — skipping observation");
+        return;
+    }
+    observeGetSelfProfileCompletion(self);
+}
+#endif
 
 // ---------------------------------------------------------------------------
 // Hook: TitleMenuPopupPresenter.RunResetUserDataSequenceAsync

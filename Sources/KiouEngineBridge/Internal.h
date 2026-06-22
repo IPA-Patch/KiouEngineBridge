@@ -540,6 +540,9 @@ enum kiou_bridge_hook_id {
     KIOU_BR_HOOK_MATCH_STREAM_ARGS_CREATE,
     KIOU_BR_HOOK_RECEIVE_TIMEOUT_MOVENEXT,
 
+    KIOU_BR_HOOK_RUN_LOGIN_SEQ_MOVENEXT,
+    KIOU_BR_HOOK_GET_SELF_PROFILE_MOVENEXT,
+
     KIOU_BR_HOOK__COUNT,
 };
 
@@ -553,6 +556,8 @@ enum kiou_bridge_entry_slot_id {
     KIOU_BR_ENTRY_SLOT_REGISTER_USER_ARGS_CREATE,
     KIOU_BR_ENTRY_SLOT_GET_VALID_MATCH_FOUND_STATUS,
     KIOU_BR_ENTRY_SLOT_MATCH_STREAM_ARGS_CREATE,
+    KIOU_BR_ENTRY_SLOT_RUN_LOGIN_SEQ_MOVENEXT,
+    KIOU_BR_ENTRY_SLOT_GET_SELF_PROFILE_MOVENEXT,
 
     KIOU_BR_ENTRY_SLOT__COUNT,
 };
@@ -730,6 +735,13 @@ void *HookArgsCreateEntry(int32_t action, int32_t matchType,
 // here so the chinlan dispatcher can call it without recompiling against
 // Hook_MatchingFilterObserve.m's internal symbol table.
 void HookReceiveTimeoutMoveNext(void *self);
+
+// MoveNext entry hooks (chinlan). The state machine fields they observe
+// (LoginReply pointer, SelfUserProfileStatus rank list) only become
+// populated *after* orig advances state to -2, so these hooks have to
+// invoke orig themselves via the cave bypass entry before reading.
+void HookRunLoginSeqMoveNextEntry(void *self);
+void HookGetSelfProfileMoveNextEntry(void *self);
 void HookGStateNotifyStateSyncedForCurrentPosition(void);
 void ResolveGameStateStoreNotifyStateSynced(uintptr_t unityBase);
 void HookGStateRememberStore(void *self);

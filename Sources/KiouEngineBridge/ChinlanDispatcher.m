@@ -195,17 +195,24 @@ void KEBBridgeChinlanPublish(void) {
         (void *)&HookGetValidMatchFoundStatusEntry;
     entrySlots[KIOU_BR_ENTRY_SLOT_MATCH_STREAM_ARGS_CREATE] =
         (void *)&HookArgsCreateEntry;
+    entrySlots[KIOU_BR_ENTRY_SLOT_RUN_LOGIN_SEQ_MOVENEXT] =
+        (void *)&HookRunLoginSeqMoveNextEntry;
+    entrySlots[KIOU_BR_ENTRY_SLOT_GET_SELF_PROFILE_MOVENEXT] =
+        (void *)&HookGetSelfProfileMoveNextEntry;
     IPALog([NSString stringWithFormat:
               @"[CHINLAN] entry slots base=%p (unityBase+0x%x): "
               @"AccountExists=%p LoginArgs=%p RegisterUserArgs=%p "
-              @"GetValidMatchFound=%p ArgsCreate=%p",
+              @"GetValidMatchFound=%p ArgsCreate=%p "
+              @"RunLoginSeq.MoveNext=%p GetSelfProfile.MoveNext=%p",
               (void *)entrySlots,
               (unsigned)KIOU_BR_ENTRY_SLOT_BASE_RVA,
               (void *)entrySlots[KIOU_BR_ENTRY_SLOT_ACCOUNT_EXISTS],
               (void *)entrySlots[KIOU_BR_ENTRY_SLOT_LOGIN_ARGS_CREATE],
               (void *)entrySlots[KIOU_BR_ENTRY_SLOT_REGISTER_USER_ARGS_CREATE],
               (void *)entrySlots[KIOU_BR_ENTRY_SLOT_GET_VALID_MATCH_FOUND_STATUS],
-              (void *)entrySlots[KIOU_BR_ENTRY_SLOT_MATCH_STREAM_ARGS_CREATE]]);
+              (void *)entrySlots[KIOU_BR_ENTRY_SLOT_MATCH_STREAM_ARGS_CREATE],
+              (void *)entrySlots[KIOU_BR_ENTRY_SLOT_RUN_LOGIN_SEQ_MOVENEXT],
+              (void *)entrySlots[KIOU_BR_ENTRY_SLOT_GET_SELF_PROFILE_MOVENEXT]]);
     IPALog([NSString stringWithFormat:
               @"[CHINLAN] slot=%p (unityBase+0x%lx) published "
               @"dispatcher=%p inject_entry[ai_opm]=%p inject_entry[adapter]=%p "
