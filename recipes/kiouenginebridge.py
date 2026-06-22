@@ -600,18 +600,15 @@ _BRIDGE_SITES: list[tuple[int, str, str, str, str]] = [
     (0x5812534, "ff8302d1", "KIOU_BR_HOOK_RUN_LOGIN_SEQ_MOVENEXT",    CAVE_ENTRY, "RunLoginSequenceAsync.MoveNext"),
     (0x5BB4774, "ff4302d1", "KIOU_BR_HOOK_GET_SELF_PROFILE_MOVENEXT", CAVE_ENTRY, "GetSelfUserProfileAsync.MoveNext"),
 
-    # HttpMessageInvoker.SendAsync(HttpRequestMessage, CancellationToken) —
-    # every outbound gRPC HTTP/2 request passes through here. CAVE_ENTRY so
-    # the hook can rewrite the x-user-id header before forwarding to orig.
-    # Note: Hook_GrpcLogging.m's RVA_HTTPMSGINVOKER_SEND_ASYNC (0x607C974)
-    # points 12 bytes into the function; the real prologue is at 0x607C968.
-    (0x607C968, "fd7bbfa9", "KIOU_BR_HOOK_HTTPMSGINVOKER_SEND_ASYNC", CAVE_ENTRY, "HttpMessageInvoker.SendAsync"),
+    # HttpMessageInvoker.SendAsync — the vtable-dispatch thunk for the
+    # method. JB hooks 0x607C974 (the LDR X0,[X0] after PAC verify) and
+    # confirms x-user-id swap fires from here. 0x607C968 (the PAC-protected
+    # frame setup just above) is NOT on the call path — the call sites
+    # branch straight into the AUTIBSP-then-vtable thunk at 0x607C974.
+    (0x607C974, "000840f9", "KIOU_BR_HOOK_HTTPMSGINVOKER_SEND_ASYNC", CAVE_ENTRY, "HttpMessageInvoker.SendAsync"),
 
     # MonoWebRequestHandler.SendAsync — the real HTTP transport entry point
-    # that all gRPC calls go through in practice on this build. The
-    # HttpMessageInvoker shim above goes through a vtable dispatch that may
-    # route to a different concrete implementation; this hook covers the
-    # actual path that JB verified produces →[Mono] log entries.
+    # that all gRPC calls go through in practice on this build.
     (0x60789E4, "ffc304d1", "KIOU_BR_HOOK_MONO_SEND_ASYNC", CAVE_ENTRY, "MonoWebRequestHandler.SendAsync"),
 ]
 
