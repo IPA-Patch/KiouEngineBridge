@@ -328,16 +328,7 @@ void *HookHttpClientSendAsyncOpt(void *self, void *request, int32_t opt, void *c
 // x-user-id header so account-switch logins are accepted by the server.
 // ---------------------------------------------------------------------------
 void *HookHttpMsgInvokerSendAsyncEntry(void *self, void *request, void *ct) {
-    NSString *pendingDevice = KEBPendingDeviceId();
-    NSString *url = nil;
-    if (request) {
-        void *uriObj = readPtr(request, OFF_REQ_URI);
-        if (uriObj) url = grpcReadIl2CppString(readPtr(uriObj, OFF_URI_STRING));
-    }
-    IPALog([NSString stringWithFormat:
-              @"[GRPC] SendAsync pending=%@ url=%@",
-              pendingDevice.length > 0 ? pendingDevice : @"(none)",
-              url ?: @"(nil)"]);
+    IPALog(@"[GRPC] SendAsync entry hook fired");
     swapUserIdHeader(request);
     typedef void *(*SendAsync_t)(void *, void *, void *);
     SendAsync_t bypass =
