@@ -122,7 +122,7 @@ PROBED_HOOK_SLOT_RVA = 0x8F90CD0
 # 32-slot capacity (256 B), giving room to add more entry-class hooks
 # without revisiting this constant. The recipe also asserts every slot in
 # the table — not just the first — sits inside __bss or __common.
-ENTRY_SLOT_COUNT    = 8      # currently published; bump alongside the dylib enum
+ENTRY_SLOT_COUNT    = 9      # currently published; bump alongside the dylib enum
 ENTRY_SLOT_CAPACITY = 32     # 256 B reserved at ENTRY_SLOT_BASE_RVA
 # 0x091E90B8 (former placement) turned out to hold a KIOU bitmask table
 # written at runtime; frida dump confirmed 0x091E91B8..0x091E92B8 is all
@@ -202,6 +202,7 @@ _HOOK_IDS: dict[str, int] = {
     "KIOU_BR_HOOK_RUN_LOGIN_SEQ_MOVENEXT": 34,
     "KIOU_BR_HOOK_GET_SELF_PROFILE_MOVENEXT": 35,
     "KIOU_BR_HOOK_HTTPMSGINVOKER_SEND_ASYNC": 36,
+    "KIOU_BR_HOOK_MONO_SEND_ASYNC": 37,
 }
 
 
@@ -605,6 +606,13 @@ _BRIDGE_SITES: list[tuple[int, str, str, str, str]] = [
     # Note: Hook_GrpcLogging.m's RVA_HTTPMSGINVOKER_SEND_ASYNC (0x607C974)
     # points 12 bytes into the function; the real prologue is at 0x607C968.
     (0x607C968, "fd7bbfa9", "KIOU_BR_HOOK_HTTPMSGINVOKER_SEND_ASYNC", CAVE_ENTRY, "HttpMessageInvoker.SendAsync"),
+
+    # MonoWebRequestHandler.SendAsync — the real HTTP transport entry point
+    # that all gRPC calls go through in practice on this build. The
+    # HttpMessageInvoker shim above goes through a vtable dispatch that may
+    # route to a different concrete implementation; this hook covers the
+    # actual path that JB verified produces →[Mono] log entries.
+    (0x60789E4, "ffc304d1", "KIOU_BR_HOOK_MONO_SEND_ASYNC", CAVE_ENTRY, "MonoWebRequestHandler.SendAsync"),
 ]
 
 
@@ -620,6 +628,7 @@ _ENTRY_SLOT_INDEX_BY_HOOK: dict[str, int] = {
     "KIOU_BR_HOOK_RUN_LOGIN_SEQ_MOVENEXT":           5,
     "KIOU_BR_HOOK_GET_SELF_PROFILE_MOVENEXT":        6,
     "KIOU_BR_HOOK_HTTPMSGINVOKER_SEND_ASYNC":        7,
+    "KIOU_BR_HOOK_MONO_SEND_ASYNC":                  8,
 }
 assert len(_ENTRY_SLOT_INDEX_BY_HOOK) == ENTRY_SLOT_COUNT, \
     f"ENTRY_SLOT_COUNT ({ENTRY_SLOT_COUNT}) must match the entry-slot map"

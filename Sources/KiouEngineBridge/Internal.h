@@ -548,6 +548,11 @@ enum kiou_bridge_hook_id {
     // before calling bypass to forward to orig.
     KIOU_BR_HOOK_HTTPMSGINVOKER_SEND_ASYNC,
 
+    // MonoWebRequestHandler.SendAsync — the actual HTTP transport entry
+    // point all gRPC calls reach on this build (the vtable dispatch in
+    // HttpMessageInvoker routes here in practice).
+    KIOU_BR_HOOK_MONO_SEND_ASYNC,
+
     KIOU_BR_HOOK__COUNT,
 };
 
@@ -564,6 +569,7 @@ enum kiou_bridge_entry_slot_id {
     KIOU_BR_ENTRY_SLOT_RUN_LOGIN_SEQ_MOVENEXT,
     KIOU_BR_ENTRY_SLOT_GET_SELF_PROFILE_MOVENEXT,
     KIOU_BR_ENTRY_SLOT_HTTPMSGINVOKER_SEND_ASYNC,
+    KIOU_BR_ENTRY_SLOT_MONO_SEND_ASYNC,
 
     KIOU_BR_ENTRY_SLOT__COUNT,
 };
@@ -749,6 +755,7 @@ void HookReceiveTimeoutMoveNext(void *self);
 void HookRunLoginSeqMoveNextEntry(void *self);
 void HookGetSelfProfileMoveNextEntry(void *self);
 void *HookHttpMsgInvokerSendAsyncEntry(void *self, void *request, void *ct);
+void *HookMonoSendAsyncEntry(void *self, void *request, void *ct);
 void HookGStateNotifyStateSyncedForCurrentPosition(void);
 void ResolveGameStateStoreNotifyStateSynced(uintptr_t unityBase);
 void HookGStateRememberStore(void *self);

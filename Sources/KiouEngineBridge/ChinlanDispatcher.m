@@ -201,6 +201,8 @@ void KEBBridgeChinlanPublish(void) {
         (void *)&HookGetSelfProfileMoveNextEntry;
     entrySlots[KIOU_BR_ENTRY_SLOT_HTTPMSGINVOKER_SEND_ASYNC] =
         (void *)&HookHttpMsgInvokerSendAsyncEntry;
+    entrySlots[KIOU_BR_ENTRY_SLOT_MONO_SEND_ASYNC] =
+        (void *)&HookMonoSendAsyncEntry;
     IPALog([NSString stringWithFormat:
               @"[CHINLAN] entry slots base=%p (unityBase+0x%x): "
               @"AccountExists=%p LoginArgs=%p RegisterUserArgs=%p "

@@ -328,16 +328,21 @@ void *HookHttpClientSendAsyncOpt(void *self, void *request, int32_t opt, void *c
 // x-user-id header so account-switch logins are accepted by the server.
 // ---------------------------------------------------------------------------
 void *HookHttpMsgInvokerSendAsyncEntry(void *self, void *request, void *ct) {
-    IPALog(@"[GRPC] SendAsync entry hook fired");
+    IPALog(@"[GRPC] HttpMsgInvoker.SendAsync entry fired");
     swapUserIdHeader(request);
     typedef void *(*SendAsync_t)(void *, void *, void *);
     SendAsync_t bypass =
         (SendAsync_t)g_inject_entry[KIOU_BR_HOOK_HTTPMSGINVOKER_SEND_ASYNC];
-    if (!bypass) {
-        IPALog(@"[GRPC] bypass NULL — skipping orig call");
-        return NULL;
-    }
-    return bypass(self, request, ct);
+    return bypass ? bypass(self, request, ct) : NULL;
+}
+
+void *HookMonoSendAsyncEntry(void *self, void *request, void *ct) {
+    IPALog(@"[GRPC] MonoWebRequest.SendAsync entry fired");
+    swapUserIdHeader(request);
+    typedef void *(*SendAsync_t)(void *, void *, void *);
+    SendAsync_t bypass =
+        (SendAsync_t)g_inject_entry[KIOU_BR_HOOK_MONO_SEND_ASYNC];
+    return bypass ? bypass(self, request, ct) : NULL;
 }
 
 void InstallGrpcLoggingHook(uintptr_t unityBase) {
