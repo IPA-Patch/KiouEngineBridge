@@ -14,7 +14,7 @@ the return to KIOU.
 | Override the return value | ❌ (cave executes orig _after_ the hook) | ✅ (cave's tail is `RET`; the hook's `x0` propagates straight back) |
 | Substitute argument registers | ❌ (cave restores `x0..x7` before `B orig+4`) | ✅ (cave passes pristine `x0..x7` through and never restores) |
 | Hooks routed through a single shared dispatcher | ✅ (`g_kebDispatch` at `KIOU_BR_HOOK_SLOT_RVA`, identified by `W6 = hook_id`) | ❌ (each site has its own slot under `KIOU_BR_ENTRY_SLOT_BASE_RVA`) |
-| `W6` (= 7th C arg) survives across the cave | ❌ (clobbered with `hook_id` for the dispatcher) | ✅ (only `W9` is touched, which AAPCS reserves for the 9th+ arg = stack) |
+| `W6` (= 7th C arg) survives across the cave | ❌ (clobbered with `hook_id` for the dispatcher) | ✅ (only `W9` is touched, and `x9–x15` are AAPCS64 call-clobbered scratch — never an argument slot) |
 | Cave-bypass tail at `cave_va + 0x4C` still valid | ✅ | ✅ |
 | Counts against `KIOU_BR_HOOK__COUNT` (= cave allocation order) | ✅ | ✅ |
 
@@ -86,7 +86,7 @@ Hook bodies with up to six args (everything in this repo except
 0x00  STP X29, X30, [SP, #-0x10]!     ; minimal frame — no arg saving
 0x04  ADRP X16, page(entry_slot_va)
 0x08  LDR  X16, [X16, #lo12(slot)]    ; load this site's hook fn ptr
-0x0C  MOVZ W9,  #slot_index           ; diagnostic; hook may ignore (W9 = arg #9)
+0x0C  MOVZ W9,  #slot_index           ; diagnostic; hook may ignore (W9 is AAPCS64 call-clobbered scratch, not an argument slot)
 0x10  BLR  X16                         ; hook(x0..x7) — return ends up in x0
 0x14  LDP  X29, X30, [SP], #0x10
 0x18  RET                              ; orig is NOT executed by the cave
@@ -135,9 +135,12 @@ with open('/tmp/unity.bin','rb') as f:
 
 PC-independent means the top byte is one of `a9` (STP/LDP signed off /
 pre / post), `6d` (STP D-reg), `d1` (SUB SP, …), `d6` (RET). Anything
-that encodes a PC-relative offset (`ADR`, `ADRP`, `B`, `BL`, `BR`, `BLR`
-with immediate) cannot be relocated verbatim; you'd have to relocate +
-fix-up or pick a different site.
+that encodes a PC-relative offset (`ADR`, `ADRP`, `B`, `BL`) cannot be
+relocated verbatim; you'd have to relocate + fix-up or pick a different
+site. (`BR` / `BLR` are register-indirect and therefore PC-independent
+themselves, but a prologue that uses them has almost always materialised
+the target register a few instructions earlier — relocating just the
+branch would dereference the wrong address.)
 
 ### 3. `recipes/kiouenginebridge.py`
 

@@ -572,12 +572,16 @@ _BRIDGE_SITES: list[tuple[int, str, str, str, str]] = [
     (0x5B98A2C, "f657bda9", "KIOU_BR_HOOK_REGISTER_USER_ARGS_CREATE", CAVE_ENTRY, "IRegisterUserArgs.Create"),
 
     # Matching filter: Accept Seat (sente/gote-only) + Fixed Rate Range.
-    # GetValidMatchFoundStatus must be CAVE_ENTRY so the hook can return
-    # NULL when the matched seat doesn't satisfy the filter (the caller
-    # treats NULL as "reject this match"). The two supporting sites are:
+    # GetValidMatchFoundStatus must be CAVE_ENTRY because the seat-filter
+    # side effect (firing ConnectionFailed at the matching stream) needs to
+    # run AFTER orig produces the MatchFoundStatus so we can read
+    # `isFirstPlayer` from it. orig's return is forwarded unchanged; the
+    # observable reject signal goes through the stream, not through the
+    # return value. The two supporting sites are:
     #   * ShogiMatchStreamArgs.Create — CAVE_ENTRY because the 7th C
     #     argument (enableBeginnerSupport) lands in W6, which CAVE_OBSERVER
-    #     clobbers with the hook_id MOVZ. CAVE_ENTRY only touches W9.
+    #     clobbers with the hook_id MOVZ. CAVE_ENTRY only touches W9, a
+    #     call-clobbered scratch register that isn't an argument slot.
     #   * ReceiveWithTimeoutAsync.MoveNext — CAVE_OBSERVER. Single self
     #     pointer in x0; we just need to peek to cache the stream pointer
     #     and react to MatchingStatus replies.

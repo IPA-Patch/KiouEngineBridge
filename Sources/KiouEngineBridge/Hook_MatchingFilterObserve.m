@@ -378,7 +378,8 @@ void *HookArgsCreate(int32_t action, int32_t matchType,
 // Chinlan entry-cave hook. CAVE_ENTRY is required (not CAVE_OBSERVER)
 // because the 7th C argument (`enableBeginnerSupport`) lands in W6 — the
 // observer cave's MOVZ W6, #hook_id would clobber it. The entry cave only
-// touches W9 (also an unused arg slot here).
+// touches W9, which AAPCS64 marks as call-clobbered scratch (x9–x15);
+// nothing the caller relies on lives there.
 void *HookArgsCreateEntry(int32_t action, int32_t matchType,
                            int32_t rankRuleType, int32_t eventRuleType,
                            int32_t mstEventMatchId,
