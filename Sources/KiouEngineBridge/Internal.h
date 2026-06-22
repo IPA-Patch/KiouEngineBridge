@@ -543,6 +543,11 @@ enum kiou_bridge_hook_id {
     KIOU_BR_HOOK_RUN_LOGIN_SEQ_MOVENEXT,
     KIOU_BR_HOOK_GET_SELF_PROFILE_MOVENEXT,
 
+    // HttpMessageInvoker.SendAsync — CAVE_ENTRY for x-user-id header swap
+    // on account switch. Entry cave so the hook can rewrite request headers
+    // before calling bypass to forward to orig.
+    KIOU_BR_HOOK_HTTPMSGINVOKER_SEND_ASYNC,
+
     KIOU_BR_HOOK__COUNT,
 };
 
@@ -558,6 +563,7 @@ enum kiou_bridge_entry_slot_id {
     KIOU_BR_ENTRY_SLOT_MATCH_STREAM_ARGS_CREATE,
     KIOU_BR_ENTRY_SLOT_RUN_LOGIN_SEQ_MOVENEXT,
     KIOU_BR_ENTRY_SLOT_GET_SELF_PROFILE_MOVENEXT,
+    KIOU_BR_ENTRY_SLOT_HTTPMSGINVOKER_SEND_ASYNC,
 
     KIOU_BR_ENTRY_SLOT__COUNT,
 };
@@ -742,6 +748,7 @@ void HookReceiveTimeoutMoveNext(void *self);
 // invoke orig themselves via the cave bypass entry before reading.
 void HookRunLoginSeqMoveNextEntry(void *self);
 void HookGetSelfProfileMoveNextEntry(void *self);
+void *HookHttpMsgInvokerSendAsyncEntry(void *self, void *request, void *ct);
 void HookGStateNotifyStateSyncedForCurrentPosition(void);
 void ResolveGameStateStoreNotifyStateSynced(uintptr_t unityBase);
 void HookGStateRememberStore(void *self);
