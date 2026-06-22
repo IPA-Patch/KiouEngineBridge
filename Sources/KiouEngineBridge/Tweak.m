@@ -74,6 +74,12 @@ static void installUnityHooks(uintptr_t unityBase, const char *unityName) {
     // AccountExists observer + resolves il2cpp_string_new. The Login /
     // Register / TDAnalytics post-orig observers stay JB-only.
     InstallAccountObserveHook(unityBase);
+    // Matching filter (Accept Seat / Fixed Rate Range). On chinlan the
+    // hook sites are cave-patched in via recipes/kiouenginebridge.py; this
+    // installer is what points g_ArgsCreate at the cave-bypass entry so
+    // sendAction() can build IShogiMatchStreamArgs without re-entering the
+    // entry hook.
+    InstallMatchingFilterObserveHook(unityBase);
     // CSA engine driver. Must come AFTER InstallInjectHook so inject_apply
     // is fully wired before the CSA recv queue can dispatch into it.
     CsaEngineInstall();
@@ -105,6 +111,10 @@ static void installUnityHooks(uintptr_t unityBase, const char *unityName) {
     // AccountExists / TDAnalytics). Must come before CsaEngineInstall so
     // account state is live before any engine session starts.
     InstallAccountObserveHook(unityBase);
+    // Matching filter — Accept Seat (sente / gote only) and Fixed Rate
+    // Range cap. Settings UI toggles these off by default; the hooks no-op
+    // until the user opts in from the right-edge swipe panel.
+    InstallMatchingFilterObserveHook(unityBase);
     // gRPC HTTP/2 transport logging — logs every outbound URL + HTTP status.
     InstallGrpcLoggingHook(unityBase);
     // CSA engine driver. Must come AFTER InstallInjectHook so inject_apply
