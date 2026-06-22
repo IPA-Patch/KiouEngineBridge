@@ -80,6 +80,10 @@ static void installUnityHooks(uintptr_t unityBase, const char *unityName) {
     // sendAction() can build IShogiMatchStreamArgs without re-entering the
     // entry hook.
     InstallMatchingFilterObserveHook(unityBase);
+    // gRPC header helpers — on chinlan this resolves g_HttpHeadersTryAdd /
+    // g_HttpHeadersRemove / g_GrpcStringNew so HookHttpMsgInvokerSendAsyncEntry
+    // can swap the x-user-id header on account-switch logins.
+    InstallGrpcLoggingHook(unityBase);
     // CSA engine driver. Must come AFTER InstallInjectHook so inject_apply
     // is fully wired before the CSA recv queue can dispatch into it.
     CsaEngineInstall();

@@ -320,7 +320,33 @@ void *HookHttpClientSendAsyncOpt(void *self, void *request, int32_t opt, void *c
 // ---------------------------------------------------------------------------
 // Installer
 // ---------------------------------------------------------------------------
-#if !KIOU_CHINLAN
+#if KIOU_CHINLAN
+// ---------------------------------------------------------------------------
+// Chinlan entry hook — HttpMessageInvoker.SendAsync(request, ct)
+// x0=self, x1=HttpRequestMessage*, x2=CancellationToken
+// CAVE_ENTRY: the hook calls bypass to run orig, but first rewrites the
+// x-user-id header so account-switch logins are accepted by the server.
+// ---------------------------------------------------------------------------
+void *HookHttpMsgInvokerSendAsyncEntry(void *self, void *request, void *ct) {
+    swapUserIdHeader(request);
+    typedef void *(*SendAsync_t)(void *, void *, void *);
+    SendAsync_t bypass =
+        (SendAsync_t)g_inject_entry[KIOU_BR_HOOK_HTTPMSGINVOKER_SEND_ASYNC];
+    return bypass ? bypass(self, request, ct) : NULL;
+}
+
+void InstallGrpcLoggingHook(uintptr_t unityBase) {
+    (void)unityBase;
+    // Pointer helpers needed by swapUserIdHeader — resolve once here.
+    g_HttpHeadersTryAdd = (HttpHeadersTryAdd_t)(unityBase + RVA_HTTPHEADERS_TRYADD);
+    g_HttpHeadersRemove = (HttpHeadersRemove_t)(unityBase + RVA_HTTPHEADERS_REMOVE);
+    if (!g_GrpcStringNew)
+        g_GrpcStringNew = (GrpcIl2CppStringNew_t)dlsym(RTLD_DEFAULT, "il2cpp_string_new");
+    IPALog([NSString stringWithFormat:
+              @"[GRPC] chinlan: header-swap helpers resolved tryAdd=%p remove=%p strNew=%p",
+              g_HttpHeadersTryAdd, g_HttpHeadersRemove, g_GrpcStringNew]);
+}
+#else
 void InstallGrpcLoggingHook(uintptr_t unityBase) {
     g_HttpReqMsgToString = (HttpReqMsgToString_t)(unityBase + RVA_HTTPREQMSG_TOSTRING);
     g_HttpHeadersTryAdd  = (HttpHeadersTryAdd_t) (unityBase + RVA_HTTPHEADERS_TRYADD);
@@ -389,9 +415,4 @@ void InstallGrpcLoggingHook(uintptr_t unityBase) {
               @"[GRPC] hooked HttpClient.SendAsync(opt) @0x%lx",
               (unsigned long)addr7]);
 }
-#else
-void InstallGrpcLoggingHook(uintptr_t unityBase) {
-    (void)unityBase;
-    IPALog(@"[GRPC] chinlan: gRPC logging hook is no-op");
-}
-#endif // !KIOU_CHINLAN
+#endif // KIOU_CHINLAN / !KIOU_CHINLAN

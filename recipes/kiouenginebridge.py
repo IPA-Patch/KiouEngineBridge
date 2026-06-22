@@ -122,22 +122,25 @@ PROBED_HOOK_SLOT_RVA = 0x8F90CD0
 # 32-slot capacity (256 B), giving room to add more entry-class hooks
 # without revisiting this constant. The recipe also asserts every slot in
 # the table — not just the first — sits inside __bss or __common.
-ENTRY_SLOT_COUNT    = 7      # currently published; bump alongside the dylib enum
+ENTRY_SLOT_COUNT    = 8      # currently published; bump alongside the dylib enum
 ENTRY_SLOT_CAPACITY = 32     # 256 B reserved at ENTRY_SLOT_BASE_RVA
-ENTRY_SLOT_BASE_RVA = 0x091E90B8  # __common end (0x091E91B8) - 32 * 8 bytes
+# 0x091E90B8 (former placement) turned out to hold a KIOU bitmask table
+# written at runtime. Frida MemoryAccessMonitor on Kiou-1.0.1 build 11
+# confirmed [0x091E91B8, 0x091E93B8) (exclusive end) reads all zeros
+# both before and after a full login sequence — i.e. 0x200 B of usable
+# headroom starting one word past __common end (0x091E91B8).
+ENTRY_SLOT_BASE_RVA = 0x091E91B8  # first confirmed-zero word past __common
 
-# Static sanity bound — when we know the section layout at recipe authoring
-# time, this catches a stale ENTRY_SLOT_BASE_RVA / capacity bump before the
-# patcher runs. Shared/tools/patch_macho.py only assert_slot_in_bss's the
-# main HOOK_SLOT_RVA today; extending it to walk an EXTRA_SLOT_VAS list is
-# a separate PR.
-_COMMON_SECTION_END_RVA = 0x091E91B8  # __DATA,__common end on Kiou-1.0.1 build 11
+# Static sanity bound — exclusive end of the verified-zero region.
+# Must match the upper bound in the comment above; both describe the
+# same [BASE, END) interval.
+_ZERO_REGION_END_RVA = 0x091E93B8  # exclusive end: BASE + 0x200 B
 assert (
-    ENTRY_SLOT_BASE_RVA + ENTRY_SLOT_CAPACITY * 8 <= _COMMON_SECTION_END_RVA
+    ENTRY_SLOT_BASE_RVA + ENTRY_SLOT_CAPACITY * 8 <= _ZERO_REGION_END_RVA
 ), (
-    f"entry slot reservation overflows __common: "
+    f"entry slot reservation overflows verified-zero region: "
     f"0x{ENTRY_SLOT_BASE_RVA + ENTRY_SLOT_CAPACITY * 8:X} > "
-    f"0x{_COMMON_SECTION_END_RVA:X}. Pick a lower ENTRY_SLOT_BASE_RVA or "
+    f"0x{_ZERO_REGION_END_RVA:X}. Pick a lower ENTRY_SLOT_BASE_RVA or "
     "reduce ENTRY_SLOT_CAPACITY."
 )
 assert ENTRY_SLOT_COUNT <= ENTRY_SLOT_CAPACITY, (
@@ -200,6 +203,7 @@ _HOOK_IDS: dict[str, int] = {
     "KIOU_BR_HOOK_RECEIVE_TIMEOUT_MOVENEXT": 33,
     "KIOU_BR_HOOK_RUN_LOGIN_SEQ_MOVENEXT": 34,
     "KIOU_BR_HOOK_GET_SELF_PROFILE_MOVENEXT": 35,
+    "KIOU_BR_HOOK_HTTPMSGINVOKER_SEND_ASYNC": 36,
 }
 
 
@@ -596,6 +600,12 @@ _BRIDGE_SITES: list[tuple[int, str, str, str, str]] = [
     # itself, then reads the now-populated fields.
     (0x5812534, "ff8302d1", "KIOU_BR_HOOK_RUN_LOGIN_SEQ_MOVENEXT",    CAVE_ENTRY, "RunLoginSequenceAsync.MoveNext"),
     (0x5BB4774, "ff4302d1", "KIOU_BR_HOOK_GET_SELF_PROFILE_MOVENEXT", CAVE_ENTRY, "GetSelfUserProfileAsync.MoveNext"),
+
+    # HttpMessageInvoker.SendAsync — vtable dispatch thunk. Use the exact
+    # RVA JB hooks (0x607C974, the LDR X0,[X0] after PAC verify), not the
+    # PAC-protected frame at 0x607C968 just above — that frame is not on
+    # the call path (callers branch straight into the post-AUTIBSP thunk).
+    (0x607C974, "000840f9", "KIOU_BR_HOOK_HTTPMSGINVOKER_SEND_ASYNC", CAVE_ENTRY, "HttpMessageInvoker.SendAsync"),
 ]
 
 
@@ -608,8 +618,9 @@ _ENTRY_SLOT_INDEX_BY_HOOK: dict[str, int] = {
     "KIOU_BR_HOOK_REGISTER_USER_ARGS_CREATE":    2,
     "KIOU_BR_HOOK_GET_VALID_MATCH_FOUND_STATUS": 3,
     "KIOU_BR_HOOK_MATCH_STREAM_ARGS_CREATE":     4,
-    "KIOU_BR_HOOK_RUN_LOGIN_SEQ_MOVENEXT":       5,
-    "KIOU_BR_HOOK_GET_SELF_PROFILE_MOVENEXT":    6,
+    "KIOU_BR_HOOK_RUN_LOGIN_SEQ_MOVENEXT":           5,
+    "KIOU_BR_HOOK_GET_SELF_PROFILE_MOVENEXT":        6,
+    "KIOU_BR_HOOK_HTTPMSGINVOKER_SEND_ASYNC":        7,
 }
 assert len(_ENTRY_SLOT_INDEX_BY_HOOK) == ENTRY_SLOT_COUNT, \
     f"ENTRY_SLOT_COUNT ({ENTRY_SLOT_COUNT}) must match the entry-slot map"
