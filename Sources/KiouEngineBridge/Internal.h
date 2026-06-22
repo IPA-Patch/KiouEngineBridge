@@ -454,11 +454,18 @@ void KEBNavigateToTitleScene(void);
 // time, this header pins where the dylib publishes its dispatcher).
 #define KIOU_BR_HOOK_SLOT_RVA 0x8F90CC0
 
-// RVA of the entry-slot table inside UnityFramework's __DATA,__bss. Each
-// CAVE_ENTRY site reads its 8-byte slot at `ENTRY_SLOT_BASE_RVA + slot * 8`
-// and BLRs the function pointer there. MUST match ENTRY_SLOT_BASE_RVA in
-// recipes/kiouenginebridge.py.
-#define KIOU_BR_ENTRY_SLOT_BASE_RVA 0x8F90CD0
+// RVA of the entry-slot table inside UnityFramework's __DATA,__common.
+// Each CAVE_ENTRY site reads its 8-byte slot at
+// `ENTRY_SLOT_BASE_RVA + slot * 8` and BLRs the function pointer there.
+// MUST match ENTRY_SLOT_BASE_RVA in recipes/kiouenginebridge.py.
+//
+// The earlier revision placed this at 0x8F90CD0 (the last 8 bytes of
+// __bss). That fit slot[0] but silently let slot[1+] spill into the
+// padding between __bss and __common; both are zero-fill so it worked by
+// accident. We now reserve 32 slots in __common's tail (0x091E9100..),
+// which has 2.4 MB of headroom and keeps the whole table inside a single
+// zero-fill section.
+#define KIOU_BR_ENTRY_SLOT_BASE_RVA 0x091E90B8
 
 // Reserved sibling RVA for a future in-framework inject-entry table.
 // Branch F currently reconstructs bypass entries dylib-locally from cave

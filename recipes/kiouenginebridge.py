@@ -105,12 +105,46 @@ PROBED_HOOK_SLOT_RVA = 0x8F90CD0
 # Entry caves (KiouForge-style) use a separate slot table — each entry hook
 # gets a dedicated 8-byte slot the dylib publishes its function pointer
 # into, so the cave can BLR straight into it without touching the observer
-# dispatcher. Reserve ENTRY_SLOT_COUNT consecutive 8-byte slots starting at
-# PROBED_HOOK_SLOT_RVA (= 0x8F90CD0). Bump ENTRY_SLOT_COUNT when adding a
-# new entry-class hook and reserve the next __bss tail if you exhaust the
-# space.
-ENTRY_SLOT_COUNT    = 5
-ENTRY_SLOT_BASE_RVA = PROBED_HOOK_SLOT_RVA  # 0x8F90CD0
+# dispatcher.
+#
+# UnityFramework (Kiou-1.0.1 build 11) __DATA layout:
+#   __bss     0x08E76B80 .. 0x08F90CD8 (1.1 MB, zero-fill)
+#   __common  0x08F90D00 .. 0x091E91B8 (2.4 MB, zero-fill)
+#
+# The original revision placed the entry slot table at PROBED_HOOK_SLOT_RVA
+# (= 0x8F90CD0), which is the last 8 bytes of __bss — fine for a single
+# slot but slot[1+] silently fell into the 40-byte padding between __bss
+# and __common. Both regions are zero-fill so dyld didn't catch it, but
+# the placement is technically out-of-section and only the per-slot
+# assert_slot_in_bss check below would have flagged it.
+#
+# We move the table into the __common tail instead and reserve a generous
+# 32-slot capacity (256 B), giving room to add more entry-class hooks
+# without revisiting this constant. The recipe also asserts every slot in
+# the table — not just the first — sits inside __bss or __common.
+ENTRY_SLOT_COUNT    = 5      # currently published; bump alongside the dylib enum
+ENTRY_SLOT_CAPACITY = 32     # 256 B reserved at ENTRY_SLOT_BASE_RVA
+ENTRY_SLOT_BASE_RVA = 0x091E90B8  # __common end (0x091E91B8) - 32 * 8 bytes
+
+# Static sanity bound — when we know the section layout at recipe authoring
+# time, this catches a stale ENTRY_SLOT_BASE_RVA / capacity bump before the
+# patcher runs. Shared/tools/patch_macho.py only assert_slot_in_bss's the
+# main HOOK_SLOT_RVA today; extending it to walk an EXTRA_SLOT_VAS list is
+# a separate PR.
+_COMMON_SECTION_END_RVA = 0x091E91B8  # __DATA,__common end on Kiou-1.0.1 build 11
+assert (
+    ENTRY_SLOT_BASE_RVA + ENTRY_SLOT_CAPACITY * 8 <= _COMMON_SECTION_END_RVA
+), (
+    f"entry slot reservation overflows __common: "
+    f"0x{ENTRY_SLOT_BASE_RVA + ENTRY_SLOT_CAPACITY * 8:X} > "
+    f"0x{_COMMON_SECTION_END_RVA:X}. Pick a lower ENTRY_SLOT_BASE_RVA or "
+    "reduce ENTRY_SLOT_CAPACITY."
+)
+assert ENTRY_SLOT_COUNT <= ENTRY_SLOT_CAPACITY, (
+    f"ENTRY_SLOT_COUNT ({ENTRY_SLOT_COUNT}) exceeds reserved capacity "
+    f"({ENTRY_SLOT_CAPACITY}). Bump ENTRY_SLOT_CAPACITY *and* the recipe's "
+    "_COMMON_SECTION_END_RVA check above."
+)
 
 # Must stay inside __DATA,__bss and leave room for at least 32 8-byte entries.
 # Runtime code reconstructs the actual bypass entry VAs from the cave geometry,
