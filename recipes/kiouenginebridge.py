@@ -125,14 +125,16 @@ PROBED_HOOK_SLOT_RVA = 0x8F90CD0
 ENTRY_SLOT_COUNT    = 8      # currently published; bump alongside the dylib enum
 ENTRY_SLOT_CAPACITY = 32     # 256 B reserved at ENTRY_SLOT_BASE_RVA
 # 0x091E90B8 (former placement) turned out to hold a KIOU bitmask table
-# written at runtime; frida dump confirmed 0x091E91B8..0x091E92B8 is all
-# zero both before and after login. Place the slot table there instead.
+# written at runtime. Frida MemoryAccessMonitor on Kiou-1.0.1 build 11
+# confirmed [0x091E91B8, 0x091E93B8) (exclusive end) reads all zeros
+# both before and after a full login sequence — i.e. 0x200 B of usable
+# headroom starting one word past __common end (0x091E91B8).
 ENTRY_SLOT_BASE_RVA = 0x091E91B8  # first confirmed-zero word past __common
 
-# Static sanity bound — the region must stay zero-filled at runtime.
-# Verified by frida MemoryAccessMonitor on Kiou-1.0.1 build 11:
-# 0x091E91B8..0x091E93B0 read all zeros after a full login sequence.
-_ZERO_REGION_END_RVA = 0x091E93B8  # conservative: 512 B past ENTRY_SLOT_BASE_RVA
+# Static sanity bound — exclusive end of the verified-zero region.
+# Must match the upper bound in the comment above; both describe the
+# same [BASE, END) interval.
+_ZERO_REGION_END_RVA = 0x091E93B8  # exclusive end: BASE + 0x200 B
 assert (
     ENTRY_SLOT_BASE_RVA + ENTRY_SLOT_CAPACITY * 8 <= _ZERO_REGION_END_RVA
 ), (
