@@ -328,11 +328,25 @@ void *HookHttpClientSendAsyncOpt(void *self, void *request, int32_t opt, void *c
 // x-user-id header so account-switch logins are accepted by the server.
 // ---------------------------------------------------------------------------
 void *HookHttpMsgInvokerSendAsyncEntry(void *self, void *request, void *ct) {
+    NSString *pendingDevice = KEBPendingDeviceId();
+    NSString *url = nil;
+    if (request) {
+        void *uriObj = readPtr(request, OFF_REQ_URI);
+        if (uriObj) url = grpcReadIl2CppString(readPtr(uriObj, OFF_URI_STRING));
+    }
+    IPALog([NSString stringWithFormat:
+              @"[GRPC] SendAsync pending=%@ url=%@",
+              pendingDevice.length > 0 ? pendingDevice : @"(none)",
+              url ?: @"(nil)"]);
     swapUserIdHeader(request);
     typedef void *(*SendAsync_t)(void *, void *, void *);
     SendAsync_t bypass =
         (SendAsync_t)g_inject_entry[KIOU_BR_HOOK_HTTPMSGINVOKER_SEND_ASYNC];
-    return bypass ? bypass(self, request, ct) : NULL;
+    if (!bypass) {
+        IPALog(@"[GRPC] bypass NULL — skipping orig call");
+        return NULL;
+    }
+    return bypass(self, request, ct);
 }
 
 void InstallGrpcLoggingHook(uintptr_t unityBase) {
