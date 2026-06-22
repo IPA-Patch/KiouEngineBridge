@@ -454,18 +454,21 @@ void KEBNavigateToTitleScene(void);
 // time, this header pins where the dylib publishes its dispatcher).
 #define KIOU_BR_HOOK_SLOT_RVA 0x8F90CC0
 
-// RVA of the entry-slot table inside UnityFramework's __DATA,__common.
-// Each CAVE_ENTRY site reads its 8-byte slot at
-// `ENTRY_SLOT_BASE_RVA + slot * 8` and BLRs the function pointer there.
-// MUST match ENTRY_SLOT_BASE_RVA in recipes/kiouenginebridge.py.
+// RVA of the entry-slot table inside UnityFramework. Each CAVE_ENTRY
+// site reads its 8-byte slot at `ENTRY_SLOT_BASE_RVA + slot * 8` and
+// BLRs the function pointer there. MUST match ENTRY_SLOT_BASE_RVA in
+// recipes/kiouenginebridge.py.
 //
-// The earlier revision placed this at 0x8F90CD0 (the last 8 bytes of
-// __bss). That fit slot[0] but silently let slot[1+] spill into the
-// padding between __bss and __common; both are zero-fill so it worked by
-// accident. We now reserve 32 slots in __common's tail (0x091E9100..),
-// which has 2.4 MB of headroom and keeps the whole table inside a single
-// zero-fill section.
-#define KIOU_BR_ENTRY_SLOT_BASE_RVA 0x091E90B8
+// Previous placements at 0x8F90CD0 (last 8 B of __bss) and 0x091E90B8
+// (last 32 slots of __common) both collided with KIOU runtime data:
+// the __bss tail had slot[1+] spilling into the __bss/__common padding,
+// and the __common tail contained a KIOU bitmask table written at
+// runtime (0xE000…0001 et al.). The current placement at 0x091E91B8
+// sits one word past __common's end (0x091E91B8 .. 0x091E93B8 exclusive),
+// a region verified all-zero via frida MemoryAccessMonitor before and
+// after a full login. See the same-named constant in the recipe for the
+// reservation bound.
+#define KIOU_BR_ENTRY_SLOT_BASE_RVA 0x091E91B8
 
 // Reserved sibling RVA for a future in-framework inject-entry table.
 // Branch F currently reconstructs bypass entries dylib-locally from cave
@@ -543,6 +546,11 @@ enum kiou_bridge_hook_id {
     KIOU_BR_HOOK_RUN_LOGIN_SEQ_MOVENEXT,
     KIOU_BR_HOOK_GET_SELF_PROFILE_MOVENEXT,
 
+    // HttpMessageInvoker.SendAsync — CAVE_ENTRY for x-user-id header swap
+    // on account switch. Entry cave so the hook can rewrite request headers
+    // before calling bypass to forward to orig.
+    KIOU_BR_HOOK_HTTPMSGINVOKER_SEND_ASYNC,
+
     KIOU_BR_HOOK__COUNT,
 };
 
@@ -558,6 +566,7 @@ enum kiou_bridge_entry_slot_id {
     KIOU_BR_ENTRY_SLOT_MATCH_STREAM_ARGS_CREATE,
     KIOU_BR_ENTRY_SLOT_RUN_LOGIN_SEQ_MOVENEXT,
     KIOU_BR_ENTRY_SLOT_GET_SELF_PROFILE_MOVENEXT,
+    KIOU_BR_ENTRY_SLOT_HTTPMSGINVOKER_SEND_ASYNC,
 
     KIOU_BR_ENTRY_SLOT__COUNT,
 };
@@ -742,6 +751,7 @@ void HookReceiveTimeoutMoveNext(void *self);
 // invoke orig themselves via the cave bypass entry before reading.
 void HookRunLoginSeqMoveNextEntry(void *self);
 void HookGetSelfProfileMoveNextEntry(void *self);
+void *HookHttpMsgInvokerSendAsyncEntry(void *self, void *request, void *ct);
 void HookGStateNotifyStateSyncedForCurrentPosition(void);
 void ResolveGameStateStoreNotifyStateSynced(uintptr_t unityBase);
 void HookGStateRememberStore(void *self);

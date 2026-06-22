@@ -372,8 +372,14 @@ static void observeRunLoginSeqCompletion(void *self) {
         NSString *userId = extractJWTSub(accessToken);
         if (userId.length == 0) userId = g_latestObservedUserId;
         if (userId.length > 0 && deviceId.length > 0) {
-            NSString *openId = g_latestObservedOpenId;
-            KEBSaveAccount(deviceId, userName, openId, userId, deviceId);
+            // Do NOT pass openId here. g_latestObservedOpenId is whichever
+            // openId AccountExists most recently saw, which during an
+            // account-switch login is the *previous* account's openId — using
+            // it would clobber the just-logged-in account's correct openId
+            // with the wrong value. AccountExists observer already persisted
+            // the right openId per-deviceId; KEBSaveAccount's merge keeps an
+            // empty new value from overwriting the stored one.
+            KEBSaveAccount(deviceId, userName, @"", userId, deviceId);
             KEBSetActiveAccountUserId(userId);
         }
 
