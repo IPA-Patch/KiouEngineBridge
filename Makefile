@@ -32,7 +32,8 @@ TARGET                   := iphone:clang:16.5:15.0
 INSTALL_TARGET_PROCESSES := $(TARGET_PROCESS)
 ARCHS                    := arm64
 THEOS_PACKAGE_SCHEME     := rootless
-THEOS_DEVICE_IP          := 192.168.0.49
+-include .env
+THEOS_DEVICE_IP          ?= 192.168.0.1
 
 include $(THEOS)/makefiles/common.mk
 
