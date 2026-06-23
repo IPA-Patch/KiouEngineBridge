@@ -147,7 +147,7 @@ __attribute__((constructor)) static void init(void) {
 #endif
     IPALog([NSString stringWithFormat:
               @"build commit=%s flavor=%s built=%s %s",
-              KIOU_ENGINE_BRIDGE_COMMIT, kBuildFlavor,
+              BUILD_COMMIT, kBuildFlavor,
               __DATE__, __TIME__]);
 
     // CSA migration Task 3: bind the CSA TCP server as early as possible.
