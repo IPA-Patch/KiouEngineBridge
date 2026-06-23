@@ -18,6 +18,18 @@ env:
   LDID_SHA256: "4b8862b2fefa2cd7fa8f88cb0310779619aeaa8c72d6aff22f019b470f2fa99a"
 
 jobs:
+  guard-source-branch:
+    name: Guard master source branch
+    if: github.event_name == 'pull_request' && github.base_ref == 'master'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require develop as source
+        run: |
+          if [ "${{ github.head_ref }}" != "develop" ]; then
+            echo "::error::PRs to master must come from develop (got: ${{ github.head_ref }})"
+            exit 1
+          fi
+
   commitlint:
     name: CommitLint
     if: github.event.action != 'closed' || github.event.pull_request.merged != true
