@@ -5,7 +5,7 @@
 #   make            — JB rootless .deb (MSHookFunction via libsubstrate)
 #   make package    — same, packaged
 #   make jailed     — Dobby-static .dylib for Sideloadly injection (iOS 15+)
-#   make chinlan   — Dobby-static .dylib for the statically-patched IPA path
+#   make chinlan    — Dobby-static .dylib for the statically-patched IPA path
 #                     (iOS 18 sideload; the only mode that survives CSM).
 #   make ipa        — patched IPA assembled from $(DECRYPTED_IPA)
 # ===========================================================================
@@ -19,8 +19,11 @@ TWEAK_SOURCES_DIR        := Sources/$(TWEAK_NAME)
 TARGET_PROCESS           := KIOU
 TARGET_BUNDLE_ID         := com.neconome.shogi
 
-DECRYPTED_IPA            ?= $(CURDIR)/assets/Kiou-1.0.1.ipa
-IPA_RECIPE               := recipes.kiouenginebridge
+# Target app version — selects the input IPA and the recipe version table.
+# Override on the command line: make ipa TARGET_VERSION=1.0.2
+TARGET_VERSION           ?= 1.0.1
+DECRYPTED_IPA            ?= $(CURDIR)/assets/$(TARGET_VERSION)/Kiou-$(TARGET_VERSION).ipa
+IPA_RECIPE               := recipes
 IPA_FRAMEWORK            := UnityFramework
 
 BUILD_COMMIT_DEFINE      := KIOU_ENGINE_BRIDGE_COMMIT
@@ -72,7 +75,7 @@ $(TWEAK_NAME)_FRAMEWORKS := Foundation UIKit
 #   JAILED=1                : Dobby statically linked from vendor/dobby. No
 #                             libsubstrate dependency — safe for Sideloadly /
 #                             TrollStore injection on iOS 15–26.
-#   CHINLAN=1              : static binary patch + __DATA,__bss SLOT
+#   CHINLAN=1               : static binary patch + __DATA,__bss SLOT
 #                             dispatcher. No runtime __TEXT writes, survives
 #                             iOS 18 CSM. Implies JAILED=1.
 #
@@ -122,13 +125,13 @@ chinlan::
 IPA_DYLIB                := $(CURDIR)/packages/chinlan/$(TWEAK_NAME).dylib
 
 ipa:: chinlan
-	@echo "==> assembling patched IPA from $(DECRYPTED_IPA)"
+	@echo "==> assembling patched IPA from $(DECRYPTED_IPA) (v$(TARGET_VERSION))"
 	@if [ ! -f "$(DECRYPTED_IPA)" ]; then \
 	  echo "error: decrypted IPA missing at $(DECRYPTED_IPA)"; \
-	  echo "       override with: make ipa DECRYPTED_IPA=/path/to/clean.ipa"; \
+	  echo "       override with: make ipa TARGET_VERSION=<ver>"; \
 	  exit 1; \
 	fi
-	@./shared/tools/build_patched_ipa.sh \
+	@TARGET_VERSION="$(TARGET_VERSION)" ./shared/tools/build_patched_ipa.sh \
 	  --recipe    "$(IPA_RECIPE)" \
 	  --framework "$(IPA_FRAMEWORK)" \
 	  --dylib     "$(IPA_DYLIB)" \

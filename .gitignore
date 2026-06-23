@@ -490,11 +490,19 @@ logs/*
 # its index file land here too. None of these are source — they're
 # heavy binary / machine-generated artifacts each developer must drop
 # in by hand.
+# Patterns cover both the legacy flat layout (assets/dump.cs) and the
+# versioned layout introduced for multi-version support (assets/1.0.2/dump.cs).
 assets/dump.cs
 assets/dump.cs.index.json
+assets/*/dump.cs
+assets/*/dump.cs.index.json
 # *.ipa already ignored globally above.
 assets/YaneuraOu
 assets/nn.bin
+
+# Il2CppDumper binary — downloaded on first use by shared/tools/dump.py
+# into .cache/Il2CppDumper/ and reused across runs.
+.cache/
 
 # Engine bridge / test scripts — not distributed with the repo.
 scripts/*.py
