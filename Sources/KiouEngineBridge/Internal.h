@@ -38,12 +38,12 @@
 //   InstallInjectHook                (Inject_Move.m)
 // ===========================================================================
 
-#ifndef KIOU_ENGINE_BRIDGE_COMMIT
-#define KIOU_ENGINE_BRIDGE_COMMIT "unknown"
+#ifndef BUILD_COMMIT
+#define BUILD_COMMIT "unknown"
 #endif
 
-#ifndef KIOU_ENGINE_BRIDGE_VERSION
-#define KIOU_ENGINE_BRIDGE_VERSION "0.0.0"
+#ifndef BUILD_VERSION
+#define BUILD_VERSION "0.0.0"
 #endif
 
 // ---------------------------------------------------------------------------

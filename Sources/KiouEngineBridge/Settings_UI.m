@@ -391,7 +391,7 @@ static UIViewController *kebTopmostViewController(void) {
     }
     if (section == KEB_SECTION_ABOUT) {
         return [NSString stringWithFormat:@"%s (%s)",
-                KIOU_ENGINE_BRIDGE_VERSION, KIOU_ENGINE_BRIDGE_COMMIT];
+                BUILD_VERSION, BUILD_COMMIT];
     }
     return nil;
 }
