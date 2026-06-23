@@ -26,7 +26,7 @@ DECRYPTED_IPA            ?= $(CURDIR)/assets/$(TARGET_VERSION)/Kiou-$(TARGET_VER
 IPA_RECIPE               := recipes
 IPA_FRAMEWORK            := UnityFramework
 
-BUILD_COMMIT_DEFINE      := KIOU_ENGINE_BRIDGE_COMMIT
+BUILD_COMMIT_DEFINE      := BUILD_COMMIT
 
 # ---------------------------------------------------------------------------
 # Theos boilerplate.
@@ -57,7 +57,7 @@ endif
 
 $(TWEAK_NAME)_CFLAGS     := -fobjc-arc -Wno-unused-function \
                             -D$(BUILD_COMMIT_DEFINE)=\"$(BUILD_COMMIT)\" \
-                            -DKIOU_ENGINE_BRIDGE_VERSION=\"$(PACKAGE_VERSION)\" \
+                            -DBUILD_VERSION=\"$(PACKAGE_VERSION)\" \
                             -ISources/Chinlan
 ifdef FINAL_RELEASE
 $(TWEAK_NAME)_CFLAGS     += -DFINAL_RELEASE=1
