@@ -49,7 +49,7 @@ _DEFAULT_VERSION = "1.0.1"
 # Version selection
 # ---------------------------------------------------------------------------
 
-_target_version = os.environ.get("KIOU_TARGET_VERSION", _DEFAULT_VERSION)
+_target_version = os.environ.get("TARGET_VERSION", _DEFAULT_VERSION)
 _module_name = _VERSIONS.get(_target_version)
 
 if _module_name is None:
