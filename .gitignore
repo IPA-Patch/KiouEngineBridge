@@ -500,10 +500,9 @@ assets/*/dump.cs.index.json
 assets/YaneuraOu
 assets/nn.bin
 
-# Il2CppDumper binary — downloaded at runtime by shared/tools/dump.py,
-# not committed. The DummyDll output and analysis JSONs are large and
-# machine-generated.
-vendor/Il2CppDumper/
+# Il2CppDumper binary — downloaded on first use by shared/tools/dump.py
+# into .cache/Il2CppDumper/ and reused across runs.
+.cache/
 
 # Engine bridge / test scripts — not distributed with the repo.
 scripts/*.py
