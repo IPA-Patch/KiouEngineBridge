@@ -12,8 +12,8 @@
 </p>
 
 <p align="center">
-  <img alt="version" src="https://img.shields.io/badge/version-v0.1.2-2f80ed?style=flat-square" />
-  <img alt="targets KIOU" src="https://img.shields.io/badge/targets-KIOU%201.0.1%20(11)-ff66a3?style=flat-square" />
+  <img alt="version" src="https://img.shields.io/badge/version-v0.1.3-2f80ed?style=flat-square" />
+  <img alt="targets KIOU" src="https://img.shields.io/badge/targets-KIOU%201.0.1%E2%80%931.0.2-ff66a3?style=flat-square" />
   <img alt="platform" src="https://img.shields.io/badge/platform-iOS%2015.0%E2%80%9326-blue?style=flat-square" />
   <img alt="arch" src="https://img.shields.io/badge/arch-arm64%20rootless-555?style=flat-square" />
   <img alt="engine" src="https://img.shields.io/badge/engine-Unity%206%20%2B%20il2cpp-black?style=flat-square" />
@@ -189,15 +189,23 @@ make chinlan FINALPACKAGE=1
 # -> packages/chinlan/KiouEngineBridge.dylib
 ```
 
-Then build the patched IPA:
+Then build the patched IPA. `TARGET_VERSION` selects which app version's
+RVAs the recipe applies and which `assets/<ver>/` directory the input
+IPA is read from:
 
 ```sh
-shared/tools/build_patched_ipa.sh \
-  --recipe kiouenginebridge \
+make ipa TARGET_VERSION=1.0.2
+# -> packages/ipa/KiouEngineBridge-patched.ipa
+```
+
+Or call the script directly if you want full control over the inputs:
+
+```sh
+TARGET_VERSION=1.0.2 shared/tools/build_patched_ipa.sh \
+  --recipe recipes \
   --framework UnityFramework \
   --dylib packages/chinlan/KiouEngineBridge.dylib \
-  --input Kiou-1.0.1.ipa
-# -> Kiou-1.0.1-patched.ipa
+  --input assets/1.0.2/Kiou-1.0.2.ipa
 ```
 
 Unlike runtime hook engines (Substrate, Dobby, frida-gum), the static
