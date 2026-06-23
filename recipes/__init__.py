@@ -1,6 +1,6 @@
 """KiouEngineBridge recipe — entry point for ``tools.patch_macho``.
 
-Selects the active version via the ``KIOU_TARGET_VERSION`` environment
+Selects the active version via the ``TARGET_VERSION`` environment
 variable (default: ``1.0.1``) and re-exports the patch surface that
 ``tools.patch_macho`` and ``tools.verify_sites`` expect:
 

@@ -278,10 +278,12 @@ static NSDictionary *meta_timeControlDict(void *tcc) {
 }
 
 // ---------------------------------------------------------------------------
-// Emit. NSJSONSerialization produces canonical JSON; we prepend "meta " and
-// "\n" before handing it off to the WS sink. Failures (no client, oversize
-// dict, ...) are logged but never thrown back to the caller; meta is
-// best-effort by design.
+// Emit. NSJSONSerialization produces canonical JSON; the body is logged
+// via the standard sandbox / TCP log sink with a "[META>]" prefix. The
+// old transport that pushed "meta <json>\n" lines to KEBCsaServerPush
+// has been removed — meta is now diagnostic-only and never reaches a
+// CSA client. Failures (oversize dict, encoding errors, ...) are
+// logged but never thrown back; meta is best-effort by design.
 // ---------------------------------------------------------------------------
 static void meta_emit_dict(NSDictionary *payload) {
     NSError *err = nil;
