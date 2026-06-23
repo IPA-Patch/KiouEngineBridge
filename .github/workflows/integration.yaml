@@ -41,7 +41,9 @@ jobs:
         run: bunx commitlint --last --verbose
       - name: Validate PR commits with commitlint
         if: github.event_name == 'pull_request'
-        run: bunx commitlint --from ${{ github.event.pull_request.head.sha }}~${{ github.event.pull_request.commits }} --to ${{ github.event.pull_request.head.sha }} --verbose
+        run: |
+          BASE=$(git merge-base HEAD origin/${{ github.base_ref }})
+          bunx commitlint --from "$BASE" --to HEAD --verbose
 
   build:
     name: build (${{ matrix.flavor }})
