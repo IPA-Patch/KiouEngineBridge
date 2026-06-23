@@ -19,7 +19,8 @@ TWEAK_SOURCES_DIR        := Sources/$(TWEAK_NAME)
 TARGET_PROCESS           := KIOU
 TARGET_BUNDLE_ID         := com.neconome.shogi
 
-DECRYPTED_IPA            ?= $(CURDIR)/assets/Kiou-1.0.1.ipa
+KIOU_VERSION             ?= 1.0.1
+DECRYPTED_IPA            ?= $(CURDIR)/assets/$(KIOU_VERSION)/Kiou-$(KIOU_VERSION).ipa
 IPA_RECIPE               := recipes.kiouenginebridge
 IPA_FRAMEWORK            := UnityFramework
 
@@ -122,13 +123,13 @@ chinlan::
 IPA_DYLIB                := $(CURDIR)/packages/chinlan/$(TWEAK_NAME).dylib
 
 ipa:: chinlan
-	@echo "==> assembling patched IPA from $(DECRYPTED_IPA)"
+	@echo "==> assembling patched IPA from $(DECRYPTED_IPA) (KIOU $(KIOU_VERSION))"
 	@if [ ! -f "$(DECRYPTED_IPA)" ]; then \
 	  echo "error: decrypted IPA missing at $(DECRYPTED_IPA)"; \
-	  echo "       override with: make ipa DECRYPTED_IPA=/path/to/clean.ipa"; \
+	  echo "       override with: make ipa KIOU_VERSION=<ver>"; \
 	  exit 1; \
 	fi
-	@./shared/tools/build_patched_ipa.sh \
+	@KIOU_TARGET_VERSION="$(KIOU_VERSION)" ./shared/tools/build_patched_ipa.sh \
 	  --recipe    "$(IPA_RECIPE)" \
 	  --framework "$(IPA_FRAMEWORK)" \
 	  --dylib     "$(IPA_DYLIB)" \
