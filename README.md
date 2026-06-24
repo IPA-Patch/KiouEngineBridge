@@ -1,7 +1,7 @@
 <h1 align="center">Kiou Engine Bridge</h1>
 
 <p align="center">
-  <img src="icon.webp" alt="Kiou Engine Bridge icon" width="180" />
+  <img src="icon.webp" alt="Kiou Engine Bridge icon" width="180" height="180" />
 </p>
 
 <p align="center">
