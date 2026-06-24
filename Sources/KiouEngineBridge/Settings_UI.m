@@ -18,15 +18,30 @@
 //   3  KEB_SECTION_ABOUT   — version / build info
 // ===========================================================================
 
-#define KEB_SECTION_MATCH   0
-#define KEB_SECTION_DELAY   1
-#define KEB_SECTION_SERVER  2
-#define KEB_SECTION_ABOUT   3
-#define KEB_SECTION_COUNT   4
+#define KEB_SECTION_ACCOUNT  0
+#define KEB_SECTION_MATCH    1
+#define KEB_SECTION_ACCEPT   2
+#define KEB_SECTION_MATCHING 3
+#define KEB_SECTION_DELAY    4
+#define KEB_SECTION_SERVER   5
+#define KEB_SECTION_ABOUT    6
+#define KEB_SECTION_COUNT    7
 
-#define KEB_ROW_AUTO_REMATCH      0
+#define KEB_ROW_ACCOUNT_ACTIVE         0
+#define KEB_ROW_ACCOUNT_FORCE_REGISTER 1
+#define KEB_ACCOUNT_ROW_COUNT          2
+
+#define KEB_ROW_ACCEPT_BLACK  0
+#define KEB_ROW_ACCEPT_WHITE  1
+#define KEB_ROW_ACCEPT_BOTH   2
+#define KEB_ACCEPT_ROW_COUNT  3
+
+#define KEB_ROW_AUTO_REMATCH       0
 #define KEB_ROW_RESIGN_SKIP_DIALOG 1
 #define KEB_MATCH_ROW_COUNT        2
+
+#define KEB_ROW_FIXED_RATE_RANGE   0
+#define KEB_MATCHING_ROW_COUNT     1
 
 #define KEB_ROW_REMATCH_STEP1 0
 #define KEB_ROW_REMATCH_STEP2 1
@@ -65,6 +80,211 @@ static UIViewController *kebTopmostViewController(void) {
 }
 
 // ---------------------------------------------------------------------------
+// KEBAccountsViewController — drilled-down list with select / edit / delete.
+//
+// Shows every saved account. Tapping a row switches the active account
+// (calls KEBSwitchAccount which writes to TDAnalytics.SetDistinctId, and
+// updates KEBSetActiveAccountUuid). The Edit button enables row reorder
+// and swipe-to-delete. Deletions cascade to the persisted list; the
+// currently-active row is rendered with a checkmark.
+// ---------------------------------------------------------------------------
+@interface KEBAccountsViewController : UITableViewController
+@property (nonatomic, strong) NSMutableArray<NSDictionary *> *accounts;
+@end
+
+@implementation KEBAccountsViewController
+
+- (instancetype)init {
+    self = [super initWithStyle:UITableViewStyleInsetGrouped];
+    self.title = @"Accounts";
+    return self;
+}
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    UIBarButtonItem *share =
+        [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemAction
+                                                      target:self
+                                                      action:@selector(exportAccounts:)];
+    self.navigationItem.rightBarButtonItems = @[self.editButtonItem, share];
+    self.accounts = [NSMutableArray arrayWithArray:KEBListAccounts()];
+    [[NSNotificationCenter defaultCenter]
+        addObserver:self
+           selector:@selector(onAccountStateChanged:)
+               name:KEBAccountStateChangedNotification
+             object:nil];
+}
+
+- (void)exportAccounts:(UIBarButtonItem *)sender {
+    NSArray *accs = KEBListAccounts();
+    NSError *err = nil;
+    NSData *data = [NSJSONSerialization
+                       dataWithJSONObject:accs
+                                  options:NSJSONWritingPrettyPrinted | NSJSONWritingSortedKeys
+                                    error:&err];
+    if (data.length == 0) {
+        UIAlertController *err_alert = [UIAlertController
+            alertControllerWithTitle:@"Export failed"
+                              message:err.localizedDescription ?: @"(unknown)"
+                       preferredStyle:UIAlertControllerStyleAlert];
+        [err_alert addAction:[UIAlertAction actionWithTitle:@"OK"
+                                                      style:UIAlertActionStyleDefault
+                                                    handler:nil]];
+        [self presentViewController:err_alert animated:YES completion:nil];
+        return;
+    }
+    NSURL *tmpURL = [NSURL fileURLWithPath:
+        [NSTemporaryDirectory() stringByAppendingPathComponent:@"accounts.json"]];
+    [data writeToURL:tmpURL atomically:YES];
+    UIActivityViewController *vc =
+        [[UIActivityViewController alloc] initWithActivityItems:@[tmpURL]
+                                          applicationActivities:nil];
+    vc.popoverPresentationController.barButtonItem = sender;
+    [self presentViewController:vc animated:YES completion:nil];
+}
+
+- (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+}
+
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    self.accounts = [NSMutableArray arrayWithArray:KEBListAccounts()];
+    [self logAccounts:@"viewWillAppear"];
+    [self.tableView reloadData];
+}
+
+- (void)logAccounts:(NSString *)tag {
+    IPALog([NSString stringWithFormat:
+              @"[SETTINGS] accounts (%@) count=%lu active_user_id=%@",
+              tag, (unsigned long)self.accounts.count,
+              KEBActiveAccountUserId() ?: @"(none)"]);
+    for (NSUInteger i = 0; i < self.accounts.count; i++) {
+        NSDictionary *acc = self.accounts[i];
+        IPALog([NSString stringWithFormat:
+                  @"  [%lu] userId=%@ userName=%@ uuid=%@ openId=%@ distinctId=%@",
+                  (unsigned long)i,
+                  acc[@"userId"]     ?: @"(empty)",
+                  acc[@"userName"]   ?: @"(empty)",
+                  acc[@"uuid"]       ?: @"(empty)",
+                  acc[@"openId"]     ?: @"(empty)",
+                  acc[@"distinctId"] ?: @"(empty)"]);
+    }
+}
+
+- (void)onAccountStateChanged:(NSNotification *)note {
+    // Posted from whichever thread changed persistence (hooks often run
+    // off the main thread). Bounce to the main queue before touching UI.
+    dispatch_async(dispatch_get_main_queue(), ^{
+        self.accounts = [NSMutableArray arrayWithArray:KEBListAccounts()];
+        [self.tableView reloadData];
+    });
+}
+
+- (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)section {
+    return self.accounts.count;
+}
+
+- (NSString *)tableView:(UITableView *)tv titleForFooterInSection:(NSInteger)section {
+    if (self.accounts.count == 0) {
+        return @"No accounts saved yet. Log in once and KiouEngineBridge will remember the identity.";
+    }
+    return @"Tap to switch. App relaunch required.";
+}
+
+- (UITableViewCell *)tableView:(UITableView *)tv
+         cellForRowAtIndexPath:(NSIndexPath *)ip {
+    static NSString *kId = @"account_row";
+    UITableViewCell *cell = [tv dequeueReusableCellWithIdentifier:kId];
+    if (!cell) {
+        cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle
+                                      reuseIdentifier:kId];
+        cell.detailTextLabel.textColor = UIColor.secondaryLabelColor;
+        cell.showsReorderControl = YES;
+    }
+    NSDictionary *acc = self.accounts[ip.row];
+    NSString *userName = acc[@"userName"];
+    NSString *openId = acc[@"openId"];
+    NSString *userId = acc[@"userId"];
+    cell.textLabel.text = userName.length > 0 ? userName : @"(no name)";
+    cell.detailTextLabel.text = openId.length > 0 ? openId : @"(no open id)";
+    NSString *activeUserId = KEBActiveAccountUserId();
+    cell.accessoryType = ([userId isKindOfClass:[NSString class]] &&
+                          [userId isEqualToString:activeUserId])
+        ? UITableViewCellAccessoryCheckmark
+        : UITableViewCellAccessoryNone;
+    return cell;
+}
+
+- (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
+    [tv deselectRowAtIndexPath:ip animated:YES];
+    if (self.tableView.isEditing) return;  // ignore taps while editing
+    if (ip.row >= (NSInteger)self.accounts.count) return;
+    NSDictionary *acc = self.accounts[ip.row];
+    NSString *userId   = acc[@"userId"];
+    NSString *uuid     = acc[@"uuid"];
+    NSString *userName = acc[@"userName"];
+    if (![userId isKindOfClass:[NSString class]] || userId.length == 0) return;
+    UIAlertController *alert = [UIAlertController
+        alertControllerWithTitle:[NSString stringWithFormat:@"%@に切り替え",
+                                   userName.length > 0 ? userName : @"このアカウント"]
+                          message:nil
+                   preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"キャンセル"
+                                              style:UIAlertActionStyleCancel
+                                            handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"切り替え"
+                                              style:UIAlertActionStyleDefault
+                                            handler:^(UIAlertAction *_) {
+        if (uuid.length > 0) KEBSwitchAccount(uuid);
+        KEBSetActiveAccountUserId(userId);
+        // Close the settings modal then let KIOU navigate itself back to the
+        // title scene — that re-runs AccountExists → LoginAsync with the
+        // pending_device_id substitution in effect, no app relaunch needed.
+        UIViewController *modalRoot = self.navigationController ?: self;
+        UIViewController *presenter = modalRoot.presentingViewController;
+        [presenter dismissViewControllerAnimated:YES completion:^{
+            KEBNavigateToTitleScene();
+        }];
+    }]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+// Editing — delete + reorder.
+- (BOOL)tableView:(UITableView *)tv canEditRowAtIndexPath:(NSIndexPath *)ip {
+    return YES;
+}
+
+- (BOOL)tableView:(UITableView *)tv canMoveRowAtIndexPath:(NSIndexPath *)ip {
+    return YES;
+}
+
+- (void)tableView:(UITableView *)tv
+    commitEditingStyle:(UITableViewCellEditingStyle)style
+     forRowAtIndexPath:(NSIndexPath *)ip {
+    if (style != UITableViewCellEditingStyleDelete) return;
+    if (ip.row >= (NSInteger)self.accounts.count) return;
+    NSString *userId = self.accounts[ip.row][@"userId"];
+    [self.accounts removeObjectAtIndex:ip.row];
+    if ([userId isKindOfClass:[NSString class]]) KEBDeleteAccount(userId);
+    [tv deleteRowsAtIndexPaths:@[ip] withRowAnimation:UITableViewRowAnimationAutomatic];
+}
+
+- (void)tableView:(UITableView *)tv
+    moveRowAtIndexPath:(NSIndexPath *)src
+           toIndexPath:(NSIndexPath *)dst {
+    if (src.row >= (NSInteger)self.accounts.count) return;
+    NSDictionary *moved = self.accounts[src.row];
+    [self.accounts removeObjectAtIndex:src.row];
+    [self.accounts insertObject:moved atIndex:dst.row];
+    // Persist the new order — overwrite the raw array under the same key.
+    [[NSUserDefaults standardUserDefaults] setObject:self.accounts
+                                              forKey:@"kiou_bridge.accounts"];
+}
+
+@end
+
+// ---------------------------------------------------------------------------
 // KEBSettingsViewController
 // ---------------------------------------------------------------------------
 
@@ -72,6 +292,7 @@ static UIViewController *kebTopmostViewController(void) {
 @property (nonatomic, strong) UILabel *step1ValueLabel;
 @property (nonatomic, strong) UILabel *step2ValueLabel;
 @property (nonatomic, strong) UILabel *portValueLabel;
+@property (nonatomic, strong) UILabel *rateRangeValueLabel;
 @end
 
 @implementation KEBSettingsViewController
@@ -88,11 +309,31 @@ static UIViewController *kebTopmostViewController(void) {
         [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone
                                                       target:self
                                                       action:@selector(onDone:)];
+    [[NSNotificationCenter defaultCenter]
+        addObserver:self
+           selector:@selector(onAccountStateChanged:)
+               name:KEBAccountStateChangedNotification
+             object:nil];
+}
+
+- (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
 
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
     [self.tableView reloadData];
+}
+
+- (void)onAccountStateChanged:(NSNotification *)note {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        // Only refresh the Account section — leaving other sections alone
+        // avoids resetting scroll state or any in-flight cell editing.
+        if (self.isViewLoaded && self.view.window) {
+            [self.tableView reloadSections:[NSIndexSet indexSetWithIndex:KEB_SECTION_ACCOUNT]
+                          withRowAnimation:UITableViewRowAnimationNone];
+        }
+    });
 }
 
 - (void)onDone:(id)sender {
@@ -109,31 +350,48 @@ static UIViewController *kebTopmostViewController(void) {
 
 - (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)section {
     switch (section) {
-        case KEB_SECTION_MATCH:  return KEB_MATCH_ROW_COUNT;
-        case KEB_SECTION_DELAY:  return KEB_DELAY_ROW_COUNT;
-        case KEB_SECTION_SERVER: return KEB_SERVER_ROW_COUNT;
-        case KEB_SECTION_ABOUT:  return KEB_ABOUT_ROW_COUNT;
+        case KEB_SECTION_ACCOUNT:  return KEB_ACCOUNT_ROW_COUNT;
+        case KEB_SECTION_MATCH:    return KEB_MATCH_ROW_COUNT;
+        case KEB_SECTION_ACCEPT:   return KEB_ACCEPT_ROW_COUNT;
+        case KEB_SECTION_MATCHING: return KEB_MATCHING_ROW_COUNT;
+        case KEB_SECTION_DELAY:    return KEB_DELAY_ROW_COUNT;
+        case KEB_SECTION_SERVER:   return KEB_SERVER_ROW_COUNT;
+        case KEB_SECTION_ABOUT:    return KEB_ABOUT_ROW_COUNT;
         default: return 0;
     }
 }
 
 - (NSString *)tableView:(UITableView *)tv titleForHeaderInSection:(NSInteger)section {
     switch (section) {
-        case KEB_SECTION_MATCH:  return @"Match";
-        case KEB_SECTION_DELAY:  return @"Delay";
-        case KEB_SECTION_SERVER: return @"CSA Server";
-        case KEB_SECTION_ABOUT:  return @"About";
+        case KEB_SECTION_ACCOUNT:  return @"Account";
+        case KEB_SECTION_MATCH:    return @"Match";
+        case KEB_SECTION_ACCEPT:   return @"Accept Seat";
+        case KEB_SECTION_MATCHING: return @"Matching Filter";
+        case KEB_SECTION_DELAY:    return @"Delay";
+        case KEB_SECTION_SERVER:   return @"CSA Server";
+        case KEB_SECTION_ABOUT:    return @"About";
         default: return nil;
     }
 }
 
 - (NSString *)tableView:(UITableView *)tv titleForFooterInSection:(NSInteger)section {
+    if (section == KEB_SECTION_ACCOUNT) {
+        return @"New Register: routes the next launch into the name-entry "
+               @"flow without going through KIOU's Reset button (which may "
+               @"trigger server-side rebinding).";
+    }
+    if (section == KEB_SECTION_ACCEPT) {
+        return @"Reject MatchFound replies whose seat doesn't match. Rejected matches requeue automatically.";
+    }
+    if (section == KEB_SECTION_MATCHING) {
+        return @"Fixed Rate Range: requeues when the server's rate range exceeds this value. 0 = disabled.";
+    }
     if (section == KEB_SECTION_SERVER) {
         return @"Port change takes effect after restarting the app.";
     }
     if (section == KEB_SECTION_ABOUT) {
         return [NSString stringWithFormat:@"%s (%s)",
-                KIOU_ENGINE_BRIDGE_VERSION, KIOU_ENGINE_BRIDGE_COMMIT];
+                BUILD_VERSION, BUILD_COMMIT];
     }
     return nil;
 }
@@ -141,6 +399,40 @@ static UIViewController *kebTopmostViewController(void) {
 - (UITableViewCell *)tableView:(UITableView *)tv
          cellForRowAtIndexPath:(NSIndexPath *)ip {
     switch (ip.section) {
+
+        // -- Account -------------------------------------------------------
+        case KEB_SECTION_ACCOUNT: {
+            if (ip.row == KEB_ROW_ACCOUNT_ACTIVE) {
+                static NSString *kId = @"account_active";
+                UITableViewCell *cell = [tv dequeueReusableCellWithIdentifier:kId];
+                if (!cell) {
+                    cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1
+                                                  reuseIdentifier:kId];
+                    cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+                    cell.detailTextLabel.textColor = UIColor.secondaryLabelColor;
+                }
+                cell.textLabel.text = @"Active";
+                NSString *activeUserId = KEBActiveAccountUserId();
+                NSString *activeName = nil;
+                for (NSDictionary *acc in KEBListAccounts()) {
+                    NSString *u = acc[@"userId"];
+                    if ([u isKindOfClass:[NSString class]] && [u isEqualToString:activeUserId]) {
+                        NSString *n = acc[@"userName"];
+                        if ([n isKindOfClass:[NSString class]]) activeName = n;
+                        break;
+                    }
+                }
+                cell.detailTextLabel.text = activeName.length > 0 ? activeName : @"(not logged in)";
+                return cell;
+            }
+            if (ip.row == KEB_ROW_ACCOUNT_FORCE_REGISTER) {
+                return [self toggleCellWithTitle:@"New Register"
+                                            key:@"force_register"
+                                          value:KEBForceRegisterOnNextLaunch()
+                                         action:@selector(forceRegisterChanged:)];
+            }
+            break;
+        }
 
         // -- Match ---------------------------------------------------------
         case KEB_SECTION_MATCH: {
@@ -155,6 +447,43 @@ static UIViewController *kebTopmostViewController(void) {
                                             key:@"resign_skip_dialog"
                                           value:KEBResignSkipDialog()
                                          action:@selector(resignSkipDialogChanged:)];
+            }
+            break;
+        }
+
+        // -- Accept Seat ---------------------------------------------------
+        case KEB_SECTION_ACCEPT: {
+            static NSString *kId = @"accept_row";
+            UITableViewCell *cell = [tv dequeueReusableCellWithIdentifier:kId];
+            if (!cell) {
+                cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault
+                                              reuseIdentifier:kId];
+            }
+            KEBAcceptedSeat current = KEBAcceptedSeatGet();
+            int32_t rowSeat = (ip.row == KEB_ROW_ACCEPT_BLACK) ? KEBAcceptedSeatBlack
+                            : (ip.row == KEB_ROW_ACCEPT_WHITE) ? KEBAcceptedSeatWhite
+                            : KEBAcceptedSeatBoth;
+            cell.textLabel.text = (rowSeat == KEBAcceptedSeatBlack) ? @"Black"
+                                : (rowSeat == KEBAcceptedSeatWhite) ? @"White"
+                                : @"Both";
+            cell.accessoryType = (current == rowSeat)
+                ? UITableViewCellAccessoryCheckmark
+                : UITableViewCellAccessoryNone;
+            return cell;
+        }
+
+        // -- Matching Filter -----------------------------------------------
+        case KEB_SECTION_MATCHING: {
+            if (ip.row == KEB_ROW_FIXED_RATE_RANGE) {
+                UITableViewCell *cell =
+                    [self stepperCellWithReuseId:@"rate_range"
+                                          title:@"Fixed Rate Range"
+                                          value:(double)KEBFixedRateRange()
+                                           unit:nil
+                                            min:0.0 max:2000.0 step:50.0
+                                         action:@selector(fixedRateRangeChanged:)];
+                self.rateRangeValueLabel = cell.detailTextLabel;
+                return cell;
             }
             break;
         }
@@ -234,7 +563,12 @@ static UIViewController *kebTopmostViewController(void) {
 
 - (NSIndexPath *)tableView:(UITableView *)tv
   willSelectRowAtIndexPath:(NSIndexPath *)ip {
-    if (ip.section == KEB_SECTION_ABOUT) return ip;
+    if (ip.section == KEB_SECTION_ABOUT)  return ip;
+    if (ip.section == KEB_SECTION_ACCEPT) return ip;
+    // Only the Active row in Account drills down — the Force Register row
+    // is a toggle and shouldn't push a view controller.
+    if (ip.section == KEB_SECTION_ACCOUNT &&
+        ip.row == KEB_ROW_ACCOUNT_ACTIVE) return ip;
     return nil;
 }
 
@@ -244,6 +578,23 @@ static UIViewController *kebTopmostViewController(void) {
         NSString *str = (ip.row == KEB_ROW_ABOUT_REPO) ? kAboutRepoURL : kAboutAuthorURL;
         NSURL *url = [NSURL URLWithString:str];
         if (url) [UIApplication.sharedApplication openURL:url options:@{} completionHandler:nil];
+        return;
+    }
+    if (ip.section == KEB_SECTION_ACCOUNT &&
+        ip.row == KEB_ROW_ACCOUNT_ACTIVE) {
+        KEBAccountsViewController *vc = [[KEBAccountsViewController alloc] init];
+        [self.navigationController pushViewController:vc animated:YES];
+        return;
+    }
+    if (ip.section == KEB_SECTION_ACCEPT) {
+        KEBAcceptedSeat picked = (ip.row == KEB_ROW_ACCEPT_BLACK) ? KEBAcceptedSeatBlack
+                               : (ip.row == KEB_ROW_ACCEPT_WHITE) ? KEBAcceptedSeatWhite
+                               : KEBAcceptedSeatBoth;
+        KEBAcceptedSeatSet(picked);
+        // Reload only the Accept section so the checkmark moves.
+        [tv reloadSections:[NSIndexSet indexSetWithIndex:KEB_SECTION_ACCEPT]
+          withRowAnimation:UITableViewRowAnimationNone];
+        return;
     }
 }
 
@@ -319,6 +670,22 @@ static UIViewController *kebTopmostViewController(void) {
     KEBSetResignSkipDialog(sw.on);
 }
 
+- (void)forceRegisterChanged:(UISwitch *)sw {
+    KEBSetForceRegisterOnNextLaunch(sw.on);
+    if (sw.on) {
+        // Arm a fresh distinctId so the upcoming Register hits the server
+        // with a previously-unused UUID instead of re-binding the current
+        // TDAnalytics distinctId. pending_device_id matches so the auto-Login
+        // right after Register lands on the new account.
+        NSString *fresh = [[NSUUID UUID] UUIDString].lowercaseString;
+        KEBSetPendingDistinctId(fresh);
+        KEBSetPendingDeviceId(fresh);
+    } else {
+        KEBSetPendingDistinctId(nil);
+        KEBSetPendingDeviceId(nil);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Stepper actions
 // ---------------------------------------------------------------------------
@@ -331,6 +698,11 @@ static UIViewController *kebTopmostViewController(void) {
 - (void)step2Changed:(UIStepper *)stepper {
     KEBSetRematchStep2Sec((float)stepper.value);
     self.step2ValueLabel.text = [self formatValue:stepper.value step:0.5 unit:@"s"];
+}
+
+- (void)fixedRateRangeChanged:(UIStepper *)stepper {
+    KEBSetFixedRateRange((int32_t)stepper.value);
+    self.rateRangeValueLabel.text = [self formatValue:stepper.value step:50.0 unit:nil];
 }
 
 - (void)csaPortChanged:(UIStepper *)stepper {

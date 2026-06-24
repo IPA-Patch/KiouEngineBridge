@@ -38,12 +38,12 @@
 //   InstallInjectHook                (Inject_Move.m)
 // ===========================================================================
 
-#ifndef KIOU_ENGINE_BRIDGE_COMMIT
-#define KIOU_ENGINE_BRIDGE_COMMIT "unknown"
+#ifndef BUILD_COMMIT
+#define BUILD_COMMIT "unknown"
 #endif
 
-#ifndef KIOU_ENGINE_BRIDGE_VERSION
-#define KIOU_ENGINE_BRIDGE_VERSION "0.0.0"
+#ifndef BUILD_VERSION
+#define BUILD_VERSION "0.0.0"
 #endif
 
 // ---------------------------------------------------------------------------
@@ -90,7 +90,9 @@ void InstallLowLevelObserveHook(uintptr_t unityBase);
 void InstallMatchModeObserveHook(uintptr_t unityBase);
 void InstallInjectHook(uintptr_t unityBase);
 void InstallAfkSuppressHook(uintptr_t unityBase);
+void InstallBackToTitleSuppressHook(uintptr_t unityBase);
 void InstallGameOrchestratorObserveHook(uintptr_t unityBase);
+void InstallGrpcLoggingHook(uintptr_t unityBase);
 
 // Settings panel (Settings_UI.m). Installs the right-edge swipe gesture on
 // the key window; retries automatically if the window is not yet available.
@@ -408,6 +410,22 @@ void MetaOnPlayerInfoSet(int32_t side, void *playerInfo);
 
 // Installer for the GameStateStore.Set*PlayerInfo hooks.
 void InstallGameStateStoreObserveHook(uintptr_t unityBase);
+void InstallMatchingFilterObserveHook(uintptr_t unityBase);
+void InstallAccountObserveHook(uintptr_t unityBase);
+
+// ---------------------------------------------------------------------------
+// Account switching — written by Hook_AccountObserve.m. Calls
+// TDAnalytics.SetDistinctId on the supplied UUID so the next login sequence
+// authenticates as that account. The caller is expected to also restart the
+// login flow (typically by relaunching the app or invoking RunLoginSequence).
+// No-op when the unity base / TDAnalytics symbol has not yet been resolved.
+// ---------------------------------------------------------------------------
+void KEBSwitchAccount(NSString *uuid);
+
+// Trigger BackToTitleSequence.RunAsync so KIOU returns to the title scene
+// without exit() / app relaunch. Used by the Settings UI after a Switch tap.
+// No-op if UnityFramework hasn't been mapped yet.
+void KEBNavigateToTitleScene(void);
 
 // ---------------------------------------------------------------------------
 // Static chinlan dispatcher (chinlan build only).
@@ -435,6 +453,22 @@ void InstallGameStateStoreObserveHook(uintptr_t unityBase);
 // if one moves, both move together (the recipe pins the slot at patch
 // time, this header pins where the dylib publishes its dispatcher).
 #define KIOU_BR_HOOK_SLOT_RVA 0x8F90CC0
+
+// RVA of the entry-slot table inside UnityFramework. Each CAVE_ENTRY
+// site reads its 8-byte slot at `ENTRY_SLOT_BASE_RVA + slot * 8` and
+// BLRs the function pointer there. MUST match ENTRY_SLOT_BASE_RVA in
+// recipes/kiouenginebridge.py.
+//
+// Previous placements at 0x8F90CD0 (last 8 B of __bss) and 0x091E90B8
+// (last 32 slots of __common) both collided with KIOU runtime data:
+// the __bss tail had slot[1+] spilling into the __bss/__common padding,
+// and the __common tail contained a KIOU bitmask table written at
+// runtime (0xE000…0001 et al.). The current placement at 0x091E91B8
+// sits one word past __common's end (0x091E91B8 .. 0x091E93B8 exclusive),
+// a region verified all-zero via frida MemoryAccessMonitor before and
+// after a full login. See the same-named constant in the recipe for the
+// reservation bound.
+#define KIOU_BR_ENTRY_SLOT_BASE_RVA 0x091E91B8
 
 // Reserved sibling RVA for a future in-framework inject-entry table.
 // Branch F currently reconstructs bypass entries dylib-locally from cave
@@ -495,7 +529,46 @@ enum kiou_bridge_hook_id {
     KIOU_BR_HOOK_GSTATE_SET_WHITE_PLAYER_INFO,
     KIOU_BR_HOOK_GSTATE_NOTIFY_PIECE_MOVED,
 
+    // KIOU_BR_HOOK_ACCOUNT_EXISTS — assigned an enum value so the cave
+    // bypass entry table is computed the same way for entry caves as for
+    // observer caves (bypass index = cave allocation order = enum value
+    // for this row). The chinlan dispatcher does NOT switch on this id
+    // (entry caves route through the entry slot table, not the observer
+    // dispatcher), but Inject_Move-style bypass lookups still work.
+    KIOU_BR_HOOK_ACCOUNT_EXISTS,
+    KIOU_BR_HOOK_LOGIN_ARGS_CREATE,
+    KIOU_BR_HOOK_REGISTER_USER_ARGS_CREATE,
+
+    KIOU_BR_HOOK_GET_VALID_MATCH_FOUND_STATUS,
+    KIOU_BR_HOOK_MATCH_STREAM_ARGS_CREATE,
+    KIOU_BR_HOOK_RECEIVE_TIMEOUT_MOVENEXT,
+
+    KIOU_BR_HOOK_RUN_LOGIN_SEQ_MOVENEXT,
+    KIOU_BR_HOOK_GET_SELF_PROFILE_MOVENEXT,
+
+    // HttpMessageInvoker.SendAsync — CAVE_ENTRY for x-user-id header swap
+    // on account switch. Entry cave so the hook can rewrite request headers
+    // before calling bypass to forward to orig.
+    KIOU_BR_HOOK_HTTPMSGINVOKER_SEND_ASYNC,
+
     KIOU_BR_HOOK__COUNT,
+};
+
+// Entry-slot enum — one per CAVE_ENTRY row in recipes/kiouenginebridge.py.
+// Slot N's hook function pointer lives at
+// `unityBase + KIOU_BR_ENTRY_SLOT_BASE_RVA + N * 8`. KEBBridgeChinlanPublish
+// writes the live hook function pointers into those slots.
+enum kiou_bridge_entry_slot_id {
+    KIOU_BR_ENTRY_SLOT_ACCOUNT_EXISTS = 0,
+    KIOU_BR_ENTRY_SLOT_LOGIN_ARGS_CREATE,
+    KIOU_BR_ENTRY_SLOT_REGISTER_USER_ARGS_CREATE,
+    KIOU_BR_ENTRY_SLOT_GET_VALID_MATCH_FOUND_STATUS,
+    KIOU_BR_ENTRY_SLOT_MATCH_STREAM_ARGS_CREATE,
+    KIOU_BR_ENTRY_SLOT_RUN_LOGIN_SEQ_MOVENEXT,
+    KIOU_BR_ENTRY_SLOT_GET_SELF_PROFILE_MOVENEXT,
+    KIOU_BR_ENTRY_SLOT_HTTPMSGINVOKER_SEND_ASYNC,
+
+    KIOU_BR_ENTRY_SLOT__COUNT,
 };
 
 // g_inject_entry is chinlan-only — it's populated by
@@ -641,6 +714,44 @@ UniTaskRet HookGameOrchActivateAsync(void *self, void *setup,
 void HookGStateSetBlackPlayerInfo(void *self, void *playerInfo);
 void HookGStateSetWhitePlayerInfo(void *self, void *playerInfo);
 void HookGStateNotifyPieceMoved(void *self, uint32_t move, int32_t playerSide);
+
+// AccountExists chinlan-side entry hook — see Hook_AccountObserve.m. Called
+// directly by the entry cave (via the entry slot table); orig is invoked
+// from inside this hook via the cave bypass entry, and the hook's bool
+// return propagates straight back to the caller (cave tail is RET).
+bool HookAccountExistsEntry(void *data);
+
+// LoginArgs.Create / RegisterUserArgs.Create chinlan-side entry hooks. Both
+// swap one il2cpp string argument (deviceId / distinctId) per the pending_*
+// override slots, then call orig via the cave bypass entry and forward
+// orig's return (the freshly built ILoginArgs* / IRegisterUserArgs*).
+void *HookLoginArgsCreateEntry(void *deviceId, void *distinctId);
+void *HookRegisterUserArgsCreateEntry(void *userName, void *distinctId);
+
+// Matching filter chinlan-side entry hooks. GetValidMatchFoundStatus
+// returns the orig status (so the JB-shape observable contract holds) but
+// fires a ConnectionFailed JoinQueue at the matching stream when the seat
+// doesn't match the user's preference. ArgsCreate is CAVE_ENTRY because
+// its 7th C arg lands in W6 which CAVE_OBSERVER would clobber with hook_id.
+void *HookGetValidMatchFoundStatusEntry(void *reply);
+void *HookArgsCreateEntry(int32_t action, int32_t matchType,
+                           int32_t rankRuleType, int32_t eventRuleType,
+                           int32_t mstEventMatchId,
+                           int32_t matchingClientType,
+                           bool enableBeginnerSupport);
+
+// MatchingHandler.ReceiveWithTimeoutAsync.MoveNext observer hook — declared
+// here so the chinlan dispatcher can call it without recompiling against
+// Hook_MatchingFilterObserve.m's internal symbol table.
+void HookReceiveTimeoutMoveNext(void *self);
+
+// MoveNext entry hooks (chinlan). The state machine fields they observe
+// (LoginReply pointer, SelfUserProfileStatus rank list) only become
+// populated *after* orig advances state to -2, so these hooks have to
+// invoke orig themselves via the cave bypass entry before reading.
+void HookRunLoginSeqMoveNextEntry(void *self);
+void HookGetSelfProfileMoveNextEntry(void *self);
+void *HookHttpMsgInvokerSendAsyncEntry(void *self, void *request, void *ct);
 void HookGStateNotifyStateSyncedForCurrentPosition(void);
 void ResolveGameStateStoreNotifyStateSynced(uintptr_t unityBase);
 void HookGStateRememberStore(void *self);

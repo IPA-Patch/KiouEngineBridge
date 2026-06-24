@@ -1,23 +1,95 @@
-"""Per-target patch recipes.
+"""KiouEngineBridge recipe — entry point for ``tools.patch_macho``.
 
-A recipe is a Python module exposing the following module-level names
-that ``tools.patch_macho`` discovers and applies:
+Selects the active version via the ``TARGET_VERSION`` environment
+variable (default: ``1.0.1``) and re-exports the patch surface that
+``tools.patch_macho`` and ``tools.verify_sites`` expect:
 
-  - ``TARGET_BASENAME``   : str, the Mach-O filename this recipe targets
-                            (used as a sanity check, e.g. ``UnityFramework``).
-  - ``DYLIB_PATH``        : str, the @executable_path/... dylib path
-                            inserted via ``LC_LOAD_DYLIB``.
-  - ``HOOK_SLOT_RVA``     : int, the 8-byte __DATA,__bss slot the dylib
-                            constructor publishes the hook function pointer
-                            into. Validated against the live binary at
-                            patch time; mismatches abort.
-  - ``CAVE_REGION``       : ``(start, end)`` file-offset tuple for the
-                            r-x zero-fill range cave payloads are carved
-                            from.
-  - ``PATCHES``           : list of inline single-instruction
-                            replacements; usually empty.
-  - ``CAVE_PATCHES``      : list of ``(site_off, expected, build_payload,
-                            label)`` cave-routed redirects.
+  TARGET_BASENAME, DYLIB_PATH, PLIST_KEYS
+  HOOK_SLOT_RVA, PROBED_HOOK_SLOT_RVA
+  CAVE_REGION, ENTRY_SLOT_BASE_RVA
+  PATCHES, CAVE_PATCHES, _SITES
 
-See ``tools.recipes.kioukifexporter`` for a worked example.
+Adding a new version:
+  1. Run ``/dump`` → assets/<ver>/dump.cs + dump.cs.index.json
+  2. Run ``python3 -m tools.verify_sites --recipe recipes --version <old>
+       --index assets/<ver>/dump.cs.index.json --ipa assets/<ver>/<ver>.ipa``
+     to find drifted RVAs.
+  3. Create ``recipes/v<maj>_<min>_<patch>.py`` (copy v1_0_2.py as template).
+  4. Register it in ``_VERSIONS`` below.
 """
+
+from __future__ import annotations
+
+import importlib
+import os
+
+from recipes.common import (
+    TARGET_BASENAME,
+    DYLIB_PATH,
+    PLIST_KEYS,
+    ENTRY_SLOT_COUNT,
+    ENTRY_SLOT_CAPACITY,
+    ENTRY_SLOT_INDEX,
+    build_exports,
+)
+
+# ---------------------------------------------------------------------------
+# Version registry — maps CFBundleShortVersionString → recipe module name.
+# Set the value to None to mark a version as "known but not yet implemented".
+# ---------------------------------------------------------------------------
+
+_VERSIONS: dict[str, str | None] = {
+    "1.0.1": "recipes.v1_0_1",
+    "1.0.2": "recipes.v1_0_2",
+}
+
+_DEFAULT_VERSION = "1.0.1"
+
+# ---------------------------------------------------------------------------
+# Version selection
+# ---------------------------------------------------------------------------
+
+_target_version = os.environ.get("TARGET_VERSION", _DEFAULT_VERSION)
+_module_name = _VERSIONS.get(_target_version)
+
+if _module_name is None:
+    if _target_version in _VERSIONS:
+        _known = [v for v, m in _VERSIONS.items() if m is not None]
+        raise ImportError(
+            f"KIOU version {_target_version!r} is registered but not yet implemented.\n"
+            f"  Known versions: {_known}\n"
+            f"  Create recipes/v{_target_version.replace('.', '_')}.py to add it."
+        )
+    _known = [v for v, m in _VERSIONS.items() if m is not None]
+    raise ImportError(
+        f"KIOU version {_target_version!r} is not in the version registry.\n"
+        f"  Known versions: {_known}\n"
+        f"  Add it to _VERSIONS in recipes/__init__.py."
+    )
+
+_v = importlib.import_module(_module_name)
+
+# Validate slot reservation fits in the verified-zero region.
+assert _v.ENTRY_SLOT_BASE_RVA + ENTRY_SLOT_CAPACITY * 8 <= _v.ZERO_REGION_END_RVA, (
+    f"entry slot reservation overflows verified-zero region for {_target_version}"
+)
+assert len(ENTRY_SLOT_INDEX) == ENTRY_SLOT_COUNT
+
+# ---------------------------------------------------------------------------
+# Public exports consumed by patch_macho / verify_sites
+# ---------------------------------------------------------------------------
+
+CAVE_REGION                   = _v.CAVE_REGION
+HOOK_SLOT_RVA                 = _v.HOOK_SLOT_RVA
+PROBED_HOOK_SLOT_RVA          = _v.PROBED_HOOK_SLOT_RVA
+INJECT_ENTRY_TABLE_RVA        = _v.INJECT_ENTRY_TABLE_RVA
+PROBED_INJECT_ENTRY_TABLE_RVA = _v.PROBED_INJECT_ENTRY_TABLE_RVA
+ENTRY_SLOT_BASE_RVA           = _v.ENTRY_SLOT_BASE_RVA
+
+PATCHES, CAVE_PATCHES, _SITES = build_exports(
+    _v.SITES,
+    _v.AFK_SITE,
+    _v.AFK_ORIG_8,
+    _v.HOOK_SLOT_RVA,
+    _v.ENTRY_SLOT_BASE_RVA,
+)

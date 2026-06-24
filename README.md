@@ -12,8 +12,8 @@
 </p>
 
 <p align="center">
-  <img alt="version" src="https://img.shields.io/badge/version-v0.1.0-2f80ed?style=flat-square" />
-  <img alt="targets KIOU" src="https://img.shields.io/badge/targets-KIOU%201.0.1%20(11)-ff66a3?style=flat-square" />
+  <img alt="version" src="https://img.shields.io/badge/version-v0.1.3-2f80ed?style=flat-square" />
+  <img alt="targets KIOU" src="https://img.shields.io/badge/targets-KIOU%201.0.1%E2%80%931.0.2-ff66a3?style=flat-square" />
   <img alt="platform" src="https://img.shields.io/badge/platform-iOS%2015.0%E2%80%9326-blue?style=flat-square" />
   <img alt="arch" src="https://img.shields.io/badge/arch-arm64%20rootless-555?style=flat-square" />
   <img alt="engine" src="https://img.shields.io/badge/engine-Unity%206%20%2B%20il2cpp-black?style=flat-square" />
@@ -58,8 +58,9 @@ KEB exposes the standard CSA v1.2 surface on the TCP link:
 | `LOGOUT` | tears the session down |
 | `AGREE [<id>]` / `REJECT [<id>]` | advance / decline pre-match |
 | `<sign><from><to><PIECE>` | client's move; injected into KIOU |
-| `%TORYO` | drives `GameOrchestrator.RequestSurrender` |
+| `%TORYO` | calls `MatchController.SurrenderAsync` |
 | `%KACHI` / `%CHUDAN` | client learns; KIOU is not signalled |
+| `%%TIME` | KEB responds with a `BEGIN Time … END Time` block containing `Remaining_Time_Ms+`, `Remaining_Time_Ms-`, `Byoyomi_Ms` (PLAYING only) |
 
 The full mapping (every CSA field, what KIOU exposes, what we drop)
 lives in `docs/csa_compatibility.md`. The wire-level state machine and
@@ -76,7 +77,7 @@ The table below summarises coverage at a glance; see
 |---|---|---|
 | Session (`LOGIN` / `LOGOUT` / liveness `\n`) | ✅ | Credentials accepted unconditionally. |
 | `BEGIN Game_Summary` negotiation | ✅ | `AGREE` / `REJECT` handled; see deviation note below. |
-| `BEGIN Time` block | ⚠️ partial | `Total_Time`, `Byoyomi`, `Increment` written. `Delay`, `Least_Time_Per_Move`, `Time_Roundup` omitted (KIOU does not expose them). |
+| `BEGIN Time` block | ✅ | `Total_Time`, `Byoyomi`, `Increment`, `Remaining_Time+/-` written. `Delay`, `Least_Time_Per_Move`, `Time_Roundup` omitted (KIOU does not expose them). |
 | Initial position `BEGIN Position` | ✅ | Full 9×9 board + hand pieces in CSA form, derived from KIOU's live SFEN. |
 | Per-turn move exchange with `,T<n>` | ✅ | Both colours notified. `T<n>` omitted in modes without authoritative clocks (VsAI / LocalPvP). |
 | `%TORYO` (resign) | ✅ | Calls `GameOrchestrator.RequestSurrender`. |
@@ -108,6 +109,41 @@ no equivalent for. A strict CSA parser must ignore unknown keys.
 | `KIOU_Rate+` / `KIOU_Rate-` | `1832` | Player rate; omitted when zero. |
 | `KIOU_UserId+` / `KIOU_UserId-` | `550e8400-e29b-41d4-a716-446655440000` | Player user id (UUID format); omitted when blank. |
 | `KIOU_StartedAt` | `2026-06-16T09:30:03Z` | Wall-clock ISO 8601 UTC at match start. |
+
+## In-app settings panel
+
+A right-edge screen swipe from anywhere in KIOU opens a `UITableViewController`
+modal with the live tweak settings. Nothing is persisted server-side — every
+toggle writes to `NSUserDefaults` under `kiou_bridge.*`. Sections:
+
+| Section | What it does |
+|---|---|
+| **Account** | Drills down into a list of every account the tweak has seen pass through `RunLoginSequenceAsync`. Tap to switch, swipe to delete, share to export as `accounts.json` (userId / openId / userName / deviceId / distinctId / rank table per match-type). The `New Register` toggle arms a fresh distinctId so the next launch falls into KIOU's register flow without going through `RunResetUserDataSequenceAsync`. |
+| **Match** | `Auto Rematch` toggle; `Skip Resign Dialog` (`%TORYO` → `SurrenderAsync` directly, no confirm). |
+| **Matching Filter** | `Fixed Rate Range`: when non-zero, `LeaveQueue`+`JoinQueue` whenever the server's `CurrentRateRange` exceeds the value. |
+| **Delay** | Two-step rematch timing: `Close Result` (seconds before dismissing the result overlay) + `Next Match` (seconds before calling `StartCpuFreeMatchAsync` / `StartRankMatchingAsync`). |
+| **CSA Server** | Listening port for the CSA TCP server (applies on next launch). |
+| **About** | Repo link, author link, build commit. |
+
+Account switching does **not** relaunch the app — picking a row substitutes
+the deviceId in the next `LoginArgs.Create`, then drives
+`BackToTitleSequence.RunAsync` so KIOU re-runs its boot sequence under the
+new identity.
+
+### gRPC and account observation logs
+
+The tweak prefixes log lines so the in-sandbox log can be grepped by area:
+
+| Prefix | Source |
+|---|---|
+| `[ACCOUNT]` | Login / Register / TDAnalytics / self-profile (rank, rating) |
+| `[GRPC]` | Outbound HTTP/2 request URL + headers + status |
+| `[MFILTER]` | Seat / rate-range filter decisions |
+| `[CSA]` / `[CSA-ENG]` | TCP server + engine driver |
+| `[MMODE]` | Match-mode lifecycle (`InitializeAsync` / `OnPlayerMoveAsync` / `OnMatchEndAsync`) |
+| `[GAMEORCH]` | `GameOrchestrator.ActivateAsync` instance cache |
+| `[AFK]` | AFK watchdog suppression |
+| `[SETTINGS]` | NSUserDefaults writes |
 
 ## Install
 
@@ -149,28 +185,36 @@ Filza, or [TrollDecrypt](https://github.com/donato-fiore/TrollDecrypt)). The
 App Store download is FairPlay-encrypted and cannot be patched directly.
 
 ```sh
-make BINPATCH=1
-# -> packages/binpatch/KiouEngineBridge.dylib
+make chinlan FINALPACKAGE=1
+# -> packages/chinlan/KiouEngineBridge.dylib
 ```
 
-Then build the patched IPA:
+Then build the patched IPA. `TARGET_VERSION` selects which app version's
+RVAs the recipe applies and which `assets/<ver>/` directory the input
+IPA is read from:
 
 ```sh
-shared/tools/build_patched_ipa.sh \
-  --recipe kiouenginebridge \
+make ipa TARGET_VERSION=1.0.2
+# -> packages/ipa/KiouEngineBridge-patched.ipa
+```
+
+Or call the script directly if you want full control over the inputs:
+
+```sh
+TARGET_VERSION=1.0.2 shared/tools/build_patched_ipa.sh \
+  --recipe recipes \
   --framework UnityFramework \
-  --dylib packages/binpatch/KiouEngineBridge.dylib \
-  --input Kiou-1.0.1.ipa
-# -> Kiou-1.0.1-patched.ipa
+  --dylib packages/chinlan/KiouEngineBridge.dylib \
+  --input assets/1.0.2/Kiou-1.0.2.ipa
 ```
 
 Unlike runtime hook engines (Substrate, Dobby, frida-gum), the static
 binary patch never writes to `__TEXT` at runtime and survives the iOS 18
-Code Signing Monitor (CSM) — the binpatch flavour covers iOS 15.0 – 18.x.
+Code Signing Monitor (CSM) — the chinlan flavour covers iOS 15.0 – 18.x.
 
 All three build flavours ship the full CSA protocol surface — Game_Summary,
-per-move notifications, resign / draw handling. See
-`docs/plans/kiou_engine_bridge_binpatch.md` § 2 for the full build matrix.
+per-move notifications, resign / draw handling, `%%TIME` time queries. See
+`docs/plans/kiou_engine_bridge_csa_migration.md` § 2 for the full build matrix.
 
 ## Compatibility
 
@@ -180,7 +224,7 @@ per-move notifications, resign / draw handling. See
 | **KIOU minimum iOS** | 10.0 (`MinimumOSVersion` in app bundle) |
 | **KiouEngineBridge minimum iOS** | 15.0 |
 | **Tested on** | 15.0 – 26, arm64 |
-| **Distribution** | Jailbroken `.deb`, TrollStore-injected jailed `.dylib`, Patched IPA (Sideloadly / AltStore) |
+| **Distribution** | Jailbroken `.deb` (rootless), TrollStore-injected jailed `.dylib`, Chinlan-patched IPA (Sideloadly / AltStore) |
 | **Engine wire** | CSA server protocol v1.2 over plain TCP (`:4081`) |
 
 All hook sites are RVA-pinned to this exact KIOU build. After a KIOU update
