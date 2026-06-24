@@ -63,7 +63,7 @@ surfaces. KEB writes only the fields it can faithfully fill.
 ## Initial position
 
 KEB always writes the `BEGIN Position` block in CSA's standard form,
-derived from KIOU's live SFEN via `Csa_Convert::CsaPositionFromSfen`.
+derived from KIOU's live SFEN via `Csa/Convert::CsaPositionFromSfen`.
 
 | Concept | KEB behaviour | Status |
 |---|---|---|
@@ -81,7 +81,7 @@ arrives. KEB follows the same pattern from both directions.
 
 | CSA concept | Wire | KEB behaviour | Status |
 |---|---|---|---|
-| Notify move | `<sign><from><to><PIECE>,T<n>` | Emitted from `Hook_GameStateStoreObserve::HookNotifyPieceMoved` for every KIOU move (both sides). `,T<n>` derived from the snapshot-delta on Online/CPUStream; omitted in modes without authoritative clocks. | ✅ |
+| Notify move | `<sign><from><to><PIECE>,T<n>` | Emitted from `Hooks/GameStateStoreObserve::HookNotifyPieceMoved` for every KIOU move (both sides). `,T<n>` derived from the snapshot-delta on Online/CPUStream; omitted in modes without authoritative clocks. | ✅ |
 | Engine submits move | `<sign><from><to><PIECE>` | Parsed via `MoveBitsFromCsaText`, translated to USI, fed into `inject_apply`. The `,T<n>` suffix is accepted but ignored (KIOU keeps its own clock). | ✅ |
 | Engine resigns | `%TORYO` | Sends `#RESIGN` + `#LOSE`, calls `GameOrchestrator.RequestSurrender` for the local seat. The engine controls the local player, so `%TORYO` means the local seat surrenders. | ⚠️ surrenders the local seat |
 | Engine nyugyoku win | `%KACHI` | Sends `#JISHOGI` + `#WIN`, advances to GAME_OVER. KIOU side is not signalled. | ⚠️ engine learns; KIOU stays |

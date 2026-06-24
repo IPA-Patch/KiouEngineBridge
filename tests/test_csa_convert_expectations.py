@@ -1,6 +1,6 @@
-"""Pinned expectations for the CSA conversion library (Csa_Convert.{h,m}).
+"""Pinned expectations for the CSA conversion library (Csa/Convert.{h,m}).
 
-The C/ObjC implementation lives in ``Sources/KiouEngineBridge/Csa_Convert.m``
+The C/ObjC implementation lives in ``Sources/KiouEngineBridge/Csa/Convert.m``
 and is exercised on-device against KIOU. We can't link Foundation against a
 Linux CI runner, so this test module ports the algorithms to pure Python and
 pins the expected outputs against the same inputs the ObjC code receives.
@@ -24,7 +24,7 @@ import pytest
 
 
 # ---------------------------------------------------------------------------
-# Python reference implementation. Mirrors Csa_Convert.m verbatim.
+# Python reference implementation. Mirrors Csa/Convert.m verbatim.
 # ---------------------------------------------------------------------------
 
 CSA_PIECE_NAMES = [
