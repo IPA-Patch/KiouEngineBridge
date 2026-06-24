@@ -180,9 +180,40 @@ and install via TrollStore.
 For devices where TrollStore is unavailable. Install the patched IPA with
 [Sideloadly](https://sideloadly.io/) or [AltStore](https://altstore.io/).
 
-Requires a **decrypted** KIOU IPA (e.g. obtained via [palera1n](https://palera.in/) +
-Filza, or [TrollDecrypt](https://github.com/donato-fiore/TrollDecrypt)). The
-App Store download is FairPlay-encrypted and cannot be patched directly.
+Requires a **decrypted** KIOU IPA. KEB never ships KIOU itself — you supply
+your own legally-obtained copy.
+
+<details>
+<summary>What "decrypted" means, and why it's required</summary>
+
+Every app on the App Store is shipped **FairPlay-encrypted**: the main
+executable and its frameworks (here, `UnityFramework`) are stored as
+ciphertext on disk, and the kernel only decrypts them in memory at launch,
+on the device the purchase is tied to. A plain App Store / iMazing download
+is therefore encrypted.
+
+The patch pipeline rewrites `UnityFramework` **on disk before signing** — it
+locates hook sites by their machine-code prologue and overwrites them with
+`B <cave>`. Against an encrypted binary those bytes are meaningless
+ciphertext, so the recipe can neither find nor patch them. The input IPA
+**must be decrypted first**.
+
+A *decrypted* IPA is one whose Mach-O slices have had the FairPlay layer
+stripped (the `cryptid` flag cleared and the encrypted pages dumped in their
+plaintext form). You make one **once per app version**, on a device that can
+already run KIOU:
+
+- **[TrollDecrypt](https://github.com/donato-fiore/TrollDecrypt)** (needs
+  TrollStore) — dumps a decrypted `.ipa` straight to the Files app. Easiest.
+- **[palera1n](https://palera.in/) + Filza** — jailbreak, then pull the
+  decrypted bundle off disk.
+- Any on-device FairPlay dumper works; the only requirement is that the
+  resulting `.ipa` is decrypted.
+
+Drop the result at `assets/<version>/Kiou-<version>.ipa` so that
+`make ipa TARGET_VERSION=<version>` picks it up.
+
+</details>
 
 ```sh
 make chinlan FINALPACKAGE=1
@@ -236,7 +267,9 @@ the RVAs will drift.
   (`$THEOS` set). Kiou Engine Bridge is pure Objective-C — no Orion,
   no Swift runtime.
 - iOS 15.0–26, arm64.
-- For the jailed (sideload) path: a decrypted copy of the KIOU `.ipa`.
+- For the jailed (sideload) path: a decrypted copy of the KIOU `.ipa`
+  (see [Patched IPA (Sideload)](#patched-ipa-sideload) for what that means
+  and how to obtain one).
 
 ### Developer hooks
 
