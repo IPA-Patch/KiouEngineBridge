@@ -21,7 +21,7 @@ TARGET_BUNDLE_ID         := com.neconome.shogi
 
 # Target app version — selects the input IPA and the recipe version table.
 # Override on the command line: make ipa TARGET_VERSION=1.0.2
-TARGET_VERSION           ?= 1.0.1
+TARGET_VERSION           ?= 1.0.2
 DECRYPTED_IPA            ?= $(CURDIR)/assets/$(TARGET_VERSION)/Kiou-$(TARGET_VERSION).ipa
 IPA_RECIPE               := recipes
 IPA_FRAMEWORK            := UnityFramework
