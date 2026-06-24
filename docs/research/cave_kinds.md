@@ -223,7 +223,7 @@ void HookNewSiteObserve(void *self) {
 }
 ```
 
-### 6. `Sources/KiouEngineBridge/Chinlan/Dispatcher.m`
+### 6. `Sources/KiouEngineBridge/ChinlanDispatcher.m`
 
 Observer hooks: add a `case` to `dispatch_one`.
 
