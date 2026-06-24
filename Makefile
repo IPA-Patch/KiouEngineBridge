@@ -58,6 +58,7 @@ endif
 $(TWEAK_NAME)_CFLAGS     := -fobjc-arc -Wno-unused-function \
                             -D$(BUILD_COMMIT_DEFINE)=\"$(BUILD_COMMIT)\" \
                             -DBUILD_VERSION=\"$(PACKAGE_VERSION)\" \
+                            -I$(TWEAK_SOURCES_DIR) \
                             -ISources/Chinlan
 ifdef FINAL_RELEASE
 $(TWEAK_NAME)_CFLAGS     += -DFINAL_RELEASE=1
