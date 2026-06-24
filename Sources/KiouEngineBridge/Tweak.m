@@ -1,5 +1,5 @@
 #import "Internal.h"
-#import "Settings_Persistence.h"
+#import "Settings/Persistence.h"
 #import <mach-o/dyld.h>
 #import <dlfcn.h>
 #import <string.h>
