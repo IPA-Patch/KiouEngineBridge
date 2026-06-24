@@ -448,37 +448,24 @@ void KEBNavigateToTitleScene(void);
 // call. See docs/plans/kiou_engine_bridge_chinlan.md § 5 for the contract.
 // ---------------------------------------------------------------------------
 
-// RVA of the 8-byte slot the recipe reserves inside UnityFramework's
-// __DATA,__bss. MUST match `HOOK_SLOT_RVA` in recipes/kiouenginebridge.py;
-// if one moves, both move together (the recipe pins the slot at patch
-// time, this header pins where the dylib publishes its dispatcher).
-#define KIOU_BR_HOOK_SLOT_RVA 0x8F90CC0
-
-// RVA of the entry-slot table inside UnityFramework. Each CAVE_ENTRY
-// site reads its 8-byte slot at `ENTRY_SLOT_BASE_RVA + slot * 8` and
-// BLRs the function pointer there. MUST match ENTRY_SLOT_BASE_RVA in
-// recipes/kiouenginebridge.py.
+// Per-version RVAs are generated from the active recipe at compile time
+// by `tools/gen_recipe_header.py` (the Makefile invokes it before the
+// first .m is compiled). This is the **single source of truth** for the
+// slot/cave addresses: the same TARGET_VERSION drives the recipe applied
+// by `make ipa` and the addresses baked into this dylib, so there is no
+// way for the two to drift out of sync the way 1.0.1 → 1.0.2 did when
+// the constants were duplicated here.
 //
-// Previous placements at 0x8F90CD0 (last 8 B of __bss) and 0x091E90B8
-// (last 32 slots of __common) both collided with KIOU runtime data:
-// the __bss tail had slot[1+] spilling into the __bss/__common padding,
-// and the __common tail contained a KIOU bitmask table written at
-// runtime (0xE000…0001 et al.). The current placement at 0x091E91B8
-// sits one word past __common's end (0x091E91B8 .. 0x091E93B8 exclusive),
-// a region verified all-zero via frida MemoryAccessMonitor before and
-// after a full login. See the same-named constant in the recipe for the
-// reservation bound.
-#define KIOU_BR_ENTRY_SLOT_BASE_RVA 0x091E91B8
+// Defines provided:
+//   KIOU_BR_HOOK_SLOT_RVA           — shared dispatcher slot in __bss
+//   KIOU_BR_ENTRY_SLOT_BASE_RVA     — base of the CAVE_ENTRY slot table
+//   KIOU_BR_INJECT_ENTRY_TABLE_RVA  — reserved sibling table (Branch F)
+//   KIOU_BR_CAVE_REGION_START       — start of the cave region
+#import "Generated/RecipeConstants.h"
 
-// Reserved sibling RVA for a future in-framework inject-entry table.
-// Branch F currently reconstructs bypass entries dylib-locally from cave
-// geometry, but we still mirror the recipe's reserved address here so the
-// reservation stays visible on both sides.
-#define KIOU_BR_INJECT_ENTRY_TABLE_RVA 0x8F90C00
-
-// Chinlan cave geometry. MUST mirror recipes/kiouenginebridge.py.
-// Every cave is a fixed 84-byte payload allocated contiguously from the
-// CAVE_REGION start in declaration order. The cave layout ends with:
+// Chinlan cave geometry — fixed per cave shape, not per target version.
+// Every cave is a fixed 84-byte payload allocated contiguously from
+// KIOU_BR_CAVE_REGION_START in declaration order. The cave layout ends with:
 //   cave+0x48: LDP X29, X30, [SP], #0x90   (epilogue's stack restore)
 //   cave+0x4C: <displaced prologue insn>   (the site's original first 4 bytes)
 //   cave+0x50: B   <orig + 4>              (PC-relative branch back into the
@@ -489,7 +476,6 @@ void KEBNavigateToTitleScene(void);
 // bypasses the dispatcher AND avoids running the epilogue's LDP (which would
 // trash the inject path's own frame). Calling cave+0x48 would pop the wrong
 // X29/X30 pair off the caller's stack and corrupt the frame pointer.
-#define KIOU_BR_CAVE_REGION_START  0x826A000
 #define KIOU_BR_CAVE_SIZE          84
 #define KIOU_BR_CAVE_BYPASS_OFFSET 0x4C
 

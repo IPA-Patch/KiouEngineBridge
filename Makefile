@@ -40,6 +40,18 @@ THEOS_DEVICE_IP          ?= 192.168.0.1
 
 include $(THEOS)/makefiles/common.mk
 
+# Generate Sources/KiouEngineBridge/Generated/RecipeConstants.h from the
+# active recipe BEFORE Theos scans for sources or compiles anything.
+# This keeps the recipe (Python) as the single source of truth for slot
+# and cave RVAs; the dylib and `make ipa` can never drift apart on those
+# constants. Runs every build, but the generator only rewrites the file
+# when the contents change, so .m files don't recompile unnecessarily.
+_RECIPE_HEADER := $(shell TARGET_VERSION="$(TARGET_VERSION)" \
+    python3 $(CURDIR)/tools/gen_recipe_header.py >&2 && echo ok)
+ifneq ($(_RECIPE_HEADER),ok)
+$(error tools/gen_recipe_header.py failed — see message above)
+endif
+
 $(TWEAK_NAME)_FILES      := $(shell find $(TWEAK_SOURCES_DIR) \
     \( -name '*.m' -o -name '*.c' -o -name '*.mm' -o -name '*.cpp' \))
 $(TWEAK_NAME)_FILES      += Sources/Chinlan/logging.m

@@ -1,0 +1,54 @@
+#!/usr/bin/env python3
+"""Generate Sources/KiouEngineBridge/Generated/RecipeConstants.h from the
+active recipe so the dylib's compile-time RVAs always match the recipe
+that ``make ipa`` will apply. Keeps the recipe (Python) as the single
+source of truth — eliminates the recipe/Internal.h drift that broke 1.0.2
+sideload.
+
+Run before compile (the Makefile invokes this automatically):
+
+    TARGET_VERSION=1.0.2 python3 tools/gen_recipe_header.py
+"""
+
+from __future__ import annotations
+
+import importlib
+import os
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT))
+sys.path.insert(0, str(REPO_ROOT / "shared"))
+
+ver = os.environ.get("TARGET_VERSION", "1.0.1")
+os.environ["TARGET_VERSION"] = ver
+
+recipe = importlib.import_module("recipes")
+
+cave_start, _ = recipe.CAVE_REGION
+out = REPO_ROOT / "Sources" / "KiouEngineBridge" / "Generated" / "RecipeConstants.h"
+out.parent.mkdir(parents=True, exist_ok=True)
+
+content = f"""\
+// Auto-generated from recipes/v{ver.replace('.', '_')}.py by
+// tools/gen_recipe_header.py. DO NOT EDIT — re-run `make` after
+// editing the recipe.
+//
+// Source of truth for the slot/cave RVAs is the active recipe module.
+// Internal.h includes this file so the dylib's compile-time addresses
+// always match the recipe applied by `make ipa`.
+#pragma once
+
+#define KIOU_BR_HOOK_SLOT_RVA           0x{recipe.HOOK_SLOT_RVA:X}
+#define KIOU_BR_ENTRY_SLOT_BASE_RVA     0x{recipe.ENTRY_SLOT_BASE_RVA:X}
+#define KIOU_BR_INJECT_ENTRY_TABLE_RVA  0x{recipe.INJECT_ENTRY_TABLE_RVA:X}
+#define KIOU_BR_CAVE_REGION_START       0x{cave_start:X}
+"""
+
+# Idempotent: only rewrite when content changes, so `make` doesn't treat
+# the header as newer than every .m file on every invocation.
+prev = out.read_text() if out.exists() else None
+if prev != content:
+    out.write_text(content)
+    print(f"==> generated {out.relative_to(REPO_ROOT)} (TARGET_VERSION={ver})", file=sys.stderr)

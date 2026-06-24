@@ -512,6 +512,10 @@ scripts/*.sh
 docs/plans/
 docs/archive/
 
+# Generated per-version recipe constants header. Rebuilt every `make` by
+# tools/gen_recipe_header.py from the active recipe; never edited by hand.
+Sources/KiouEngineBridge/Generated/
+
 # Claude Code session files — local only.
 .claude/plans/
 .claude/settings.json
