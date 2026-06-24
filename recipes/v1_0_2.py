@@ -9,13 +9,23 @@ from recipes.common import CAVE_OBSERVER, CAVE_ENTRY
 
 BUILD = 12
 
-CAVE_REGION          = (0x826A000, 0x826C000)
+# 1.0.1's CAVE_REGION at 0x826A000 was a __TEXT zero-fill area, but in 1.0.2
+# __TEXT,__eh_frame grew to 0x81ACE58..0x826F5E8 and now covers that range —
+# writing caves there corrupts DWARF CFI. Relocate to the verified-zero tail
+# after __oslogstring (0x8270023..0x8274000); 8 KB is plenty for 37 caves.
+CAVE_REGION          = (0x8270040, 0x8272040)
 HOOK_SLOT_RVA        = 0x8F90CC0
 PROBED_HOOK_SLOT_RVA = 0x8F9D4B8
 INJECT_ENTRY_TABLE_RVA        = 0x8F90C00
 PROBED_INJECT_ENTRY_TABLE_RVA = 0x8F90C00
-ENTRY_SLOT_BASE_RVA  = 0x091E91B8
-ZERO_REGION_END_RVA  = 0x091F5978
+# 1.0.1's ENTRY_SLOT_BASE at 0x091E91B8 was inside __DATA,__common, which is
+# pre-initialised — in 1.0.2 it carries live data (not zero), so the cave
+# loads garbage as a function pointer and BLRs into a crash (Login,
+# AccountExists, …). Move the slot block into the verified-zero tail of
+# __DATA,__bss, just before PROBED_HOOK_SLOT_RVA (0x8F9D4B8).
+# 32 slots * 8 B = 0x100; fits entirely in __bss.
+ENTRY_SLOT_BASE_RVA  = 0x8F9D3B8
+ZERO_REGION_END_RVA  = 0x8F9D4B8
 
 AFK_SITE    = 0x594A034
 AFK_ORIG_8  = "f44fbea9fd7b01a9"
