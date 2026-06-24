@@ -44,7 +44,7 @@ logging — stays on `CAVE_OBSERVER`.
 Both caves are 21 instructions = 84 bytes, allocated contiguously from
 `KIOU_BR_CAVE_REGION_START` in `_BRIDGE_SITES` order. The last two
 instructions are identical (`displaced_insn` + `B orig+4`) so the
-cave-bypass entry at `cave_va + 0x4C` works for both kinds — `Inject_Move`
+cave-bypass entry at `cave_va + 0x4C` works for both kinds — `Inject/Move`
 and the entry hooks use that to run orig without re-entering the cave.
 
 ### `CAVE_OBSERVER` (observer.cave)
@@ -198,7 +198,7 @@ void           HookNewSiteObserve(SomeArg1, ...);      // for observer
 
 ### 5. Hook implementation
 
-`Hook_<feature>.m`. For an entry hook, call orig via the bypass entry:
+`Hooks/<feature>.m`. For an entry hook, call orig via the bypass entry:
 
 ```c
 #if KIOU_CHINLAN
@@ -223,7 +223,7 @@ void HookNewSiteObserve(void *self) {
 }
 ```
 
-### 6. `Sources/KiouEngineBridge/ChinlanDispatcher.m`
+### 6. `Sources/KiouEngineBridge/Chinlan/Dispatcher.m`
 
 Observer hooks: add a `case` to `dispatch_one`.
 

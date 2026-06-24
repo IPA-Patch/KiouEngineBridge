@@ -1,5 +1,5 @@
 #import "Internal.h"
-#import "Settings_Persistence.h"
+#import "Settings/Persistence.h"
 
 // ===========================================================================
 // Hook_MatchingFilterObserve — apply user-configured matching filters.

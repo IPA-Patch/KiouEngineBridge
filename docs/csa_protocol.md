@@ -29,10 +29,10 @@ server protocol v1.2.1: <http://www2.computer-shogi.org/protocol/tcp_ip_server_1
 
 Source of truth pointers:
 
-- `Sources/KiouEngineBridge/Server_CSA.m` — TCP transport.
-- `Sources/KiouEngineBridge/Csa_Engine.m` — protocol state machine.
-- `Sources/KiouEngineBridge/Csa_GameInfo.m` — `Game_Summary` / result builder.
-- `Sources/KiouEngineBridge/Csa_Convert.m` — coordinate / piece / move /
+- `Sources/KiouEngineBridge/Csa/Server.m` — TCP transport.
+- `Sources/KiouEngineBridge/Csa/Engine.m` — protocol state machine.
+- `Sources/KiouEngineBridge/Csa/GameInfo.m` — `Game_Summary` / result builder.
+- `Sources/KiouEngineBridge/Csa/Convert.m` — coordinate / piece / move /
   position conversion. Pinned regression tests in
   `tests/test_csa_convert_expectations.py`.
 
@@ -56,7 +56,7 @@ Source of truth pointers:
 
 ## Protocol state machine
 
-KEB's state machine sits in `Sources/KiouEngineBridge/Csa_Engine.m`:
+KEB's state machine sits in `Sources/KiouEngineBridge/Csa/Engine.m`:
 
 ```
 BOOT
@@ -102,7 +102,7 @@ directly.
 | `START:<Game_ID>` | inbound `AGREE` after Game_Summary | |
 | `REJECT:<Game_ID> by engine` | inbound `REJECT` | Session stays open; engine may issue another LOGIN. |
 | `<sign><from><to><PIECE>,T<n>` | KIOU NotifyPieceMoved fires | Both colors are echoed (sign + black, − white). `T<n>` is computed from the snapshot delta and is omitted in modes without authoritative clocks. |
-| `#RESIGN`, `#TIME_UP`, `#ILLEGAL_MOVE`, `#SENNICHITE`, `#OUTE_SENNICHITE`, `#JISHOGI`, `#MAX_MOVES`, `#CHUDAN` | match end | KEB picks the reason marker that best matches the inferred outcome (currently `#RESIGN` for win/lose and `#SENNICHITE` for draw — see `CsaBuildMatchResult` in Csa_GameInfo.m). |
+| `#RESIGN`, `#TIME_UP`, `#ILLEGAL_MOVE`, `#SENNICHITE`, `#OUTE_SENNICHITE`, `#JISHOGI`, `#MAX_MOVES`, `#CHUDAN` | match end | KEB picks the reason marker that best matches the inferred outcome (currently `#RESIGN` for win/lose and `#SENNICHITE` for draw — see `CsaBuildMatchResult` in Csa/GameInfo.m). |
 | `#WIN` / `#LOSE` / `#DRAW` / `#CENSORED` | match end | Outcome from the engine's seat perspective. |
 
 ### engine → KEB (inbound)
@@ -113,8 +113,8 @@ directly.
 | `LOGOUT` | Reply with `LOGOUT:completed`, close socket, return to BOOT. |
 | `AGREE [<Game_ID>]` | While in AGREE_WAIT: send `START:<Game_ID>` and advance to PLAYING. Otherwise log + drop. |
 | `REJECT [<Game_ID>]` | Log; reply with `REJECT:<Game_ID> by engine`; return to LOGIN. KIOU side is not affected. |
-| `<sign><from><to><PIECE>[,T<n>]` | Parse via `Csa_Convert::MoveBitsFromCsaText` → translate to USI → call `inject_apply`. The `,T<n>` suffix is logged but otherwise unused (KIOU runs its own clock). |
-| `%TORYO` | Send `#RESIGN` + `#WIN`, advance to GAME_OVER, schedule `GameOrchestrator.RequestSurrender` on the main thread (see `Inject_Resign.m`). |
+| `<sign><from><to><PIECE>[,T<n>]` | Parse via `Csa/Convert::MoveBitsFromCsaText` → translate to USI → call `inject_apply`. The `,T<n>` suffix is logged but otherwise unused (KIOU runs its own clock). |
+| `%TORYO` | Send `#RESIGN` + `#WIN`, advance to GAME_OVER, schedule `GameOrchestrator.RequestSurrender` on the main thread (see `Inject/Resign.m`). |
 | `%KACHI` | Send `#JISHOGI` + `#WIN`, advance to GAME_OVER. No corresponding KIOU declaration API has been surfaced yet — see Task 7 of the migration plan. |
 | `%CHUDAN` | Send `#CHUDAN`, advance to GAME_OVER. KIOU is not notified. |
 | bare `\n` (CSA liveness ping) | No-op; TCP keepalive handles dead-peer detection separately. |
@@ -191,7 +191,7 @@ CSA's `BEGIN Time` block carries only the fields KIOU actually exposes
 `Time_Unit:1msec` either — KIOU works in seconds and that's what we ship.
 
 The `,T<n>` field on move lines is computed from the difference between
-consecutive authoritative snapshots (`Hook_OnlineObserve::g_latestBlackTimeSec` /
+consecutive authoritative snapshots (`Hooks/OnlineObserve::g_latestBlackTimeSec` /
 `g_latestWhiteTimeSec`). VsAI and LocalPvP modes do not surface
 authoritative clocks, so the suffix is omitted in those modes.
 

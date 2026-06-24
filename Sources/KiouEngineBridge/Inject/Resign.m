@@ -1,5 +1,5 @@
 #import "Internal.h"
-#import "Settings_Persistence.h"
+#import "Settings/Persistence.h"
 
 // ===========================================================================
 // Inject_Resign — bridge CSA's %TORYO / %KACHI submissions back to KIOU.
