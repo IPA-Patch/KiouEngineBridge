@@ -9,7 +9,11 @@ from recipes.common import CAVE_OBSERVER, CAVE_ENTRY
 
 BUILD = 12
 
-CAVE_REGION          = (0x826A000, 0x826C000)
+# 1.0.1's CAVE_REGION at 0x826A000 was a __TEXT zero-fill area, but in 1.0.2
+# __TEXT,__eh_frame grew to 0x81ACE58..0x826F5E8 and now covers that range —
+# writing caves there corrupts DWARF CFI. Relocate to the verified-zero tail
+# after __oslogstring (0x8270023..0x8274000); 8 KB is plenty for 37 caves.
+CAVE_REGION          = (0x8270040, 0x8272040)
 HOOK_SLOT_RVA        = 0x8F90CC0
 PROBED_HOOK_SLOT_RVA = 0x8F9D4B8
 INJECT_ENTRY_TABLE_RVA        = 0x8F90C00
