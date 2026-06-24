@@ -288,18 +288,6 @@ void *HookLoginArgsCreate(void *deviceId, void *distinctId) {
 // produces the real ILoginArgs* / IRegisterUserArgs* in x0.
 #if KIOU_CHINLAN
 void *HookLoginArgsCreateEntry(void *deviceId, void *distinctId) {
-    // Diagnostic: when the cave BLRs into this hook, read back the slot
-    // we wrote at publish time and see if anyone overwrote it (Unity
-    // initialisers, PAC stripping, etc.) before the call landed here.
-    {
-        void * volatile *entrySlots =
-            (void * volatile *)(g_unityBase + KIOU_BR_ENTRY_SLOT_BASE_RVA);
-        IPALog([NSString stringWithFormat:
-                  @"[DIAG] LoginArgs entry: slot[1]=%p expected=%p hook_self=%p",
-                  (void *)entrySlots[KIOU_BR_ENTRY_SLOT_LOGIN_ARGS_CREATE],
-                  (void *)&HookLoginArgsCreateEntry,
-                  (void *)&HookLoginArgsCreateEntry]);
-    }
     void *useDeviceId = loginArgsSwapDeviceId(deviceId, distinctId);
     LoginArgsCreate_t bypass =
         (LoginArgsCreate_t)g_inject_entry[KIOU_BR_HOOK_LOGIN_ARGS_CREATE];
@@ -423,14 +411,6 @@ void HookRunLoginSeqMoveNext(void *self) {
 // per-site bypass entry so the state machine actually advances to
 // state == -2, then observe the now-populated reply field.
 void HookRunLoginSeqMoveNextEntry(void *self) {
-    {
-        void * volatile *entrySlots =
-            (void * volatile *)(g_unityBase + KIOU_BR_ENTRY_SLOT_BASE_RVA);
-        IPALog([NSString stringWithFormat:
-                  @"[DIAG] RunLoginSeq entry: slot[5]=%p expected=%p",
-                  (void *)entrySlots[KIOU_BR_ENTRY_SLOT_RUN_LOGIN_SEQ_MOVENEXT],
-                  (void *)&HookRunLoginSeqMoveNextEntry]);
-    }
     MoveNextVoid_t bypass = (MoveNextVoid_t)
         g_inject_entry[KIOU_BR_HOOK_RUN_LOGIN_SEQ_MOVENEXT];
     if (bypass) {
