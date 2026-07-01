@@ -452,7 +452,7 @@ void KEBNavigateToTitleScene(void);
 // __DATA,__bss. MUST match `HOOK_SLOT_RVA` in recipes/kiouenginebridge.py;
 // if one moves, both move together (the recipe pins the slot at patch
 // time, this header pins where the dylib publishes its dispatcher).
-#define KIOU_BR_HOOK_SLOT_RVA 0x8F90CC0
+#define KIOU_BR_HOOK_SLOT_RVA 0x8F9D4B8
 
 // RVA of the entry-slot table inside UnityFramework. Each CAVE_ENTRY
 // site reads its 8-byte slot at `ENTRY_SLOT_BASE_RVA + slot * 8` and
@@ -468,7 +468,7 @@ void KEBNavigateToTitleScene(void);
 // a region verified all-zero via frida MemoryAccessMonitor before and
 // after a full login. See the same-named constant in the recipe for the
 // reservation bound.
-#define KIOU_BR_ENTRY_SLOT_BASE_RVA 0x091E91B8
+#define KIOU_BR_ENTRY_SLOT_BASE_RVA 0x8F9D3B8
 
 // Reserved sibling RVA for a future in-framework inject-entry table.
 // Branch F currently reconstructs bypass entries dylib-locally from cave
@@ -489,7 +489,7 @@ void KEBNavigateToTitleScene(void);
 // bypasses the dispatcher AND avoids running the epilogue's LDP (which would
 // trash the inject path's own frame). Calling cave+0x48 would pop the wrong
 // X29/X30 pair off the caller's stack and corrupt the frame pointer.
-#define KIOU_BR_CAVE_REGION_START  0x826A000
+#define KIOU_BR_CAVE_REGION_START  0x8270040
 #define KIOU_BR_CAVE_SIZE          84
 #define KIOU_BR_CAVE_BYPASS_OFFSET 0x4C
 
