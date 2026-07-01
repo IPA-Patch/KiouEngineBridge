@@ -1,6 +1,6 @@
 #import "Internal.h"
 
-#if KIOU_CHINLAN
+#if IPA_CHINLAN
 // The meta sidecar is dropped on the chinlan flavour
 // (docs/plans/kiou_engine_bridge_chinlan.md § 2). Provide no-op stubs so
 // the Hook_*.m / Tweak.m call sites can compile without an #if guard at
@@ -557,4 +557,4 @@ void MetaSetMatchConfig(void *cfg) {
     }
 }
 
-#endif  // !KIOU_CHINLAN
+#endif  // !IPA_CHINLAN

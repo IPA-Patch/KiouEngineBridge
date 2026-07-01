@@ -1,4 +1,4 @@
-#if KIOU_CHINLAN
+#if IPA_CHINLAN
 
 #import "Internal.h"
 
@@ -232,4 +232,4 @@ void KEBBridgeChinlanPublish(void) {
               (unsigned)KIOU_BR_HOOK__COUNT]);
 }
 
-#endif  // KIOU_CHINLAN
+#endif  // IPA_CHINLAN

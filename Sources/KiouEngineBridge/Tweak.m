@@ -51,7 +51,7 @@ static void installUnityHooks(uintptr_t unityBase, const char *unityName) {
               @"UnityFramework base=0x%lx (%s)",
               (unsigned long)unityBase, unityName ? unityName : "?"]);
 
-#if KIOU_CHINLAN
+#if IPA_CHINLAN
     // On the chinlan build, every observation hook is wired by the static
     // cave at app launch (recipes/kiouenginebridge.py); all we need at
     // runtime is to publish the dispatcher pointer into the __DATA,__bss
@@ -138,7 +138,7 @@ __attribute__((constructor)) static void init(void) {
     // Build identity so a stray log file can be matched back to the exact
     // dylib that wrote it. Flavor distinguishes JB (libsubstrate) / jailed
     // (Dobby-static) / chinlan (static cave + SLOT dispatcher).
-#if KIOU_CHINLAN
+#if IPA_CHINLAN
     static const char *const kBuildFlavor = "chinlan";
 #elif IPA_JAILED
     static const char *const kBuildFlavor = "jailed";

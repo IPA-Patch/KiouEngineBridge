@@ -63,7 +63,7 @@ void HookGStateNotifyStateSyncedForCurrentPosition(void) {
               g_lastGameStateStore, pos]);
 }
 
-#if !KIOU_CHINLAN
+#if !IPA_CHINLAN
 // Defined (zero-initialised) in the JB installer section below.
 extern SetPlayerInfo_t orig_SetBlackPlayerInfo;
 extern SetPlayerInfo_t orig_SetWhitePlayerInfo;
@@ -84,7 +84,7 @@ void HookGStateSetBlackPlayerInfo(void *self, void *playerInfo) {
     HookGStateRememberStore(self);
     MetaOnPlayerInfoSet(/*side=*/0, playerInfo);
     CsaOnPlayerInfoSet(/*side=*/0, playerInfo);
-#if !KIOU_CHINLAN
+#if !IPA_CHINLAN
     if (orig_SetBlackPlayerInfo) orig_SetBlackPlayerInfo(self, playerInfo);
 #else
     (void)self;
@@ -95,7 +95,7 @@ void HookGStateSetWhitePlayerInfo(void *self, void *playerInfo) {
     HookGStateRememberStore(self);
     MetaOnPlayerInfoSet(/*side=*/1, playerInfo);
     CsaOnPlayerInfoSet(/*side=*/1, playerInfo);
-#if !KIOU_CHINLAN
+#if !IPA_CHINLAN
     if (orig_SetWhitePlayerInfo) orig_SetWhitePlayerInfo(self, playerInfo);
 #else
     (void)self;
@@ -121,7 +121,7 @@ void HookGStateSetWhitePlayerInfo(void *self, void *playerInfo) {
 // instruction) before calling the dispatcher, so the same ordering holds.
 void HookGStateNotifyPieceMoved(void *self, uint32_t move, int32_t playerSide) {
     if (self) g_lastGameStateStore = self;
-#if !KIOU_CHINLAN
+#if !IPA_CHINLAN
     if (orig_NotifyPieceMoved) orig_NotifyPieceMoved(self, move, playerSide);
 #endif
 
@@ -167,7 +167,7 @@ void HookGStateNotifyPieceMoved(void *self, uint32_t move, int32_t playerSide) {
 // Build-flavour-specific: installer + MetaOnPlayerInfoSet stub.
 // ===========================================================================
 
-#if KIOU_CHINLAN
+#if IPA_CHINLAN
 
 // Cave dispatcher wires HookGState* at patch time; no runtime installation
 // needed. MetaOnPlayerInfoSet is a no-op because Meta_Emitter is dropped on
@@ -179,7 +179,7 @@ void MetaOnPlayerInfoSet(int32_t side, void *playerInfo) {
     (void)side; (void)playerInfo;
 }
 
-#else  // !KIOU_CHINLAN — JB / rootless build
+#else  // !IPA_CHINLAN — JB / rootless build
 
 SetPlayerInfo_t orig_SetBlackPlayerInfo = NULL;
 SetPlayerInfo_t orig_SetWhitePlayerInfo = NULL;
@@ -222,4 +222,4 @@ void InstallGameStateStoreObserveHook(uintptr_t unityBase) {
     }
 }
 
-#endif  // !KIOU_CHINLAN
+#endif  // !IPA_CHINLAN
