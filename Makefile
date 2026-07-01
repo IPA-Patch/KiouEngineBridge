@@ -26,6 +26,12 @@ DECRYPTED_IPA            ?= $(CURDIR)/assets/$(TARGET_VERSION)/Kiou-$(TARGET_VER
 IPA_RECIPE               := recipes
 IPA_FRAMEWORK            := UnityFramework
 
+# Optional CFBundleIdentifier suffix. Empty (default) leaves the bundle
+# id alone so the patched IPA overwrites the original app; set e.g.
+# BUNDLE_ID_SUFFIX=chinlan in .env or on the command line to append
+# ".chinlan" and install alongside the original.
+BUNDLE_ID_SUFFIX         ?=
+
 BUILD_COMMIT_DEFINE      := BUILD_COMMIT
 
 # ---------------------------------------------------------------------------
@@ -123,6 +129,7 @@ chinlan::
 	  || echo "(otool unavailable)"
 
 IPA_DYLIB                := $(CURDIR)/packages/chinlan/$(TWEAK_NAME).dylib
+IPA_OUT                  := $(CURDIR)/packages/ipa/$(basename $(notdir $(DECRYPTED_IPA)))-patched.ipa
 
 ipa:: chinlan
 	@echo "==> assembling patched IPA from $(DECRYPTED_IPA) (v$(TARGET_VERSION))"
@@ -132,10 +139,41 @@ ipa:: chinlan
 	  exit 1; \
 	fi
 	@TARGET_VERSION="$(TARGET_VERSION)" ./shared/tools/build_patched_ipa.sh \
-	  --recipe    "$(IPA_RECIPE)" \
-	  --framework "$(IPA_FRAMEWORK)" \
-	  --dylib     "$(IPA_DYLIB)" \
-	  --input     "$(DECRYPTED_IPA)"
+	  --recipe            "$(IPA_RECIPE)" \
+	  --framework         "$(IPA_FRAMEWORK)" \
+	  --dylib             "$(IPA_DYLIB)" \
+	  --input             "$(DECRYPTED_IPA)" \
+	  --output            "$(IPA_OUT)" \
+	  --bundle-id-suffix  "$(BUNDLE_ID_SUFFIX)"
+
+# ---------------------------------------------------------------------------
+# TrollStore-backed IPA deploy on a JB device.
+#   Ships the patched IPA to the device via SSH, installs it through
+#   trollstorehelper (force flag, so it overrides an existing Sideloadly /
+#   AltStore build with the same bundle id), and relaunches the app.
+#   Kept separate from Theos's own `install::` (JB rootless .deb install)
+#   so `make deploy` targets only the IPA path and doesn't drag in the
+#   JB dpkg install as a side effect.
+#
+#   Override on the command line or in .env:
+#     TROLLSTORE_HELPER        — trollstorehelper binary path on the device
+#     INSTALLED_IPA_BUNDLE_ID  — bundle id used to relaunch the app
+#     DEVICE_USER              — SSH user (defaults to root)
+# ---------------------------------------------------------------------------
+TROLLSTORE_HELPER        ?= /var/jb/Applications/TrollStorePersistenceHelper.app/trollstorehelper
+INSTALLED_IPA_BUNDLE_ID  ?= $(TARGET_BUNDLE_ID)$(if $(BUNDLE_ID_SUFFIX),.$(BUNDLE_ID_SUFFIX),)
+DEVICE_USER              ?= root
+
+.PHONY: deploy
+deploy: ipa
+	@echo "==> scp $(notdir $(IPA_OUT)) -> $(DEVICE_USER)@$(THEOS_DEVICE_IP):/tmp/"
+	@scp -q $(IPA_OUT) $(DEVICE_USER)@$(THEOS_DEVICE_IP):/tmp/$(notdir $(IPA_OUT))
+	@echo "==> trollstorehelper install force /tmp/$(notdir $(IPA_OUT))"
+	@ssh $(DEVICE_USER)@$(THEOS_DEVICE_IP) '$(TROLLSTORE_HELPER) install force /tmp/$(notdir $(IPA_OUT))'
+	@echo "==> launching $(TARGET_PROCESS) ($(INSTALLED_IPA_BUNDLE_ID))"
+	@ssh $(DEVICE_USER)@$(THEOS_DEVICE_IP) 'sleep 1; (open $(INSTALLED_IPA_BUNDLE_ID) 2>/dev/null \
+	    || uiopen $(INSTALLED_IPA_BUNDLE_ID):// 2>/dev/null \
+	    || echo "no launcher tool; start $(TARGET_PROCESS) manually")'
 
 .PHONY: hooks
 hooks::
