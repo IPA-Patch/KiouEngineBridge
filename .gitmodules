@@ -4,3 +4,6 @@
 [submodule "Sources/Chinlan"]
 	path = Sources/Chinlan
 	url = https://github.com/IPA-Patch/Chinlan.git
+[submodule "vendor/KIOU-Hook"]
+	path = vendor/KIOU-Hook
+	url = https://github.com/IPA-Patch/KIOU-Hook.git
