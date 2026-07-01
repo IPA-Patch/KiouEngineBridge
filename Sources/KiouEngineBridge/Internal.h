@@ -71,7 +71,7 @@
 // actually consumes because the cave's `B orig + 4` re-enters the real
 // function and that return value is what the caller sees.
 // ---------------------------------------------------------------------------
-#if KIOU_CHINLAN
+#if IPA_CHINLAN
 #  define KIOU_CALL_ORIG_VOID(ORIG, ...)         ((void)0)
 #  define KIOU_CALL_ORIG_RET(RET_T, ORIG, ...)   ((RET_T){0})
 #else
@@ -577,7 +577,7 @@ enum kiou_bridge_entry_slot_id {
 // re-entering the dispatcher cave. On JB the trampolines installed by
 // MSHookFunction already provide that bypass via `orig_*`, so the array
 // is not defined and the helper macros short-circuit to `(ORIG)`.
-#if KIOU_CHINLAN
+#if IPA_CHINLAN
 extern void * volatile g_inject_entry[KIOU_BR_HOOK__COUNT];
 
 // Return the fixed-allocation-order cave-bypass entry for one hook id.
@@ -640,7 +640,7 @@ static inline void *kiou_bridge_bypass_entry_for_hook(uint32_t hook_id) {
 
 #define KIOU_BR_EXPECTED_CAVE_COUNT KIOU_BR_HOOK__COUNT
 
-#if KIOU_CHINLAN
+#if IPA_CHINLAN
 _Static_assert(KIOU_BR_CAVE_SIZE == 84, "Branch F assumes 84-byte caves");
 _Static_assert(KIOU_BR_CAVE_BYPASS_OFFSET == 0x4C,
                "Branch F assumes bypass entry at cave+0x4C "

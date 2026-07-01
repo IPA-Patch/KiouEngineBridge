@@ -265,7 +265,7 @@ static void *loginArgsSwapDeviceId(void *deviceId, void *distinctId) {
     return deviceId;
 }
 
-#if !KIOU_CHINLAN
+#if !IPA_CHINLAN
 // JB MSHookFunction targets. On chinlan these are unused (the entry hooks
 // below cover that flavor), so the whole pair is compiled out to silence
 // -Werror=unused-variable on KIOU_CALL_ORIG_RET's varargs-dropping macro.
@@ -286,7 +286,7 @@ void *HookLoginArgsCreate(void *deviceId, void *distinctId) {
 // the caller after our hook returns; we substitute the args ourselves and
 // invoke orig via the per-site bypass entry, which runs orig's body and
 // produces the real ILoginArgs* / IRegisterUserArgs* in x0.
-#if KIOU_CHINLAN
+#if IPA_CHINLAN
 void *HookLoginArgsCreateEntry(void *deviceId, void *distinctId) {
     void *useDeviceId = loginArgsSwapDeviceId(deviceId, distinctId);
     LoginArgsCreate_t bypass =
@@ -405,7 +405,7 @@ void HookRunLoginSeqMoveNext(void *self) {
     observeRunLoginSeqCompletion(self);
 }
 
-#if KIOU_CHINLAN
+#if IPA_CHINLAN
 // Chinlan entry-cave hook. The cave hands us pristine x0 (= self) and
 // RETs after we return; orig isn't run for us. We invoke it via the
 // per-site bypass entry so the state machine actually advances to
@@ -619,7 +619,7 @@ void HookGetSelfProfileMoveNext(void *self) {
     observeGetSelfProfileCompletion(self);
 }
 
-#if KIOU_CHINLAN
+#if IPA_CHINLAN
 // Chinlan entry-cave hook. Same shape as the RunLoginSeq entry hook:
 // the cave hands us pristine x0 and RETs after we return, so we have to
 // run orig ourselves via the per-site bypass entry before reading the
@@ -875,7 +875,7 @@ bool HookAccountExists(void *data) {
 // g_inject_entry by KEBBridgeChinlanPublish) and feed its return into the
 // shared body. Returning a bool here propagates to the caller because the
 // entry cave's tail is RET — the cave never overwrites x0.
-#if KIOU_CHINLAN
+#if IPA_CHINLAN
 bool HookAccountExistsEntry(void *data) {
     bool origResult = false;
     AccountExists_t bypass =
@@ -945,7 +945,7 @@ void KEBSwitchAccount(NSString *uuid) {
 // ---------------------------------------------------------------------------
 // Installer
 // ---------------------------------------------------------------------------
-#if !KIOU_CHINLAN
+#if !IPA_CHINLAN
 void InstallAccountObserveHook(uintptr_t unityBase) {
 
     // Resolve il2cpp_string_new from UnityFramework so HookLoginArgsCreate
@@ -1041,4 +1041,4 @@ void InstallAccountObserveHook(uintptr_t unityBase) {
     IPALog(@"[ACCOUNT] chinlan: AccountExists observer wired via cave; "
              @"LoginReply / Register / TDAnalytics hooks are JB-only");
 }
-#endif // !KIOU_CHINLAN
+#endif // !IPA_CHINLAN

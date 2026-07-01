@@ -52,7 +52,7 @@ static UniTaskRet HookBackToTitleRunAsync(void *ct) {
     return (UniTaskRet){ NULL, NULL };
 }
 
-#if !KIOU_CHINLAN
+#if !IPA_CHINLAN
 void InstallBackToTitleSuppressHook(uintptr_t unityBase) {
     uintptr_t addr = unityBase + RVA_BACK_TO_TITLE_RUN_ASYNC;
     MSHookFunction((void *)addr,
@@ -64,4 +64,4 @@ void InstallBackToTitleSuppressHook(uintptr_t unityBase) {
               (unsigned long)addr,
               (unsigned)RVA_BACK_TO_TITLE_RUN_ASYNC]);
 }
-#endif  // !KIOU_CHINLAN
+#endif  // !IPA_CHINLAN

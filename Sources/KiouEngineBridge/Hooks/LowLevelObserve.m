@@ -287,7 +287,7 @@ void InstallLowLevelObserveHook(uintptr_t unityBase) {
     g_Move_ToStringSFEN =
         (Move_ToStringSFEN_t)(void *)(unityBase + RVA_SUNFISH_MOVE_TO_STRING_SFEN);
 
-#if !KIOU_CHINLAN
+#if !IPA_CHINLAN
     {
         uintptr_t addr = unityBase + RVA_ADAPTER_TRY_MAKE_MOVE_OUT;
         MSHookFunction((void *)addr,
@@ -321,5 +321,5 @@ void InstallLowLevelObserveHook(uintptr_t unityBase) {
     //     keeps the hook surface tight.
     IPALog(@"[LOWLEVEL] chinlan build — site hooks driven by cave/SLOT, "
              @"symbol pointers resolved.");
-#endif  // !KIOU_CHINLAN
+#endif  // !IPA_CHINLAN
 }

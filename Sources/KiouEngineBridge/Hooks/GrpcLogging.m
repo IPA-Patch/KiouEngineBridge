@@ -320,7 +320,7 @@ void *HookHttpClientSendAsyncOpt(void *self, void *request, int32_t opt, void *c
 // ---------------------------------------------------------------------------
 // Installer
 // ---------------------------------------------------------------------------
-#if KIOU_CHINLAN
+#if IPA_CHINLAN
 // ---------------------------------------------------------------------------
 // Chinlan entry hook — HttpMessageInvoker.SendAsync(request, ct)
 // x0=self, x1=HttpRequestMessage*, x2=CancellationToken
@@ -415,4 +415,4 @@ void InstallGrpcLoggingHook(uintptr_t unityBase) {
               @"[GRPC] hooked HttpClient.SendAsync(opt) @0x%lx",
               (unsigned long)addr7]);
 }
-#endif // KIOU_CHINLAN / !KIOU_CHINLAN
+#endif // IPA_CHINLAN / !IPA_CHINLAN
