@@ -546,10 +546,19 @@ enum kiou_bridge_hook_id {
     KIOU_BR_HOOK_RUN_LOGIN_SEQ_MOVENEXT,
     KIOU_BR_HOOK_GET_SELF_PROFILE_MOVENEXT,
 
-    // HttpMessageInvoker.SendAsync — CAVE_ENTRY for x-user-id header swap
-    // on account switch. Entry cave so the hook can rewrite request headers
-    // before calling bypass to forward to orig.
+    // HttpMessageInvoker.SendAsync — CAVE_ENTRY kept as bare passthrough on
+    // 1.0.2 build 12: touching the request in the hook body trips a Yaha
+    // (Cysharp) borrow-tracker panic. The x-user-id swap has moved to
+    // HeaderProvider.SetOrUpdateHeader below, which runs at the managed
+    // layer before Yaha ever sees the request.
     KIOU_BR_HOOK_HTTPMSGINVOKER_SEND_ASYNC,
+
+    // Project.Network.HeaderProvider.SetOrUpdateHeader — CAVE_ENTRY.
+    // Managed-only site where each per-request header is registered; we
+    // hook it to swap the `x-user-id` value to the pending device's user id
+    // during account switching. Called well before HttpMessageInvoker /
+    // Yaha, so no borrow-tracker interaction.
+    KIOU_BR_HOOK_HEADER_PROVIDER_SET_OR_UPDATE_HEADER,
 
     KIOU_BR_HOOK__COUNT,
 };
@@ -567,6 +576,7 @@ enum kiou_bridge_entry_slot_id {
     KIOU_BR_ENTRY_SLOT_RUN_LOGIN_SEQ_MOVENEXT,
     KIOU_BR_ENTRY_SLOT_GET_SELF_PROFILE_MOVENEXT,
     KIOU_BR_ENTRY_SLOT_HTTPMSGINVOKER_SEND_ASYNC,
+    KIOU_BR_ENTRY_SLOT_HEADER_PROVIDER_SET_OR_UPDATE_HEADER,
 
     KIOU_BR_ENTRY_SLOT__COUNT,
 };
@@ -752,6 +762,7 @@ void HookReceiveTimeoutMoveNext(void *self);
 void HookRunLoginSeqMoveNextEntry(void *self);
 void HookGetSelfProfileMoveNextEntry(void *self);
 void *HookHttpMsgInvokerSendAsyncEntry(void *self, void *request, void *ct);
+void  HookHeaderProviderSetOrUpdateEntry(void *self, void *keyStr, void *valueStr, void *mi);
 void HookGStateNotifyStateSyncedForCurrentPosition(void);
 void ResolveGameStateStoreNotifyStateSynced(uintptr_t unityBase);
 void HookGStateRememberStore(void *self);
