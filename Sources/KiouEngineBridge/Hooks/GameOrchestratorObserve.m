@@ -44,7 +44,7 @@
 // this does not require an active GameOrchestrator instance — it works from
 // title/home screens where no match has started yet. Pass NULL ct (= default
 // CancellationToken).
-#define RVA_BACK_TO_TITLE_RUN_ASYNC 0x5CF712C
+#define RVA_BACK_TO_TITLE_RUN_ASYNC 0x5CFC394
 
 // BackToTitleSequence.<RunAsync>d__0.MoveNext — observe state transitions to
 // figure out which side-effect runs the actual scene transition (so we can
@@ -69,7 +69,19 @@ typedef UniTaskRet (*GameOrch_ActivateAsync_t)(void *self, void *setup,
                                                void *assetLoader, void *ct);
 static GameOrch_ActivateAsync_t orig_GameOrch_ActivateAsync = NULL;
 
-typedef UniTaskRet (*BackToTitleRunAsync_t)(void *ct);
+// il2cpp static-method signature includes a trailing MethodInfo* — the body
+// dereferences it at runtime (shared-generic dispatch and static-field
+// bookkeeping both go through it). The 1-arg typedef `(void *ct)` worked on
+// JB because the caller passed a real MethodInfo in X1 through
+// MSHookFunction's trampoline. When *we* call the raw RVA directly (chinlan
+// fallback below), X1 is register garbage and the method faults on the
+// first MethodInfo dereference — silent SIGABRT / no .ips. KIOU-Hook takes
+// the same 2-arg approach: see vendor/KIOU-Hook/Hook/AccountObserve.m's
+// BackToTitleRunAsync_t and KIOUNavigateToTitleScene, which passes
+// (NULL, NULL). Passing NULL for MethodInfo is safe because
+// BackToTitleSequence.RunAsync is a plain static (not shared-generic) —
+// KIOU-Hook has been shipping this call shape without incident.
+typedef UniTaskRet (*BackToTitleRunAsync_t)(void *ct, void *mi);
 
 // Trampoline pointer set by InstallBackToTitleSuppressHook — points to the
 // real BackToTitleSequence.RunAsync bypassing the suppress hook. Declared
@@ -103,8 +115,9 @@ void KEBNavigateToTitleScene(void) {
     @try {
         // CancellationToken is a 1-word value type whose internal source
         // pointer being null means "no cancellation". Passing NULL as the
-        // first integer arg encodes default(CancellationToken).
-        (void)fn(NULL);
+        // first integer arg encodes default(CancellationToken); the trailing
+        // NULL is the il2cpp MethodInfo* (see typedef comment above).
+        (void)fn(NULL, NULL);
         IPALog(@"[ACCOUNT] BackToTitleSequence.RunAsync invoked");
     } @catch (NSException *e) {
         IPALog([NSString stringWithFormat:
@@ -168,7 +181,7 @@ void HookBackToTitleMoveNext(void *self) {
 // ---------------------------------------------------------------------------
 // Installer. Called once from Tweak.m::installUnityHooks().
 // ---------------------------------------------------------------------------
-#if !KIOU_CHINLAN
+#if !IPA_CHINLAN
 void InstallGameOrchestratorObserveHook(uintptr_t unityBase) {
     uintptr_t addr = unityBase + RVA_GAMEORCH_ACTIVATE;
     MSHookFunction((void *)addr, (void *)HookGameOrchActivateAsync,
@@ -184,7 +197,7 @@ void InstallGameOrchestratorObserveHook(uintptr_t unityBase) {
               @"(base+0x%lx)",
               (unsigned long)addr, (unsigned long)RVA_GAMEORCH_ACTIVATE]);
 }
-#endif  // !KIOU_CHINLAN
+#endif  // !IPA_CHINLAN
 // On the chinlan build, the static cave routes GameOrchestrator.ActivateAsync
 // through the SLOT-published dispatcher (see recipes/kiouenginebridge.py
 // CAVE_PATCHES entry KIOU_BR_HOOK_GAMEORCH_ACTIVATE). The dispatcher will

@@ -71,7 +71,7 @@
 // actually consumes because the cave's `B orig + 4` re-enters the real
 // function and that return value is what the caller sees.
 // ---------------------------------------------------------------------------
-#if KIOU_CHINLAN
+#if IPA_CHINLAN
 #  define KIOU_CALL_ORIG_VOID(ORIG, ...)         ((void)0)
 #  define KIOU_CALL_ORIG_RET(RET_T, ORIG, ...)   ((RET_T){0})
 #else
@@ -452,7 +452,7 @@ void KEBNavigateToTitleScene(void);
 // __DATA,__bss. MUST match `HOOK_SLOT_RVA` in recipes/kiouenginebridge.py;
 // if one moves, both move together (the recipe pins the slot at patch
 // time, this header pins where the dylib publishes its dispatcher).
-#define KIOU_BR_HOOK_SLOT_RVA 0x8F90CC0
+#define KIOU_BR_HOOK_SLOT_RVA 0x8F9D4B8
 
 // RVA of the entry-slot table inside UnityFramework. Each CAVE_ENTRY
 // site reads its 8-byte slot at `ENTRY_SLOT_BASE_RVA + slot * 8` and
@@ -468,7 +468,7 @@ void KEBNavigateToTitleScene(void);
 // a region verified all-zero via frida MemoryAccessMonitor before and
 // after a full login. See the same-named constant in the recipe for the
 // reservation bound.
-#define KIOU_BR_ENTRY_SLOT_BASE_RVA 0x091E91B8
+#define KIOU_BR_ENTRY_SLOT_BASE_RVA 0x8F9D3B8
 
 // Reserved sibling RVA for a future in-framework inject-entry table.
 // Branch F currently reconstructs bypass entries dylib-locally from cave
@@ -489,7 +489,7 @@ void KEBNavigateToTitleScene(void);
 // bypasses the dispatcher AND avoids running the epilogue's LDP (which would
 // trash the inject path's own frame). Calling cave+0x48 would pop the wrong
 // X29/X30 pair off the caller's stack and corrupt the frame pointer.
-#define KIOU_BR_CAVE_REGION_START  0x826A000
+#define KIOU_BR_CAVE_REGION_START  0x8270040
 #define KIOU_BR_CAVE_SIZE          84
 #define KIOU_BR_CAVE_BYPASS_OFFSET 0x4C
 
@@ -546,10 +546,19 @@ enum kiou_bridge_hook_id {
     KIOU_BR_HOOK_RUN_LOGIN_SEQ_MOVENEXT,
     KIOU_BR_HOOK_GET_SELF_PROFILE_MOVENEXT,
 
-    // HttpMessageInvoker.SendAsync — CAVE_ENTRY for x-user-id header swap
-    // on account switch. Entry cave so the hook can rewrite request headers
-    // before calling bypass to forward to orig.
+    // HttpMessageInvoker.SendAsync — CAVE_ENTRY kept as bare passthrough on
+    // 1.0.2 build 12: touching the request in the hook body trips a Yaha
+    // (Cysharp) borrow-tracker panic. The x-user-id swap has moved to
+    // HeaderProvider.SetOrUpdateHeader below, which runs at the managed
+    // layer before Yaha ever sees the request.
     KIOU_BR_HOOK_HTTPMSGINVOKER_SEND_ASYNC,
+
+    // Project.Network.HeaderProvider.SetOrUpdateHeader — CAVE_ENTRY.
+    // Managed-only site where each per-request header is registered; we
+    // hook it to swap the `x-user-id` value to the pending device's user id
+    // during account switching. Called well before HttpMessageInvoker /
+    // Yaha, so no borrow-tracker interaction.
+    KIOU_BR_HOOK_HEADER_PROVIDER_SET_OR_UPDATE_HEADER,
 
     KIOU_BR_HOOK__COUNT,
 };
@@ -567,6 +576,7 @@ enum kiou_bridge_entry_slot_id {
     KIOU_BR_ENTRY_SLOT_RUN_LOGIN_SEQ_MOVENEXT,
     KIOU_BR_ENTRY_SLOT_GET_SELF_PROFILE_MOVENEXT,
     KIOU_BR_ENTRY_SLOT_HTTPMSGINVOKER_SEND_ASYNC,
+    KIOU_BR_ENTRY_SLOT_HEADER_PROVIDER_SET_OR_UPDATE_HEADER,
 
     KIOU_BR_ENTRY_SLOT__COUNT,
 };
@@ -577,7 +587,7 @@ enum kiou_bridge_entry_slot_id {
 // re-entering the dispatcher cave. On JB the trampolines installed by
 // MSHookFunction already provide that bypass via `orig_*`, so the array
 // is not defined and the helper macros short-circuit to `(ORIG)`.
-#if KIOU_CHINLAN
+#if IPA_CHINLAN
 extern void * volatile g_inject_entry[KIOU_BR_HOOK__COUNT];
 
 // Return the fixed-allocation-order cave-bypass entry for one hook id.
@@ -640,7 +650,7 @@ static inline void *kiou_bridge_bypass_entry_for_hook(uint32_t hook_id) {
 
 #define KIOU_BR_EXPECTED_CAVE_COUNT KIOU_BR_HOOK__COUNT
 
-#if KIOU_CHINLAN
+#if IPA_CHINLAN
 _Static_assert(KIOU_BR_CAVE_SIZE == 84, "Branch F assumes 84-byte caves");
 _Static_assert(KIOU_BR_CAVE_BYPASS_OFFSET == 0x4C,
                "Branch F assumes bypass entry at cave+0x4C "
@@ -752,6 +762,7 @@ void HookReceiveTimeoutMoveNext(void *self);
 void HookRunLoginSeqMoveNextEntry(void *self);
 void HookGetSelfProfileMoveNextEntry(void *self);
 void *HookHttpMsgInvokerSendAsyncEntry(void *self, void *request, void *ct);
+void  HookHeaderProviderSetOrUpdateEntry(void *self, void *keyStr, void *valueStr, void *mi);
 void HookGStateNotifyStateSyncedForCurrentPosition(void);
 void ResolveGameStateStoreNotifyStateSynced(uintptr_t unityBase);
 void HookGStateRememberStore(void *self);

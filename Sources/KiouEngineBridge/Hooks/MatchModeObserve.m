@@ -607,7 +607,7 @@ DEFINE_END_HOOK(Replay,    "RecordReplayMode", g_recordReplayModeCache,
 // dispatcher (KIOU_BR_HOOK_*_INIT / _START / _OPM / _END in
 // recipes/kiouenginebridge.py), so the installer is omitted there.
 // ---------------------------------------------------------------------------
-#if !KIOU_CHINLAN
+#if !IPA_CHINLAN
 void InstallMatchModeObserveHook(uintptr_t unityBase) {
     struct { const char *tag; const char *what; uintptr_t rva;
              void *hook; void **origSlot; } entries[] = {
@@ -672,7 +672,7 @@ void InstallMatchModeObserveHook(uintptr_t unityBase) {
                   (unsigned long)addr, (unsigned long)entries[i].rva]);
     }
 }
-#else   // KIOU_CHINLAN
+#else   // IPA_CHINLAN
 // On the chinlan build the static cave + SLOT dispatcher drives every hook
 // body, so MSHookFunction is never called.
 //
@@ -694,4 +694,4 @@ void InstallMatchModeObserveHook(uintptr_t unityBase) {
     IPALog(@"[MMODE] chinlan: install is a no-op — orig_* OPM slots stay "
              @"NULL so the bypass-entry path in inject_pickRoute() is taken.");
 }
-#endif  // !KIOU_CHINLAN
+#endif  // !IPA_CHINLAN

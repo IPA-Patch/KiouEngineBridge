@@ -78,5 +78,9 @@ SITES = [
 
     # HttpMessageInvoker.SendAsync vtable thunk
     (0x607C974, "000840f9", "KIOU_BR_HOOK_HTTPMSGINVOKER_SEND_ASYNC", CAVE_ENTRY, "HttpMessageInvoker.SendAsync"),
+
+    # HeaderProvider.SetOrUpdateHeader — managed-only x-user-id swap for
+    # account switching (see v1_0_2.py for the full rationale).
+    (0x5BD4C80, "f657bda9", "KIOU_BR_HOOK_HEADER_PROVIDER_SET_OR_UPDATE_HEADER", CAVE_ENTRY, "Project.Network.HeaderProvider.SetOrUpdateHeader"),
 ]
 # fmt: on

@@ -320,7 +320,7 @@ void *HookHttpClientSendAsyncOpt(void *self, void *request, int32_t opt, void *c
 // ---------------------------------------------------------------------------
 // Installer
 // ---------------------------------------------------------------------------
-#if KIOU_CHINLAN
+#if IPA_CHINLAN
 // ---------------------------------------------------------------------------
 // Chinlan entry hook — HttpMessageInvoker.SendAsync(request, ct)
 // x0=self, x1=HttpRequestMessage*, x2=CancellationToken
@@ -328,11 +328,52 @@ void *HookHttpClientSendAsyncOpt(void *self, void *request, int32_t opt, void *c
 // x-user-id header so account-switch logins are accepted by the server.
 // ---------------------------------------------------------------------------
 void *HookHttpMsgInvokerSendAsyncEntry(void *self, void *request, void *ct) {
-    swapUserIdHeader(request);
+    // 1.0.2 build 12: touching `request` (or `self` field 0x10) here trips a
+    // Yaha (Cysharp) borrow-tracker panic inside HttpHeaders.GetEnumerator —
+    // silent SIGABRT with no .ips. The x-user-id swap lives at
+    // HeaderProvider.SetOrUpdateHeader (see below); this stays a bare
+    // passthrough so the cave stays wired for future observability without
+    // ever borrowing the request. Same shape KIOU-Hook ships (see
+    // vendor/KIOU-Hook/Hook/GrpcLogging.m).
+    (void)request;
     typedef void *(*SendAsync_t)(void *, void *, void *);
     SendAsync_t bypass =
         (SendAsync_t)g_inject_entry[KIOU_BR_HOOK_HTTPMSGINVOKER_SEND_ASYNC];
     return bypass ? bypass(self, request, ct) : NULL;
+}
+
+// ---------------------------------------------------------------------------
+// Chinlan entry hook — Project.Network.HeaderProvider.SetOrUpdateHeader
+// (self, il2cppString key, il2cppString value, MethodInfo *mi)
+//
+// This is the managed-layer entry point where each per-request header is
+// registered on the HeaderProvider. Runs before any HTTP / Yaha work, so
+// we can freely inspect / replace the value il2cpp string without touching
+// the borrowed HttpRequestMessage. If the key is "x-user-id" and an
+// account switch is armed (KEBPendingDeviceId matches a saved account),
+// swap the value to that account's target userId; the fresh il2cpp string
+// then flows into the request headers that get sent on the wire. The
+// bypass call runs the original body with either the swapped or the
+// original value.
+// ---------------------------------------------------------------------------
+void HookHeaderProviderSetOrUpdateEntry(void *self, void *keyStr, void *valueStr, void *mi) {
+    NSString *key = grpcReadIl2CppString(keyStr);
+    if ([key isEqualToString:@"x-user-id"]) {
+        NSString *pendingDevice = KEBPendingDeviceId();
+        NSString *targetUserId  = targetUserIdForPendingDevice(pendingDevice);
+        if (targetUserId.length > 0 && g_GrpcStringNew) {
+            void *newValue = g_GrpcStringNew(targetUserId.UTF8String);
+            if (newValue) {
+                valueStr = newValue;
+                IPALog([NSString stringWithFormat:
+                          @"[HEADER] x-user-id swapped → %@", targetUserId]);
+            }
+        }
+    }
+    typedef void (*SetOrUpdate_t)(void *, void *, void *, void *);
+    SetOrUpdate_t bypass =
+        (SetOrUpdate_t)g_inject_entry[KIOU_BR_HOOK_HEADER_PROVIDER_SET_OR_UPDATE_HEADER];
+    if (bypass) bypass(self, keyStr, valueStr, mi);
 }
 
 void InstallGrpcLoggingHook(uintptr_t unityBase) {
@@ -415,4 +456,4 @@ void InstallGrpcLoggingHook(uintptr_t unityBase) {
               @"[GRPC] hooked HttpClient.SendAsync(opt) @0x%lx",
               (unsigned long)addr7]);
 }
-#endif // KIOU_CHINLAN / !KIOU_CHINLAN
+#endif // IPA_CHINLAN / !IPA_CHINLAN

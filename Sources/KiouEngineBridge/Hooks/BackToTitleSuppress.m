@@ -26,11 +26,16 @@
 // ===========================================================================
 
 // BackToTitleSequence.RunAsync(CancellationToken) — static method.
-// dump.cs:1479425  RVA: 0x5CF712C
-// Signature (AAPCS64): void *ct → x0; returns UniTaskRet in {x0, x1}.
-#define RVA_BACK_TO_TITLE_RUN_ASYNC  0x5CF712C
+// dump.cs:1479823 (1.0.2)  RVA: 0x5CFC394
+// Signature (AAPCS64): void *ct → x0, MethodInfo * → x1; returns UniTaskRet
+// in {x0, x1}.
+#define RVA_BACK_TO_TITLE_RUN_ASYNC  0x5CFC394
 
-typedef UniTaskRet (*BackToTitleRunAsync_t)(void *ct);
+// The trailing MethodInfo* is part of il2cpp's static-method ABI — see the
+// same-named typedef in Hook_GameOrchestratorObserve.m for the reasoning.
+// The JB HookBackToTitleRunAsync body below only reads ct, so the extra
+// AAPCS64 arg is a silent no-op there.
+typedef UniTaskRet (*BackToTitleRunAsync_t)(void *ct, void *mi);
 // Exported so KEBNavigateToTitleScene (Hook_GameOrchestratorObserve.m) can
 // bypass the suppress hook and call the real RunAsync directly when making an
 // intentional back-to-title (e.g. account switch).
@@ -38,7 +43,8 @@ BackToTitleRunAsync_t orig_BackToTitleRunAsync = NULL;
 
 static uint32_t g_suppressCount = 0;
 
-static UniTaskRet HookBackToTitleRunAsync(void *ct) {
+static UniTaskRet HookBackToTitleRunAsync(void *ct, void *mi) {
+    (void)mi;
     uint32_t n = ++g_suppressCount;
     IPALog([NSString stringWithFormat:
               @"[BACK2TITLE] RunAsync suppressed (call#%u ct=%p) — "
@@ -52,7 +58,7 @@ static UniTaskRet HookBackToTitleRunAsync(void *ct) {
     return (UniTaskRet){ NULL, NULL };
 }
 
-#if !KIOU_CHINLAN
+#if !IPA_CHINLAN
 void InstallBackToTitleSuppressHook(uintptr_t unityBase) {
     uintptr_t addr = unityBase + RVA_BACK_TO_TITLE_RUN_ASYNC;
     MSHookFunction((void *)addr,
@@ -64,4 +70,4 @@ void InstallBackToTitleSuppressHook(uintptr_t unityBase) {
               (unsigned long)addr,
               (unsigned)RVA_BACK_TO_TITLE_RUN_ASYNC]);
 }
-#endif  // !KIOU_CHINLAN
+#endif  // !IPA_CHINLAN

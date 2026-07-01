@@ -217,7 +217,7 @@ static void *filterMatchFoundResult(void *reply, void *result) {
     return result;
 }
 
-#if !KIOU_CHINLAN
+#if !IPA_CHINLAN
 void *HookGetValidMatchFoundStatus(void *reply) {
     void *result = KIOU_CALL_ORIG_RET(void *, orig_GetValidMatchFoundStatus, reply);
     return filterMatchFoundResult(reply, result);
@@ -360,7 +360,7 @@ static void cacheJoinQueueParams(int32_t action, int32_t matchType,
               (int)mstEventMatchId, enableBeginnerSupport ? "true" : "false"]);
 }
 
-#if !KIOU_CHINLAN
+#if !IPA_CHINLAN
 void *HookArgsCreate(int32_t action, int32_t matchType,
                      int32_t rankRuleType, int32_t eventRuleType,
                      int32_t mstEventMatchId,
@@ -410,7 +410,7 @@ void *HookArgsCreateEntry(int32_t action, int32_t matchType,
 // ---------------------------------------------------------------------------
 // Installer
 // ---------------------------------------------------------------------------
-#if !KIOU_CHINLAN
+#if !IPA_CHINLAN
 void InstallMatchingFilterObserveHook(uintptr_t unityBase) {
     // Resolve the static Create fn pointer used by sendAction().
     g_ArgsCreate = (MatchStreamArgsCreate_t)(void *)
@@ -465,4 +465,4 @@ void InstallMatchingFilterObserveHook(uintptr_t unityBase) {
               @"[MFILTER] chinlan: filter hooks routed via entry slots; "
               @"ArgsCreate bypass=%p", (void *)g_ArgsCreate]);
 }
-#endif // !KIOU_CHINLAN
+#endif // !IPA_CHINLAN

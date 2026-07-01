@@ -58,7 +58,7 @@ static bool HookIsAfkEnabled(void *self) {
     return false;
 }
 
-#if !KIOU_CHINLAN
+#if !IPA_CHINLAN
 void InstallAfkSuppressHook(uintptr_t unityBase) {
     uintptr_t addr = unityBase + RVA_GAMEORCH_IS_AFK_ENABLED;
     MSHookFunction((void *)addr,
@@ -70,7 +70,7 @@ void InstallAfkSuppressHook(uintptr_t unityBase) {
               (unsigned long)addr,
               (unsigned)RVA_GAMEORCH_IS_AFK_ENABLED]);
 }
-#endif  // !KIOU_CHINLAN
+#endif  // !IPA_CHINLAN
 // On the chinlan build, IsAfkEnabled is replaced wholesale by a
 // `MOVZ W0, #0; RET` inline patch in recipes/kiouenginebridge.py (PATCHES),
 // so InstallAfkSuppressHook is intentionally omitted here.
