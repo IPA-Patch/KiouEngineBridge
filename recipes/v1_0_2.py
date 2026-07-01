@@ -90,5 +90,12 @@ SITES = [
 
     # HttpMessageInvoker.SendAsync vtable thunk
     (0x6082AC0, "000840f9", "KIOU_BR_HOOK_HTTPMSGINVOKER_SEND_ASYNC", CAVE_ENTRY, "HttpMessageInvoker.SendAsync"),
+
+    # HeaderProvider.SetOrUpdateHeader — managed-only x-user-id swap for
+    # account switching. Runs before Yaha borrows the HttpRequestMessage,
+    # so swapping the header value here avoids the SendAsync-time crash
+    # that touching `request` on the SendAsync hook body triggers on
+    # 1.0.2 build 12. Same call shape KIOU-Hook ships.
+    (0x5BD9EE8, "f657bda9", "KIOU_BR_HOOK_HEADER_PROVIDER_SET_OR_UPDATE_HEADER", CAVE_ENTRY, "Project.Network.HeaderProvider.SetOrUpdateHeader"),
 ]
 # fmt: on

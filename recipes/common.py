@@ -88,6 +88,7 @@ HOOK_IDS: dict[str, int] = {
     "KIOU_BR_HOOK_RUN_LOGIN_SEQ_MOVENEXT": 34,
     "KIOU_BR_HOOK_GET_SELF_PROFILE_MOVENEXT": 35,
     "KIOU_BR_HOOK_HTTPMSGINVOKER_SEND_ASYNC": 36,
+    "KIOU_BR_HOOK_HEADER_PROVIDER_SET_OR_UPDATE_HEADER": 37,
 }
 
 # Entry slot indices — one per CAVE_ENTRY site, must mirror Internal.h.
@@ -99,10 +100,11 @@ ENTRY_SLOT_INDEX: dict[str, int] = {
     "KIOU_BR_HOOK_MATCH_STREAM_ARGS_CREATE":     4,
     "KIOU_BR_HOOK_RUN_LOGIN_SEQ_MOVENEXT":       5,
     "KIOU_BR_HOOK_GET_SELF_PROFILE_MOVENEXT":    6,
-    "KIOU_BR_HOOK_HTTPMSGINVOKER_SEND_ASYNC":    7,
+    "KIOU_BR_HOOK_HTTPMSGINVOKER_SEND_ASYNC":              7,
+    "KIOU_BR_HOOK_HEADER_PROVIDER_SET_OR_UPDATE_HEADER":   8,
 }
 
-ENTRY_SLOT_COUNT    = 8
+ENTRY_SLOT_COUNT    = 9
 ENTRY_SLOT_CAPACITY = 32
 
 # ---------------------------------------------------------------------------
