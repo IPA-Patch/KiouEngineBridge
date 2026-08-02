@@ -60,6 +60,7 @@
                 "Anthropic.claude-code",
                 "EditorConfig.EditorConfig",
                 "PKief.material-icon-theme",
+                "WakaTime.vscode-wakatime",
                 "antfu.file-nesting",
                 "bierner.markdown-preview-github-styles",
                 "charliermarsh.ruff",
