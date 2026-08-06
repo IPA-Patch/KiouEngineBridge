@@ -63,6 +63,10 @@ CALLS = {
 # BoardPresenter.PlayMoveAnimationAsync(Move, CancellationToken).
 BOARD_ANIM_TAKES_PLAYER_SIDE = False
 
+# ILoginArgs.Create(string deviceId, string distinctId) — appsflyerId arrived
+# in 1.1.0.
+LOGIN_ARGS_TAKES_APPSFLYER_ID = False
+
 # Drifting field offsets — see recipes.common.FIELD_OFFSET_KEYS.
 FIELD_OFFSETS = {
     "SELF_PROFILE_RANK_LIST":          0x28,

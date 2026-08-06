@@ -711,7 +711,10 @@ bool HookAccountExistsEntry(void *data);
 // swap one il2cpp string argument (deviceId / distinctId) per the pending_*
 // override slots, then call orig via the cave bypass entry and forward
 // orig's return (the freshly built ILoginArgs* / IRegisterUserArgs*).
-void *HookLoginArgsCreateEntry(void *deviceId, void *distinctId);
+// appsflyerId is only meaningful when KIOU_BR_LOGIN_ARGS_TAKES_APPSFLYER_ID
+// is set; on older targets the entry cave leaves x2 undefined.
+void *HookLoginArgsCreateEntry(void *deviceId, void *distinctId,
+                               void *appsflyerId);
 void *HookRegisterUserArgsCreateEntry(void *userName, void *distinctId);
 
 // Matching filter chinlan-side entry hooks. GetValidMatchFoundStatus

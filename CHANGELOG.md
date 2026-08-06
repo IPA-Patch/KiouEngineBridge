@@ -25,6 +25,11 @@ All notable changes to KiouEngineBridge are documented here.
   `recipes/__init__.py` asserts every version supplies exactly those
   keys — a new recipe cannot be registered with a missing or misspelt
   entry point.
+- `KIOU_DIAG=dylib-only` / `KIOU_DIAG=caves-only` drop part of the patch
+  set so a launch crash can be bisected between the static binary
+  patches and the injected dylib without hand-editing a recipe. Pair
+  with `--bundle-id-suffix` to install the diagnostic build alongside
+  the real one.
 - `tools/gen_recipe_header.py` now emits `KIOU_BR_RVA_*`,
   `KIOU_BR_OFF_*`, and `KIOU_BR_BOARD_ANIM_TAKES_PLAYER_SIDE` into
   `Generated/RecipeConstants.h`.
@@ -55,6 +60,16 @@ All notable changes to KiouEngineBridge are documented here.
 - `SelfUserProfileStatus` field offsets are recipe-driven:
   1.1.0 inserted `userAttribute_` at 0x28 and pushed the rank and
   battle-record lists down 8 bytes (0x28/0x48 -> 0x30/0x50).
+- Crash immediately after login on 1.1.0: `ILoginArgs.Create` gained a
+  third `string appsflyerId` argument, but the entry hook was still
+  declared with two parameters. The entry cave hands the hook the
+  caller's registers untouched, so x2 held whatever the hook had last
+  put there; `Create` stored that as `LoginArgs.appsflyerId_` and
+  `CalculateSize()` faulted in `UTF8Encoding.GetByteCount`. The hook now
+  forwards the argument, gated on the recipe's new
+  `LOGIN_ARGS_TAKES_APPSFLYER_ID` (`KIOU_BR_LOGIN_ARGS_TAKES_APPSFLYER_ID`).
+  `ILoginArgs.Create` is the only hooked site or call target whose arity
+  drifted in 1.1.0 besides `PlayMoveAnimationAsync`.
 - 1.1.0 widened `BoardPresenter.PlayMoveAnimationAsync` to
   `(Move, PlayerSide, CancellationToken)`. The injector passes the
   mover's side explicitly when the recipe sets

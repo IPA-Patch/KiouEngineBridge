@@ -66,6 +66,12 @@ content = f"""\
 // PlayerSide between the Move and the CancellationToken.
 #define KIOU_BR_BOARD_ANIM_TAKES_PLAYER_SIDE {int(recipe.BOARD_ANIM_TAKES_PLAYER_SIDE)}
 
+// 1 when ILoginArgs.Create takes a third `string appsflyerId` argument.
+// The entry cave hands the hook the caller's x0..x7 untouched, so a hook
+// declared with too few parameters silently drops the tail arguments and
+// Create stores a garbage string pointer.
+#define KIOU_BR_LOGIN_ARGS_TAKES_APPSFLYER_ID {int(recipe.LOGIN_ARGS_TAKES_APPSFLYER_ID)}
+
 // il2cpp field offsets that have moved between app versions.
 {offsets}
 """

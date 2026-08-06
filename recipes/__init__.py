@@ -8,7 +8,8 @@ variable (default: ``1.0.1``) and re-exports the patch surface that
   HOOK_SLOT_RVA, PROBED_HOOK_SLOT_RVA
   CAVE_REGION, ENTRY_SLOT_BASE_RVA
   PATCHES, CAVE_PATCHES, _SITES
-  CALLS, FIELD_OFFSETS, BOARD_ANIM_TAKES_PLAYER_SIDE
+  CALLS, FIELD_OFFSETS, BOARD_ANIM_TAKES_PLAYER_SIDE,
+  LOGIN_ARGS_TAKES_APPSFLYER_ID
     (consumed by tools/gen_recipe_header.py, not by patch_macho)
 
 Adding a new version:
@@ -105,6 +106,7 @@ ENTRY_SLOT_BASE_RVA           = _v.ENTRY_SLOT_BASE_RVA
 CALLS                         = _v.CALLS
 FIELD_OFFSETS                 = _v.FIELD_OFFSETS
 BOARD_ANIM_TAKES_PLAYER_SIDE  = _v.BOARD_ANIM_TAKES_PLAYER_SIDE
+LOGIN_ARGS_TAKES_APPSFLYER_ID = _v.LOGIN_ARGS_TAKES_APPSFLYER_ID
 
 PATCHES, CAVE_PATCHES, _SITES = build_exports(
     _v.SITES,
@@ -113,3 +115,34 @@ PATCHES, CAVE_PATCHES, _SITES = build_exports(
     _v.HOOK_SLOT_RVA,
     _v.ENTRY_SLOT_BASE_RVA,
 )
+
+# ---------------------------------------------------------------------------
+# Diagnostic build modes — KIOU_DIAG
+#
+# A patched IPA that crashes at launch has two independent suspects: the
+# static binary patches (caves + the AFK inline patch) and the injected
+# dylib. Bisecting them by hand means hand-editing a recipe, so expose it
+# as a switch instead:
+#
+#   KIOU_DIAG=dylib-only   drop every binary patch; only LC_LOAD_DYLIB is
+#                          added. Boots => the binary patches are at fault.
+#                          Crashes => the dylib is.
+#   KIOU_DIAG=caves-only   keep the caves, drop the AFK inline patch.
+#
+# Always pair with --bundle-id-suffix so the diagnostic build installs
+# next to the real one instead of replacing it.
+# ---------------------------------------------------------------------------
+
+_diag = os.environ.get("KIOU_DIAG", "").strip().lower()
+
+if _diag == "dylib-only":
+    PATCHES = []
+    CAVE_PATCHES = []
+    print("  DIAG  KIOU_DIAG=dylib-only — no binary patches, dylib only")
+elif _diag == "caves-only":
+    PATCHES = []
+    print("  DIAG  KIOU_DIAG=caves-only — caves kept, AFK inline patch skipped")
+elif _diag:
+    raise ImportError(
+        f"unknown KIOU_DIAG={_diag!r}; expected 'dylib-only' or 'caves-only'"
+    )

@@ -71,7 +71,7 @@
                 "redhat.vscode-yaml",
                 "swiftlang.swift-vscode",
                 "tamasfe.even-better-toml"
-            ],
+              ],
             "settings": {}
         }
     }

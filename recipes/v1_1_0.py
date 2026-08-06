@@ -81,6 +81,14 @@ CALLS = {
 # presenter infer it.
 BOARD_ANIM_TAKES_PLAYER_SIDE = True
 
+# 1.1.0 widened ILoginArgs.Create to
+# Create(string deviceId, string distinctId, string appsflyerId);
+# LoginArgs gained the matching appsflyerId_ field. Our entry hook has to
+# forward x2 or Create stores whatever the hook left in that register, and
+# LoginArgs.CalculateSize faults in UTF8Encoding.GetByteCount on the bad
+# string pointer (observed as an EXC_BAD_ACCESS right after login).
+LOGIN_ARGS_TAKES_APPSFLYER_ID = True
+
 # Drifting field offsets — see recipes.common.FIELD_OFFSET_KEYS.
 # SelfUserProfileStatus gained userAttribute_ at 0x28, pushing every list
 # reference down 8 bytes.

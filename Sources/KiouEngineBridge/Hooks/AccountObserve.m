@@ -198,12 +198,25 @@ static NSString *readIl2CppString(void *strObj) {
 }
 
 // ---------------------------------------------------------------------------
-// Hook: ILoginArgs.Create(string deviceId, string distinctId)
+// Hook: ILoginArgs.Create(string deviceId, string distinctId[, string
+//                         appsflyerId])
 //   x0 = il2cpp string* deviceId
 //   x1 = il2cpp string* distinctId
+//   x2 = il2cpp string* appsflyerId  (1.1.0 and later only)
 //   returns ILoginArgs*
+//
+// The third argument arrived in 1.1.0 together with LoginArgs.appsflyerId_.
+// It has to be forwarded verbatim: the entry cave calls us with the caller's
+// registers intact, so a hook that ignores x2 leaves whatever it last put
+// there for Create to store, and LoginArgs.CalculateSize then faults inside
+// UTF8Encoding.GetByteCount on the bogus string pointer.
 // ---------------------------------------------------------------------------
+#if KIOU_BR_LOGIN_ARGS_TAKES_APPSFLYER_ID
+typedef void *(*LoginArgsCreate_t)(void *deviceId, void *distinctId,
+                                   void *appsflyerId);
+#else
 typedef void *(*LoginArgsCreate_t)(void *deviceId, void *distinctId);
+#endif
 static LoginArgsCreate_t orig_LoginArgsCreate __attribute__((unused)) = NULL;
 
 // ---------------------------------------------------------------------------
@@ -245,9 +258,13 @@ static void *registerUserArgsSwapDistinctId(void *userName, void *distinctId) {
     return distinctId;
 }
 
-static void *loginArgsSwapDeviceId(void *deviceId, void *distinctId) {
+// appsflyerId is logged for context only and may be NULL on app versions
+// whose ILoginArgs.Create predates that argument.
+static void *loginArgsSwapDeviceId(void *deviceId, void *distinctId,
+                                   void *appsflyerId) {
     NSString *origDev  = readIl2CppString(deviceId);
     NSString *origDist = readIl2CppString(distinctId);
+    NSString *origAf   = appsflyerId ? readIl2CppString(appsflyerId) : nil;
 
     NSString *pendingDevice = KEBPendingDeviceId();
     if (pendingDevice.length > 0 && g_il2cpp_string_new) {
@@ -255,15 +272,16 @@ static void *loginArgsSwapDeviceId(void *deviceId, void *distinctId) {
         if (newStr) {
             IPALog([NSString stringWithFormat:
                       @"[ACCOUNT] LoginArgs.Create deviceId substituted %@ → %@ "
-                      @"(distinctId untouched=%@)",
+                      @"(distinctId untouched=%@ appsflyerId=%@)",
                       origDev ?: @"(nil)", pendingDevice,
-                      origDist ?: @"(nil)"]);
+                      origDist ?: @"(nil)", origAf ?: @"(n/a)"]);
             return newStr;
         }
     }
     IPALog([NSString stringWithFormat:
-              @"[ACCOUNT] LoginArgs.Create deviceId=%@ distinctId=%@",
-              origDev ?: @"(nil)", origDist ?: @"(nil)"]);
+              @"[ACCOUNT] LoginArgs.Create deviceId=%@ distinctId=%@ "
+              @"appsflyerId=%@",
+              origDev ?: @"(nil)", origDist ?: @"(nil)", origAf ?: @"(n/a)"]);
     return deviceId;
 }
 
@@ -277,8 +295,9 @@ void *HookRegisterUserArgsCreate(void *userName, void *distinctId) {
                                userName, useDistinctId);
 }
 
+// The JB flavour targets 1.0.1 only, where Create still takes two arguments.
 void *HookLoginArgsCreate(void *deviceId, void *distinctId) {
-    void *useDeviceId = loginArgsSwapDeviceId(deviceId, distinctId);
+    void *useDeviceId = loginArgsSwapDeviceId(deviceId, distinctId, NULL);
     return KIOU_CALL_ORIG_RET(void *, orig_LoginArgsCreate,
                                useDeviceId, distinctId);
 }
@@ -289,8 +308,14 @@ void *HookLoginArgsCreate(void *deviceId, void *distinctId) {
 // invoke orig via the per-site bypass entry, which runs orig's body and
 // produces the real ILoginArgs* / IRegisterUserArgs* in x0.
 #if KIOU_CHINLAN
-void *HookLoginArgsCreateEntry(void *deviceId, void *distinctId) {
-    void *useDeviceId = loginArgsSwapDeviceId(deviceId, distinctId);
+void *HookLoginArgsCreateEntry(void *deviceId, void *distinctId,
+                               void *appsflyerId) {
+#if !KIOU_BR_LOGIN_ARGS_TAKES_APPSFLYER_ID
+    // This target's Create has no third parameter, so x2 holds whatever the
+    // caller happened to leave there — never read it, never forward it.
+    appsflyerId = NULL;
+#endif
+    void *useDeviceId = loginArgsSwapDeviceId(deviceId, distinctId, appsflyerId);
     LoginArgsCreate_t bypass =
         (LoginArgsCreate_t)g_inject_entry[KIOU_BR_HOOK_LOGIN_ARGS_CREATE];
     if (!bypass) {
@@ -299,7 +324,11 @@ void *HookLoginArgsCreateEntry(void *deviceId, void *distinctId) {
         return NULL;
     }
     @try {
+#if KIOU_BR_LOGIN_ARGS_TAKES_APPSFLYER_ID
+        return bypass(useDeviceId, distinctId, appsflyerId);
+#else
         return bypass(useDeviceId, distinctId);
+#endif
     } @catch (NSException *e) {
         IPALog([NSString stringWithFormat:
                   @"[ACCOUNT] LoginArgs.Create chinlan bypass threw: %@", e]);
