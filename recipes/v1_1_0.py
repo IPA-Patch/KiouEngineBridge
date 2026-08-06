@@ -21,24 +21,26 @@ BUILD = 15
 # disk over 0x94B8023..0x94BC000; 37 caves * 84 B = 0xC24, against 0x3FC0
 # available.
 CAVE_REGION          = (0x94B8040, 0x94BC000)
-# __DATA,__bss tail. reserve_hook_slot() claims the very last 8 bytes
-# (0xA2CA4B0), so take the 8 bytes below it and record the probe separately —
-# that leaves the tail slot to a sibling tweak and keeps patch_macho's drift
-# check comparing like with like (1.0.2 pinned PROBED to its own slot, so the
-# check has been reporting a false drift there).
-HOOK_SLOT_RVA        = 0xA2CA4A0
-PROBED_HOOK_SLOT_RVA = 0xA2CA4B0
-# Reserved sibling table (Branch F), kept 0xC0 below the hook slot exactly as
-# in 1.0.1/1.0.2.
-INJECT_ENTRY_TABLE_RVA        = 0xA2CA3E0
-PROBED_INJECT_ENTRY_TABLE_RVA = 0xA2CA3E0
-# Entry-slot table stays in __DATA,__common at the same offset into the
-# section as 1.0.1/1.0.2 used (+0x24BCF8): the dylib constructor runs before
+# Observer dispatcher slot — chinlan caves load this single 8-byte pointer.
+# It MUST live in __DATA,__common, not __bss: UnityRuntime overwrites __bss
+# during lazy il2cpp init, after KIOUChinlanPublish has already written our
+# pointer, so the cave's BLR X16 jumps to garbage (verified crash, recorded in
+# IPA-Patch/KIOU-Hook recipes/v1_0_2.py). Placed at __common end - 0xC5C0,
+# which is the entry-slot table + 0x200, matching KIOU-Hook on every version.
+HOOK_SLOT_RVA        = 0x0A516468
+# Canary only: the __bss tail reserve_hook_slot() probes. Keeping the real
+# probe value here means a future build that moves __bss still trips the drift
+# warning instead of silently agreeing with itself.
+PROBED_HOOK_SLOT_RVA = 0x0A2CA4B0
+# Reserved sibling table (Branch F), in __bss as on 1.0.1/1.0.2.
+INJECT_ENTRY_TABLE_RVA        = 0xA2BDBF8
+PROBED_INJECT_ENTRY_TABLE_RVA = 0xA2BDBF8
+# Entry-slot table stays in __DATA,__common: the dylib constructor runs before
 # Unity's il2cpp init and overwrites the slots with our function pointers, so
 # the staged garbage never gets BLR'd. Moving the slots into __bss breaks PAC
 # — iOS 18 expects function pointers in __bss/__data to be PAC-signed, and our
 # plain pointer + plain BLR cave crashes on auth check at the call site.
-ENTRY_SLOT_BASE_RVA  = 0x0A5161B8
+ENTRY_SLOT_BASE_RVA  = 0x0A516268
 ZERO_REGION_END_RVA  = 0x0A522A28
 
 # Project.Game.Presentation.GameOrchestrator.IsAfkEnabled()

@@ -8,12 +8,27 @@ from recipes.common import CAVE_OBSERVER, CAVE_ENTRY
 BUILD = 11
 
 CAVE_REGION          = (0x826A000, 0x826C000)
-HOOK_SLOT_RVA        = 0x8F90CC0
+# Observer dispatcher slot. The old 0x8F90CC0 sat in __DATA,__bss, which
+# UnityRuntime overwrites during lazy il2cpp init — i.e. after our constructor
+# publishes, so the cave's BLR X16 jumps to garbage (verified crash on 1.0.2,
+# recorded in IPA-Patch/KIOU-Hook recipes/v1_0_2.py). Everything the caves
+# touch now lives in __DATA,__common, which survives publish.
+#
+# Sections measured on the 1.0.1 UnityFramework:
+#   __DATA,__bss     0x8E76B80..0x8F90CD8
+#   __DATA,__common  0x8F90D00..0x091E91B8
+# KIOU-Hook pins 1.0.1 at 0x091E93B8, but that address is past __common's end
+# (it lands in __DATA segment padding, mapped but section-less) and our
+# machoops.assert_slot_in_bss rejects it. Use the same geometry the other two
+# versions use instead: table at __common end - 0xC7C0, dispatcher +0x200.
+HOOK_SLOT_RVA        = 0x091DCBF8
+# Canary only: the __bss tail reserve_hook_slot() probes. Kept so a layout
+# shift between builds still trips the drift warning.
 PROBED_HOOK_SLOT_RVA = 0x8F90CD0
 INJECT_ENTRY_TABLE_RVA        = 0x8F90C00
 PROBED_INJECT_ENTRY_TABLE_RVA = 0x8F90C00
-ENTRY_SLOT_BASE_RVA  = 0x091E91B8
-ZERO_REGION_END_RVA  = 0x091E93B8
+ENTRY_SLOT_BASE_RVA  = 0x091DC9F8
+ZERO_REGION_END_RVA  = 0x091E91B8
 
 AFK_SITE    = 0x59455D4
 AFK_ORIG_8  = "f44fbea9fd7b01a9"

@@ -30,6 +30,21 @@ All notable changes to KiouEngineBridge are documented here.
   `Generated/RecipeConstants.h`.
 
 ### Fixed
+- Launch crash on patched chinlan builds: `HOOK_SLOT_RVA` pointed into
+  `__DATA,__bss`, which UnityRuntime overwrites during lazy il2cpp init
+  — that happens *after* `KIOUChinlanPublish` writes our dispatcher
+  pointer, so the first cave to run did `BLR X16` through zeroed memory.
+  The dispatcher slot now lives in `__DATA,__common` right above the
+  entry-slot table on every version (1.0.1 0x091DCBF8, 1.0.2 0x091E93B8,
+  1.1.0 0x0A516468); `__common` survives the publish, as the entry slots
+  already demonstrated. 1.0.1 and 1.0.2 carried the same defect.
+  Diagnosis confirmed against IPA-Patch/KIOU-Hook, which records the
+  identical crash.
+- `PROBED_HOOK_SLOT_RVA` now holds each version's real `__bss` tail
+  (the address `reserve_hook_slot()` returns) instead of a copy of the
+  1.0.1 value, so the layout-drift warning is meaningful again. 1.0.1's
+  entry-slot table also moved fully inside `__common`: it used to start
+  exactly at the section's end, i.e. in `__DATA` segment padding.
 - 23 il2cpp entry points reachable from chinlan builds were hardcoded to
   1.0.1 addresses, so 1.0.2 chinlan builds were calling roughly
   0x4C00-0x5F00 short of the real functions (resign, move injection,

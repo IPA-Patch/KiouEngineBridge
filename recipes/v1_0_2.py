@@ -15,8 +15,15 @@ BUILD = 12
 # after __oslogstring (sibling tweak KiouForge uses the same window). 37 caves
 # * 84 B = 0xC24, fits comfortably in the 0x3FC0 of trailing zeros.
 CAVE_REGION          = (0x8270040, 0x8274000)
-HOOK_SLOT_RVA        = 0x8F90CC0
-PROBED_HOOK_SLOT_RVA = 0x8F90CC0
+# Observer dispatcher slot. 0x8F90CC0 landed in __DATA,__bss, which
+# UnityRuntime overwrites during lazy il2cpp init — after our publish, so the
+# cave's BLR X16 jumped to garbage (verified crash, recorded in
+# IPA-Patch/KIOU-Hook recipes/v1_0_2.py). Moved into __common just past the
+# entry-slot table, where publishes survive.
+# __DATA,__bss is 0x8E83340..0x8F9D4C0, __DATA,__common 0x8F9D4C0..0x091F5978.
+HOOK_SLOT_RVA        = 0x091E93B8
+# Canary only: the __bss tail reserve_hook_slot() probes.
+PROBED_HOOK_SLOT_RVA = 0x8F9D4B8
 INJECT_ENTRY_TABLE_RVA        = 0x8F90C00
 PROBED_INJECT_ENTRY_TABLE_RVA = 0x8F90C00
 # Keep the entry-slot table in __DATA,__common at the same RVA as 1.0.1 even
