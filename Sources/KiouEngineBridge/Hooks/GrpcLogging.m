@@ -92,9 +92,9 @@
 // HttpHeaders.TryAddWithoutValidation(string name, string value) — bypasses
 // header validation. Used to overwrite x-user-id mid-flight when switching
 // accounts (the server keys auth off this header, not LoginArgs.deviceId).
-#define RVA_HTTPHEADERS_TRYADD               0x608886C
+#define RVA_HTTPHEADERS_TRYADD               KIOU_BR_RVA_HTTPHEADERS_TRYADD
 // HttpHeaders.Remove(string name) — remove the existing entry before re-add.
-#define RVA_HTTPHEADERS_REMOVE               0x6088D24
+#define RVA_HTTPHEADERS_REMOVE               KIOU_BR_RVA_HTTPHEADERS_REMOVE
 
 // ---------------------------------------------------------------------------
 // State machine field offsets

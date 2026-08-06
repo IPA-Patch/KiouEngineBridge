@@ -106,6 +106,52 @@ ENTRY_SLOT_COUNT    = 8
 ENTRY_SLOT_CAPACITY = 32
 
 # ---------------------------------------------------------------------------
+# Runtime call targets.
+#
+# The dylib resolves these as ``unityBase + rva`` and calls them directly
+# (or, on JB, MSHooks them). They are not patch sites, so verify_sites
+# never looked at them — which is exactly how they stayed pinned to 1.0.1
+# values while the recipe moved on. Every per-version module must supply an
+# RVA for each key; tools/gen_recipe_header.py emits them as
+# ``KIOU_BR_RVA_<key>`` so the .m files never carry a literal again.
+# ---------------------------------------------------------------------------
+
+CALL_RVA_KEYS: tuple[str, ...] = (
+    "GAMEORCH_REQUEST_SURRENDER",
+    "GAMEORCH_ON_END_SEQUENCE_COMPLETED",
+    "BOARDPRESENTER_PLAY_MOVE_ANIMATION",
+    "MATCHCTRL_TRY_MAKE_LOCAL_MOVE",
+    "MATCHCTRL_SURRENDER_ASYNC",
+    "GAMESTATESTORE_SET_CURRENT_POSITION",
+    "GAMESTATESTORE_NOTIFY_PIECE_MOVED",
+    "GAMESTATESTORE_NOTIFY_STATE_SYNCED",
+    "BACK_TO_TITLE_RUN_ASYNC",
+    "CPU_MATCH_START_FREE",
+    "MATCHING_START_RANK",
+    "POSITION_GET_PIECE",
+    "PIECE_GET_PIECETYPE",
+    "POSITION_CREATE_BY_TYPE",
+    "POSITION_CREATE_FROM_SFEN",
+    "GAMECTRL_GET_USI_TEXT",
+    "POSITION_TO_SFEN",
+    "PSC_MOVE_CREATE",
+    "PSC_MOVE_CREATE_DROP",
+    "SUNFISH_MOVE_TO_STRING_SFEN",
+    "SUNFISH_MOVE_DROP",
+    "HTTPHEADERS_TRYADD",
+    "HTTPHEADERS_REMOVE",
+)
+
+# il2cpp field offsets the dylib hardcodes and that have drifted between
+# versions. Same deal as CALL_RVA_KEYS — emitted as ``KIOU_BR_OFF_<key>``.
+# Only fields that actually moved live here; a stable offset stays a plain
+# #define next to the code that reads it.
+FIELD_OFFSET_KEYS: tuple[str, ...] = (
+    "SELF_PROFILE_RANK_LIST",
+    "SELF_PROFILE_BATTLE_RECORD_LIST",
+)
+
+# ---------------------------------------------------------------------------
 # Cave payload builders
 # ---------------------------------------------------------------------------
 

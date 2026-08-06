@@ -5,13 +5,13 @@
 // ---------------------------------------------------------------------------
 #define RVA_GAMESTATESTORE_SET_BLACK_PLAYER_INFO 0x5A2CB64
 #define RVA_GAMESTATESTORE_SET_WHITE_PLAYER_INFO 0x5A2CBA0
-#define RVA_GAMESTATESTORE_NOTIFY_PIECE_MOVED    0x5A2CD24
-#define RVA_GAMESTATESTORE_NOTIFY_STATE_SYNCED   0x5A2CE64
+#define RVA_GAMESTATESTORE_NOTIFY_PIECE_MOVED    KIOU_BR_RVA_GAMESTATESTORE_NOTIFY_PIECE_MOVED
+#define RVA_GAMESTATESTORE_NOTIFY_STATE_SYNCED   KIOU_BR_RVA_GAMESTATESTORE_NOTIFY_STATE_SYNCED
 // SetCurrentPosition(Position) — assigns _currentPosition.Value, which is the
 // ReactiveProperty MoveCountPresenter actually subscribes to. NotifyStateSynced
 // only fires the _onStateSynced Subject, so for the move-count UI to update we
 // must drive SetCurrentPosition on every committed move.
-#define RVA_GAMESTATESTORE_SET_CURRENT_POSITION  0x5A2C06C
+#define RVA_GAMESTATESTORE_SET_CURRENT_POSITION  KIOU_BR_RVA_GAMESTATESTORE_SET_CURRENT_POSITION
 
 // ---------------------------------------------------------------------------
 // Trampoline pointer types.

@@ -44,12 +44,11 @@
 #define GAMEORCH_MATCHCONTROLLER_OFFSET  0xF0
 
 // MatchController.SurrenderAsync(PlayerSide player) -> UniTask
-// dump.cs line 1418887, RVA 0x59DDD94
-#define RVA_MATCHCTRL_SURRENDER_ASYNC  0x59DDD94
+#define RVA_MATCHCTRL_SURRENDER_ASYNC  KIOU_BR_RVA_MATCHCTRL_SURRENDER_ASYNC
 
-// GameOrchestrator.RequestSurrender() -> void
-// dump.cs RVA 0x594A91C — shows "投了しますか？" confirmation dialog
-#define RVA_GAMEORCH_REQUEST_SURRENDER  0x594A91C
+// GameOrchestrator.RequestSurrender() -> void — shows the "投了しますか？"
+// confirmation dialog.
+#define RVA_GAMEORCH_REQUEST_SURRENDER  KIOU_BR_RVA_GAMEORCH_REQUEST_SURRENDER
 
 // PlayerSide enum values (dump.cs TypeDefIndex 19506)
 #define PLAYER_SIDE_BLACK  0

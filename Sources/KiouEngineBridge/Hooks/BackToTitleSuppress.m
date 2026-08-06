@@ -26,9 +26,8 @@
 // ===========================================================================
 
 // BackToTitleSequence.RunAsync(CancellationToken) — static method.
-// dump.cs:1479425  RVA: 0x5CF712C
 // Signature (AAPCS64): void *ct → x0; returns UniTaskRet in {x0, x1}.
-#define RVA_BACK_TO_TITLE_RUN_ASYNC  0x5CF712C
+#define RVA_BACK_TO_TITLE_RUN_ASYNC  KIOU_BR_RVA_BACK_TO_TITLE_RUN_ASYNC
 
 typedef UniTaskRet (*BackToTitleRunAsync_t)(void *ct);
 // Exported so KEBNavigateToTitleScene (Hook_GameOrchestratorObserve.m) can

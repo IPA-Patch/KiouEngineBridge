@@ -8,22 +8,22 @@
     "shutdownAction": "stopCompose",
     "remoteUser": "vscode",
     "remoteEnv": {
-        "WAKATIME_API_KEY": "${localEnv:WAKATIME_API_KEY}",
+        "ANTHROPIC_AUTH_TOKEN": "${localEnv:ANTHROPIC_AUTH_TOKEN}",
+        "ANTHROPIC_BASE_URL": "${localEnv:ANTHROPIC_BASE_URL}",
         "GH_TOKEN": "${localEnv:GH_TOKEN}",
         "UV_LINK_MODE": "copy",
-        "ANTHROPIC_BASE_URL": "${localEnv:ANTHROPIC_BASE_URL}",
-        "ANTHROPIC_AUTH_TOKEN": "${localEnv:ANTHROPIC_AUTH_TOKEN}"
+        "WAKATIME_API_KEY": "${localEnv:WAKATIME_API_KEY}"
     },
     "containerEnv": {
         "CLAUDE_CONFIG_DIR": "/home/vscode/.claude"
     },
     "mounts": [
-        "source=${env:HOME}/.aws,target=/home/vscode/.aws,type=bind,consistency=cached,readonly",
-        "source=${env:HOME}/.claude,target=/home/vscode/.claude,type=bind,consistency=cached",
-        "source=${env:HOME}/.ssh,target=/home/vscode/.ssh,type=bind,consistency=cached,readonly",
-        "source=${env:HOME}/.config/gh,target=/home/vscode/.config/gh,type=bind,consistency=cached",
-        "source=${env:HOME}/.codex,target=/home/vscode/.codex,type=bind,consistency=cached",
-        "source=${env:HOME}/.gnupg,target=/home/vscode/.gnupg-host,type=bind,consistency=cached,readonly"
+        "source=${localEnv:HOME}/.aws,target=/home/vscode/.aws,type=bind,consistency=cached,readonly",
+        "source=${localEnv:HOME}/.claude,target=/home/vscode/.claude,type=bind,consistency=cached",
+        "source=${localEnv:HOME}/.ssh,target=/home/vscode/.ssh,type=bind,consistency=cached,readonly",
+        "source=${localEnv:HOME}/.config/gh,target=/home/vscode/.config/gh,type=bind,consistency=cached",
+        "source=${localEnv:HOME}/.codex,target=/home/vscode/.codex,type=bind,consistency=cached",
+        "source=${localEnv:HOME}/.gnupg,target=/home/vscode/.gnupg-host,type=bind,consistency=cached,readonly"
     ],
     "features": {
         "ghcr.io/devcontainers/features/common-utils:2": {
@@ -60,6 +60,7 @@
                 "Anthropic.claude-code",
                 "EditorConfig.EditorConfig",
                 "PKief.material-icon-theme",
+                "WakaTime.vscode-wakatime",
                 "antfu.file-nesting",
                 "bierner.markdown-preview-github-styles",
                 "charliermarsh.ruff",

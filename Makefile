@@ -21,7 +21,7 @@ TARGET_BUNDLE_ID         := com.neconome.shogi
 
 # Target app version — selects the input IPA and the recipe version table.
 # Override on the command line: make ipa TARGET_VERSION=1.0.2
-TARGET_VERSION           ?= 1.0.2
+TARGET_VERSION           ?= 1.1.0
 DECRYPTED_IPA            ?= $(CURDIR)/assets/$(TARGET_VERSION)/Kiou-$(TARGET_VERSION).ipa
 IPA_RECIPE               := recipes
 IPA_FRAMEWORK            := UnityFramework
@@ -96,7 +96,10 @@ $(TWEAK_NAME)_FRAMEWORKS := Foundation UIKit
 # ---------------------------------------------------------------------------
 ifeq ($(CHINLAN),1)
     JAILED                   := 1
-    $(TWEAK_NAME)_CFLAGS     += -DKIOU_CHINLAN=1 -DIPA_LOG_TO_DOCUMENTS=1
+    # IPA_CHINLAN gates Kanade-side behaviour that only applies to the
+    # repackaged-IPA flavour — currently logserver binding to loopback so the
+    # iOS 14+ Local Network prompt never blocks the log stream (use iproxy).
+    $(TWEAK_NAME)_CFLAGS     += -DKIOU_CHINLAN=1 -DIPA_CHINLAN=1 -DIPA_LOG_TO_DOCUMENTS=1
 endif
 
 ifeq ($(JAILED),1)

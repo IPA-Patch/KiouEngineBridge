@@ -38,14 +38,17 @@
 // All reads. No writes. Logs to NSTemporaryDirectory()/kiouenginebridge.log.
 // ===========================================================================
 
-#define RVA_ADAPTER_TRY_MAKE_MOVE_OUT      0x59D0DFC  // bool(this, Move, out Move)
-#define RVA_GAMECTRL_TRY_MAKE_MOVE         0x5D43210  // bool(this, Move)
-#define RVA_GAMECTRL_GET_USI_TEXT          0x5D44074  // string(this)
-#define RVA_POSITION_TO_SFEN               0x5D44374  // string(this)
-#define RVA_SUNFISH_MOVE_TO_STRING_SFEN    0x5D821B0  // string(Sunfish.Move*)
-                                                     // value-type struct method:
-                                                     // arm64 il2cpp passes the
-                                                     // struct address as 'this'.
+// JB-only hook targets — still pinned to 1.0.1, which is the only version
+// the libsubstrate flavour is built against.
+#define RVA_ADAPTER_TRY_MAKE_MOVE_OUT   0x59D0DFC  // bool(this, Move, out Move)
+#define RVA_GAMECTRL_TRY_MAKE_MOVE      0x5D43210  // bool(this, Move)
+
+// Called on every flavour, so these come from the active recipe.
+#define RVA_GAMECTRL_GET_USI_TEXT       KIOU_BR_RVA_GAMECTRL_GET_USI_TEXT        // string(this)
+#define RVA_POSITION_TO_SFEN            KIOU_BR_RVA_POSITION_TO_SFEN             // string(this)
+// Sunfish.Move.ToStringSFEN is a value-type struct method: arm64 il2cpp
+// passes the struct address as 'this'.
+#define RVA_SUNFISH_MOVE_TO_STRING_SFEN KIOU_BR_RVA_SUNFISH_MOVE_TO_STRING_SFEN  // string(Sunfish.Move*)
 
 // ADAPTER_OFF_GAME_CONTROLLER is shared with Inject_Move.m via Internal.h.
 #define ADAPTER_OFF_GAME_CONTROLLER        KIOU_ADAPTER_OFF_GAME_CONTROLLER

@@ -8,6 +8,8 @@ variable (default: ``1.0.1``) and re-exports the patch surface that
   HOOK_SLOT_RVA, PROBED_HOOK_SLOT_RVA
   CAVE_REGION, ENTRY_SLOT_BASE_RVA
   PATCHES, CAVE_PATCHES, _SITES
+  CALLS, FIELD_OFFSETS, BOARD_ANIM_TAKES_PLAYER_SIDE
+    (consumed by tools/gen_recipe_header.py, not by patch_macho)
 
 Adding a new version:
   1. Run ``/dump`` → assets/<ver>/dump.cs + dump.cs.index.json
@@ -27,6 +29,8 @@ from recipes.common import (
     TARGET_BASENAME,
     DYLIB_PATH,
     PLIST_KEYS,
+    CALL_RVA_KEYS,
+    FIELD_OFFSET_KEYS,
     ENTRY_SLOT_COUNT,
     ENTRY_SLOT_CAPACITY,
     ENTRY_SLOT_INDEX,
@@ -41,6 +45,7 @@ from recipes.common import (
 _VERSIONS: dict[str, str | None] = {
     "1.0.1": "recipes.v1_0_1",
     "1.0.2": "recipes.v1_0_2",
+    "1.1.0": "recipes.v1_1_0",
 }
 
 _DEFAULT_VERSION = "1.0.1"
@@ -75,6 +80,18 @@ assert _v.ENTRY_SLOT_BASE_RVA + ENTRY_SLOT_CAPACITY * 8 <= _v.ZERO_REGION_END_RV
 )
 assert len(ENTRY_SLOT_INDEX) == ENTRY_SLOT_COUNT
 
+# Every version must map the full call/offset surface — a missing key would
+# otherwise silently fall back to whatever literal the .m file used to carry.
+_missing_calls = [k for k in CALL_RVA_KEYS if k not in _v.CALLS]
+assert not _missing_calls, f"{_module_name}.CALLS is missing {_missing_calls}"
+_extra_calls = [k for k in _v.CALLS if k not in CALL_RVA_KEYS]
+assert not _extra_calls, f"{_module_name}.CALLS has unknown keys {_extra_calls}"
+
+_missing_offsets = [k for k in FIELD_OFFSET_KEYS if k not in _v.FIELD_OFFSETS]
+assert not _missing_offsets, (
+    f"{_module_name}.FIELD_OFFSETS is missing {_missing_offsets}"
+)
+
 # ---------------------------------------------------------------------------
 # Public exports consumed by patch_macho / verify_sites
 # ---------------------------------------------------------------------------
@@ -85,6 +102,9 @@ PROBED_HOOK_SLOT_RVA          = _v.PROBED_HOOK_SLOT_RVA
 INJECT_ENTRY_TABLE_RVA        = _v.INJECT_ENTRY_TABLE_RVA
 PROBED_INJECT_ENTRY_TABLE_RVA = _v.PROBED_INJECT_ENTRY_TABLE_RVA
 ENTRY_SLOT_BASE_RVA           = _v.ENTRY_SLOT_BASE_RVA
+CALLS                         = _v.CALLS
+FIELD_OFFSETS                 = _v.FIELD_OFFSETS
+BOARD_ANIM_TAKES_PLAYER_SIDE  = _v.BOARD_ANIM_TAKES_PLAYER_SIDE
 
 PATCHES, CAVE_PATCHES, _SITES = build_exports(
     _v.SITES,

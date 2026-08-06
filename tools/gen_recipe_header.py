@@ -30,6 +30,18 @@ cave_start, _ = recipe.CAVE_REGION
 out = REPO_ROOT / "Sources" / "KiouEngineBridge" / "Generated" / "RecipeConstants.h"
 out.parent.mkdir(parents=True, exist_ok=True)
 
+_WIDTH = max(len(k) for k in recipe.CALLS) + len("KIOU_BR_RVA_")
+
+calls = "\n".join(
+    f"#define {'KIOU_BR_RVA_' + key:<{_WIDTH + 2}}0x{recipe.CALLS[key]:X}"
+    for key in sorted(recipe.CALLS, key=lambda k: recipe.CALLS[k])
+)
+
+offsets = "\n".join(
+    f"#define {'KIOU_BR_OFF_' + key:<{_WIDTH + 2}}0x{recipe.FIELD_OFFSETS[key]:X}"
+    for key in sorted(recipe.FIELD_OFFSETS)
+)
+
 content = f"""\
 // Auto-generated from recipes/v{ver.replace('.', '_')}.py by
 // tools/gen_recipe_header.py. DO NOT EDIT — re-run `make` after
@@ -44,6 +56,18 @@ content = f"""\
 #define KIOU_BR_ENTRY_SLOT_BASE_RVA     0x{recipe.ENTRY_SLOT_BASE_RVA:X}
 #define KIOU_BR_INJECT_ENTRY_TABLE_RVA  0x{recipe.INJECT_ENTRY_TABLE_RVA:X}
 #define KIOU_BR_CAVE_REGION_START       0x{cave_start:X}
+
+// il2cpp entry points the dylib resolves as `unityBase + rva` and calls
+// directly. These are not patch sites, so nothing else validates them —
+// keep them in the recipe or they rot silently across app versions.
+{calls}
+
+// 1 when BoardPresenter.PlayMoveAnimationAsync takes an explicit
+// PlayerSide between the Move and the CancellationToken.
+#define KIOU_BR_BOARD_ANIM_TAKES_PLAYER_SIDE {int(recipe.BOARD_ANIM_TAKES_PLAYER_SIDE)}
+
+// il2cpp field offsets that have moved between app versions.
+{offsets}
 """
 
 # Idempotent: only rewrite when content changes, so `make` doesn't treat

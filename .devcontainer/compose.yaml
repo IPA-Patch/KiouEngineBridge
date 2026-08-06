@@ -6,10 +6,22 @@ services:
     volumes:
       - ../:/home/vscode/app:cached
       - venv:/home/vscode/app/.venv
+      - uv-cache:/home/vscode/.cache/uv
+      - bun-cache:/home/vscode/.bun/install/cache
+      - npm-cache:/home/vscode/.npm
+      - pip-cache:/home/vscode/.cache/pip
     network_mode: host
     tty: true
     stdin_open: true
 
 volumes:
   venv:
+    driver: local
+  uv-cache:
+    driver: local
+  bun-cache:
+    driver: local
+  npm-cache:
+    driver: local
+  pip-cache:
     driver: local

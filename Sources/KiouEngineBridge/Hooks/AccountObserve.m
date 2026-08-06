@@ -110,8 +110,10 @@
 #define OFF_GET_SELF_PROFILE_REPLY_PROFILE  0x18  // -> SelfUserProfileStatus*
 #define OFF_SELF_PROFILE_USER_NAME          0x18  // string
 #define OFF_SELF_PROFILE_OPEN_USER_ID       0x20  // string
-#define OFF_SELF_PROFILE_RANK_LIST          0x28  // RepeatedField<ProfileRankStatus>
-#define OFF_SELF_PROFILE_BATTLE_RECORD_LIST 0x48  // RepeatedField<ProfileBattleRecordStatus>
+// 1.1.0 inserted userAttribute_ at 0x28 and pushed every list reference down
+// 8 bytes, so these two come from the active recipe rather than a literal.
+#define OFF_SELF_PROFILE_RANK_LIST          KIOU_BR_OFF_SELF_PROFILE_RANK_LIST           // RepeatedField<ProfileRankStatus>
+#define OFF_SELF_PROFILE_BATTLE_RECORD_LIST KIOU_BR_OFF_SELF_PROFILE_BATTLE_RECORD_LIST  // RepeatedField<ProfileBattleRecordStatus>
 
 // RepeatedField<T> il2cpp layout: object header (0x10) + array(ptr@0x10) + count(i32@0x18)
 #define OFF_REPEATED_ARRAY 0x10

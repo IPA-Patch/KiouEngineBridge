@@ -44,7 +44,7 @@
 // this does not require an active GameOrchestrator instance — it works from
 // title/home screens where no match has started yet. Pass NULL ct (= default
 // CancellationToken).
-#define RVA_BACK_TO_TITLE_RUN_ASYNC 0x5CF712C
+#define RVA_BACK_TO_TITLE_RUN_ASYNC KIOU_BR_RVA_BACK_TO_TITLE_RUN_ASYNC
 
 // BackToTitleSequence.<RunAsync>d__0.MoveNext — observe state transitions to
 // figure out which side-effect runs the actual scene transition (so we can

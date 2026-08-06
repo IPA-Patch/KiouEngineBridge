@@ -18,6 +18,42 @@ ZERO_REGION_END_RVA  = 0x091E93B8
 AFK_SITE    = 0x59455D4
 AFK_ORIG_8  = "f44fbea9fd7b01a9"
 
+# Runtime call targets — see recipes.common.CALL_RVA_KEYS.
+CALLS = {
+    "GAMEORCH_REQUEST_SURRENDER":          0x594A91C,
+    "GAMEORCH_ON_END_SEQUENCE_COMPLETED":  0x594AE5C,
+    "BOARDPRESENTER_PLAY_MOVE_ANIMATION":  0x5968894,
+    "MATCHCTRL_TRY_MAKE_LOCAL_MOVE":       0x59D7908,
+    "MATCHCTRL_SURRENDER_ASYNC":           0x59DDD94,
+    "GAMESTATESTORE_SET_CURRENT_POSITION": 0x5A2C06C,
+    "GAMESTATESTORE_NOTIFY_PIECE_MOVED":   0x5A2CD24,
+    "GAMESTATESTORE_NOTIFY_STATE_SYNCED":  0x5A2CE64,
+    "BACK_TO_TITLE_RUN_ASYNC":             0x5CF712C,
+    "CPU_MATCH_START_FREE":                0x5D02FE8,
+    "MATCHING_START_RANK":                 0x5D0478C,
+    "POSITION_GET_PIECE":                  0x5D3A1C8,
+    "PIECE_GET_PIECETYPE":                 0x5D3A1FC,
+    "POSITION_CREATE_BY_TYPE":             0x5D423F8,
+    "POSITION_CREATE_FROM_SFEN":           0x5D42650,
+    "GAMECTRL_GET_USI_TEXT":               0x5D44074,
+    "POSITION_TO_SFEN":                    0x5D44374,
+    "PSC_MOVE_CREATE":                     0x5D4536C,
+    "PSC_MOVE_CREATE_DROP":                0x5D4538C,
+    "SUNFISH_MOVE_TO_STRING_SFEN":         0x5D821B0,
+    "SUNFISH_MOVE_DROP":                   0x5D86AD8,
+    "HTTPHEADERS_TRYADD":                  0x608886C,
+    "HTTPHEADERS_REMOVE":                  0x6088D24,
+}
+
+# BoardPresenter.PlayMoveAnimationAsync(Move, CancellationToken).
+BOARD_ANIM_TAKES_PLAYER_SIDE = False
+
+# Drifting field offsets — see recipes.common.FIELD_OFFSET_KEYS.
+FIELD_OFFSETS = {
+    "SELF_PROFILE_RANK_LIST":          0x28,
+    "SELF_PROFILE_BATTLE_RECORD_LIST": 0x48,
+}
+
 # fmt: off
 SITES = [
     # OnMatchEndAsync × 5

@@ -38,23 +38,23 @@
 // owned by Hook_MatchModeObserve.m. The rest are NativeFunction-style
 // helpers we call into to build moves the game-side code actually accepts.
 // ---------------------------------------------------------------------------
-#define RVA_SUNFISH_MOVE_DROP              0x5D86AD8  // Sunfish.Move.Drop(PieceType, Square) — legacy
-#define RVA_POSITION_GET_PIECE             0x5D3A1C8  // Position.GetPiece(Square) -> Piece
-#define RVA_PIECE_GET_PIECETYPE            0x5D3A1FC  // PieceExtensions.GetPieceType(Piece) -> PieceType
-#define RVA_PSC_MOVE_CREATE                0x5D4536C  // Move.Create(from,to,movingPiece,promote,captured)
-#define RVA_PSC_MOVE_CREATE_DROP           0x5D4538C  // Move.CreateDrop(PieceType, Square)
-#define RVA_POSITION_CREATE_FROM_SFEN      0x5D42650  // Position.CreateFromSFEN(string sfen)
-#define RVA_POSITION_CREATE_BY_TYPE        0x5D423F8  // Position.CreateByInitialPositionType(InitialPositionType)
-#define RVA_GAMESTATESTORE_NOTIFY_PIECE_MOVED  0x5A2CD24  // GameStateStore.NotifyPieceMoved(Move, PlayerSide)
-#define RVA_GAMESTATESTORE_NOTIFY_STATE_SYNCED 0x5A2CE64  // GameStateStore.NotifyStateSynced(Position)
-#define RVA_BOARDPRESENTER_PLAY_MOVE_ANIMATION 0x5968894  // BoardPresenter.PlayMoveAnimationAsync(Move, CT) -> UniTask
+#define RVA_SUNFISH_MOVE_DROP                  KIOU_BR_RVA_SUNFISH_MOVE_DROP                   // Sunfish.Move.Drop(PieceType, Square) — legacy
+#define RVA_POSITION_GET_PIECE                 KIOU_BR_RVA_POSITION_GET_PIECE                  // Position.GetPiece(Square) -> Piece
+#define RVA_PIECE_GET_PIECETYPE                KIOU_BR_RVA_PIECE_GET_PIECETYPE                 // PieceExtensions.GetPieceType(Piece) -> PieceType
+#define RVA_PSC_MOVE_CREATE                    KIOU_BR_RVA_PSC_MOVE_CREATE                     // Move.Create(from,to,movingPiece,promote,captured)
+#define RVA_PSC_MOVE_CREATE_DROP               KIOU_BR_RVA_PSC_MOVE_CREATE_DROP                // Move.CreateDrop(PieceType, Square)
+#define RVA_POSITION_CREATE_FROM_SFEN          KIOU_BR_RVA_POSITION_CREATE_FROM_SFEN           // Position.CreateFromSFEN(string sfen)
+#define RVA_POSITION_CREATE_BY_TYPE            KIOU_BR_RVA_POSITION_CREATE_BY_TYPE             // Position.CreateByInitialPositionType(InitialPositionType)
+#define RVA_GAMESTATESTORE_NOTIFY_PIECE_MOVED  KIOU_BR_RVA_GAMESTATESTORE_NOTIFY_PIECE_MOVED   // GameStateStore.NotifyPieceMoved(Move, PlayerSide)
+#define RVA_GAMESTATESTORE_NOTIFY_STATE_SYNCED KIOU_BR_RVA_GAMESTATESTORE_NOTIFY_STATE_SYNCED  // GameStateStore.NotifyStateSynced(Position)
+#define RVA_BOARDPRESENTER_PLAY_MOVE_ANIMATION KIOU_BR_RVA_BOARDPRESENTER_PLAY_MOVE_ANIMATION  // BoardPresenter.PlayMoveAnimationAsync
 // MatchController.TryMakeLocalMove(Move, CancellationToken) -> UniTask<bool>.
 // This is the same entry point a real on-screen tap drives — it runs the full
 // commit pipeline including SetCurrentPosition (which the move-count UI
 // listens on via the CurrentPosition ReactiveProperty). Calling OPM directly
 // and then poking GameStateStore by hand was always a half-reproduction; this
 // is the canonical one.
-#define RVA_MATCHCTRL_TRY_MAKE_LOCAL_MOVE      0x59D7908
+#define RVA_MATCHCTRL_TRY_MAKE_LOCAL_MOVE      KIOU_BR_RVA_MATCHCTRL_TRY_MAKE_LOCAL_MOVE
 
 // GameOrchestrator -> BoardPresenter field offset (dump.cs:1211404).
 #define OFF_GAMEORCH_BOARD_PRESENTER 0x108
@@ -161,14 +161,25 @@ typedef UniTaskRet (*MatchController_TryMakeLocalMove_t)(void *self,
                                                            void *ct);
 static MatchController_TryMakeLocalMove_t g_MatchController_TryMakeLocalMove = NULL;
 
-// BoardPresenter.PlayMoveAnimationAsync(Move, CancellationToken) -> UniTask.
+// BoardPresenter.PlayMoveAnimationAsync -> UniTask.
 // We fire this BEFORE TryMakeMove so the animation runs against the
 // pre-move board state, then sleep INJECT_ANIMATION_DELAY_SEC and commit
 // the underlying move. We don't await the UniTask — its internal layout is
 // load-bearing and unverified; a fixed delay is good enough.
+//
+// 1.1.0 widened the signature from (Move, CancellationToken) to
+// (Move, PlayerSide, CancellationToken); the recipe says which shape the
+// target build wants.
+#if KIOU_BR_BOARD_ANIM_TAKES_PLAYER_SIDE
+typedef UniTaskRet (*BoardPresenter_PlayMoveAnimationAsync_t)(void *self,
+                                                              uint32_t move,
+                                                              int32_t movePlayer,
+                                                              void *ct);
+#else
 typedef UniTaskRet (*BoardPresenter_PlayMoveAnimationAsync_t)(void *self,
                                                               uint32_t move,
                                                               void *ct);
+#endif
 static BoardPresenter_PlayMoveAnimationAsync_t g_BoardPresenter_PlayMoveAnimationAsync = NULL;
 
 // Forward declaration — defined further down where the il2cpp accessors
@@ -1212,13 +1223,38 @@ bool inject_apply(NSString *usi,
                          @"no BoardPresenter on orch");
                 return;
             }
+#if KIOU_BR_BOARD_ANIM_TAKES_PLAYER_SIDE
+            // 1.1.0 wants the mover's PlayerSide explicitly. We're still
+            // ahead of the mutation here, so the live Position's
+            // _sideToMove IS the mover; fall back to the route's local
+            // player when the Position chain is unreachable. If neither
+            // is known, skip rather than guess — a wrong PlayerSide draws
+            // the piece in the opponent's colour.
+            int32_t movePlayer = inject_sideToMoveFromPosition();
+            if (movePlayer != 0 && movePlayer != 1) movePlayer = humanSideOut;
+            if (movePlayer != 0 && movePlayer != 1) {
+                IPALog(@"[INJECT-DBG] PlayMoveAnimation skipped: "
+                         @"mover PlayerSide unknown");
+                return;
+            }
+#endif
             @try {
+#if KIOU_BR_BOARD_ANIM_TAKES_PLAYER_SIDE
+                (void)g_BoardPresenter_PlayMoveAnimationAsync(boardPresenter,
+                                                              move,
+                                                              movePlayer, NULL);
+                IPALog([NSString stringWithFormat:
+                          @"[INJECT-DBG] PlayMoveAnimation fired "
+                          @"presenter=%p move=0x%x player=%d",
+                          boardPresenter, (unsigned)move, (int)movePlayer]);
+#else
                 (void)g_BoardPresenter_PlayMoveAnimationAsync(boardPresenter,
                                                               move, NULL);
                 IPALog([NSString stringWithFormat:
                           @"[INJECT-DBG] PlayMoveAnimation fired "
                           @"presenter=%p move=0x%x",
                           boardPresenter, (unsigned)move]);
+#endif
             } @catch (NSException *e) {
                 IPALog([NSString stringWithFormat:
                           @"[INJECT-DBG] PlayMoveAnimation threw: %@", e]);

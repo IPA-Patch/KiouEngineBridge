@@ -387,11 +387,11 @@ static usi_match_result_t inferMatchResult(int32_t localPlayer) {
 // Static il2cpp entry points used by the rematch path. Resolved on demand
 // inside the dispatch blocks from g_unityBase (set by Tweak.m).
 // ---------------------------------------------------------------------------
-#define RVA_GAMEORCH_ON_END_SEQUENCE_COMPLETED  0x594AE5C
+#define RVA_GAMEORCH_ON_END_SEQUENCE_COMPLETED  KIOU_BR_RVA_GAMEORCH_ON_END_SEQUENCE_COMPLETED
 // CpuMatchStarter.StartCpuFreeMatchAsync(CPUStrengthType, bool, CT) -> UniTask
-#define RVA_CPU_MATCH_START_FREE                0x5D02FE8
+#define RVA_CPU_MATCH_START_FREE                KIOU_BR_RVA_CPU_MATCH_START_FREE
 // MatchingHandler.StartRankMatchingAsync(RankMatchRuleType, bool, CT) -> UniTask
-#define RVA_MATCHING_START_RANK                 0x5D0478C
+#define RVA_MATCHING_START_RANK                 KIOU_BR_RVA_MATCHING_START_RANK
 
 // GameOrchestrator field offsets reachable from the cached self.
 //   _resolvedConfig : GameSetup       (dump.cs:1211399) — 0xE0
