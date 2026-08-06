@@ -394,13 +394,13 @@ static usi_match_result_t inferMatchResult(int32_t localPlayer) {
 #define RVA_MATCHING_START_RANK                 KIOU_BR_RVA_MATCHING_START_RANK
 
 // GameOrchestrator field offsets reachable from the cached self.
-//   _resolvedConfig : GameSetup       (dump.cs:1211399) — 0xE0
+//   _resolvedConfig : GameSetup       (1.0.x dump.cs:1211399) — 0xE0, 1.1.0 0xD0
 // GameSetup field offsets.
 //   <Params>k__BackingField : GameParams (dump.cs:1209649) — 0x10
 // GameParams field offsets.
 //   <CpuStrength>k__BackingField : Nullable<CPUStrengthType> (dump.cs:1208715)
 //     — 0x30, packed as { int32 value @0; bool hasValue @4 } in il2cpp.
-#define OFF_GAMEORCH_RESOLVED_CONFIG 0xE0
+#define OFF_GAMEORCH_RESOLVED_CONFIG KIOU_BR_OFF_GAMEORCH_RESOLVED_CONFIG
 #define OFF_GAMESETUP_PARAMS         0x10
 #define OFF_GAMEPARAMS_CPU_STRENGTH  0x30
 

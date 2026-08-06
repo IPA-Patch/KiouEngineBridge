@@ -149,6 +149,9 @@ CALL_RVA_KEYS: tuple[str, ...] = (
 FIELD_OFFSET_KEYS: tuple[str, ...] = (
     "SELF_PROFILE_RANK_LIST",
     "SELF_PROFILE_BATTLE_RECORD_LIST",
+    "GAMEORCH_RESOLVED_CONFIG",
+    "GAMEORCH_MATCH_CONTROLLER",
+    "GAMEORCH_BOARD_PRESENTER",
 )
 
 # ---------------------------------------------------------------------------

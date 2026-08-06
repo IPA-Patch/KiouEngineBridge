@@ -95,6 +95,11 @@ LOGIN_ARGS_TAKES_APPSFLYER_ID = True
 FIELD_OFFSETS = {
     "SELF_PROFILE_RANK_LIST":          0x30,
     "SELF_PROFILE_BATTLE_RECORD_LIST": 0x50,
+    # 1.1.0 dropped GameOrchestrator._initialBackground / _midBackground, so
+    # every field past 0x98 shifted down by 0x10.
+    "GAMEORCH_RESOLVED_CONFIG":        0xD0,
+    "GAMEORCH_MATCH_CONTROLLER":       0xE0,
+    "GAMEORCH_BOARD_PRESENTER":        0xF8,
 }
 
 # fmt: off

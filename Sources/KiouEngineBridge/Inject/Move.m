@@ -56,11 +56,13 @@
 // is the canonical one.
 #define RVA_MATCHCTRL_TRY_MAKE_LOCAL_MOVE      KIOU_BR_RVA_MATCHCTRL_TRY_MAKE_LOCAL_MOVE
 
-// GameOrchestrator -> BoardPresenter field offset (dump.cs:1211404).
-#define OFF_GAMEORCH_BOARD_PRESENTER 0x108
-// GameOrchestrator -> MatchController field offset (dump.cs:1211401).
+// GameOrchestrator -> BoardPresenter field offset (1.0.x dump.cs:1211404).
+// 1.1.0 dropped two background fields ahead of these, so both moved down by
+// 0x10 — the values come from the recipe.
+#define OFF_GAMEORCH_BOARD_PRESENTER KIOU_BR_OFF_GAMEORCH_BOARD_PRESENTER
+// GameOrchestrator -> MatchController field offset (1.0.x dump.cs:1211401).
 // Same offset Inject_Resign.m uses for the resign path.
-#define OFF_GAMEORCH_MATCH_CONTROLLER 0xF0
+#define OFF_GAMEORCH_MATCH_CONTROLLER KIOU_BR_OFF_GAMEORCH_MATCH_CONTROLLER
 
 // How long to wait between firing the move animation and committing the
 // underlying TryMakeMove. The animation itself runs on the order of

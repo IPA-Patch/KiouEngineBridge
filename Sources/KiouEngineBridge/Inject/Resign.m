@@ -40,8 +40,8 @@
 // declaration surface is reverse-engineered.
 // ===========================================================================
 
-// GameOrchestrator._matchController field offset (dump.cs line 1211401)
-#define GAMEORCH_MATCHCONTROLLER_OFFSET  0xF0
+// GameOrchestrator._matchController field offset (1.0.x dump.cs line 1211401)
+#define GAMEORCH_MATCHCONTROLLER_OFFSET  KIOU_BR_OFF_GAMEORCH_MATCH_CONTROLLER
 
 // MatchController.SurrenderAsync(PlayerSide player) -> UniTask
 #define RVA_MATCHCTRL_SURRENDER_ASYNC  KIOU_BR_RVA_MATCHCTRL_SURRENDER_ASYNC

@@ -57,6 +57,20 @@ All notable changes to KiouEngineBridge are documented here.
   come from the active recipe. The ~53 remaining literals are only
   reachable under `#if !KIOU_CHINLAN`, and the JB flavour targets 1.0.1
   only, so they stay as-is.
+- Move injection silently no-opped on 1.1.0: the board never advanced and
+  the engine stalled after the first move, even though the injector
+  logged `route=match_ctrl ok=1`. 1.1.0 removed
+  `GameOrchestrator._initialBackground` / `_midBackground`, shifting
+  every field past 0x98 down by 0x10, so the injector read
+  `_inputDetector` where it expected `_matchController`. il2cpp does not
+  type-check `this`, so `TryMakeLocalMove` ran against the wrong object,
+  did nothing, and returned a `UniTask` we discard — hence `ok=1`.
+  `_resolvedConfig`, `_matchController`, and `_boardPresenter` are now
+  recipe-driven (`GAMEORCH_RESOLVED_CONFIG` / `GAMEORCH_MATCH_CONTROLLER`
+  / `GAMEORCH_BOARD_PRESENTER`; 1.0.x 0xE0/0xF0/0x108, 1.1.0
+  0xD0/0xE0/0xF8) and cover the move injector, the resign path, and the
+  CPU-strength readback. An audit of the remaining hardcoded `OFF_*`
+  macros found no other 1.1.0 drift.
 - `SelfUserProfileStatus` field offsets are recipe-driven:
   1.1.0 inserted `userAttribute_` at 0x28 and pushed the rank and
   battle-record lists down 8 bytes (0x28/0x48 -> 0x30/0x50).
